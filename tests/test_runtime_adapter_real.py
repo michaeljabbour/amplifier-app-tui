@@ -80,6 +80,7 @@ class FakeTicket:
     ticket_id: str
     prompt: str
     options: tuple[str, ...]
+    detail: object = None
 
 
 class FakeBroker:
@@ -267,7 +268,9 @@ class FakeApp:
     def boot_progress(self, action: str, detail: str) -> None:
         self.progress.append((action, detail))
 
-    def present_approval(self, ticket_id: str, prompt: str, options: tuple[str, ...]) -> None:
+    def present_approval(
+        self, ticket_id: str, prompt: str, options: tuple[str, ...], detail: object = None
+    ) -> None:
         self.approvals.append((ticket_id, prompt, options))
 
 

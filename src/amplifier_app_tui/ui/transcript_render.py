@@ -45,6 +45,7 @@ from ..model.blocks import (
     Narration,
     NeedsYouBlock,
     NeedsYouEntry,
+    PendingChange,
     PlanBlock,
     Recap,
     Segment,
@@ -229,6 +230,48 @@ def _render_plan(block: PlanBlock, width: int) -> tuple[Line, ...]:
 BLOCKED_DEFERRED_HINT = " · needs your ok — ctrl+y to review"
 """Tail of a deferred blocked line: the WHY lives in the needs-you entry
 (ctrl+y), the raw command behind the click-to-expand body."""
+
+
+def _render_pending_change(block: PendingChange, width: int) -> tuple[Line, ...]:
+    """The diff-first approval card: the pending change is readable BEFORE
+    it is answered (ergonomic upgrade 2). Header names the file/command,
+    the dim tail carries the staged context (cwd · rule · capability), and
+    ``body`` renders the diff with the SAME grammar as an expanded diff
+    ToolLine so the two surfaces never diverge on patch styling."""
+    head: list[Segment] = [
+        Segment(text="  ■ ", style_token="orange"),
+        Segment(text="pending · ", style_token="orange"),
+        Segment(text=block.title, style_token="bright", bold=True),
+    ]
+    if block.detail:
+        head.append(Segment(text=f" · {block.detail}", style_token="dim"))
+    lines: list[Line] = [tuple(head)]
+    for body_line in block.body:
+        token: StyleToken = "dimmer"
+        background = None
+        bold = False
+        if block.body_style == "diff":
+            if body_line.startswith("@@"):
+                token, bold = "blue", True
+            elif body_line.startswith(("--- ", "+++ ")):
+                token = "teal"
+            elif body_line.startswith("+"):
+                token, background = "green", "bg-tab"
+            elif body_line.startswith("-"):
+                token, background = "red", "bg-tab"
+            elif " · " in body_line:
+                token = "dim"
+        lines.append(
+            (
+                Segment(
+                    text=f"      {body_line}",
+                    style_token=token,
+                    bold=bold,
+                    bg_token=background,
+                ),
+            )
+        )
+    return tuple(lines)
 
 
 def _render_blocked(block: Blocked, width: int) -> tuple[Line, ...]:
@@ -948,6 +991,7 @@ _RENDERERS: dict[str, Callable[..., tuple[Line, ...]]] = {
     "live_command": _render_live_command,
     "plan": _render_plan,
     "blocked": _render_blocked,
+    "pending_change": _render_pending_change,
     "working_status": _render_working_status,
     "recap": _render_recap,
     "thinking": _render_thinking,

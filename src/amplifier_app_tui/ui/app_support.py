@@ -26,6 +26,7 @@ from ..model.blocks import (
     NeedsYouBlock,
     NeedsYouChoice,
     NeedsYouEntry,
+    PendingChange,
     Segment,
     SessionBanner,
     SteerEcho,
@@ -396,9 +397,22 @@ def announce_boot_failure(app: TuiApp, error: Exception) -> None:
 
 
 async def mount_approval(
-    app: TuiApp, ticket_id: str, prompt: str, options: tuple[str, ...]
+    app: TuiApp, ticket_id: str, prompt: str, options: tuple[str, ...], detail: object = None
 ) -> None:
-    """Swap the composer for the approval bar (spec §7 presentation).
+    """Dock the approval bar above the composer + show the pending change
+    (spec §7 presentation, ergonomic upgrade 2 — diff-first, non-blocking).
+
+    Two deliberate changes layered on the §7 baseline:
+
+    - **Diff-first**: the staged tool input becomes a ``pending_change``
+      transcript card (the diff when synthesizable, else the command digest)
+      so the supervisor reads WHAT changes before answering.
+
+    - **Non-blocking**: the composer KEEPS ``display`` behind the bar.
+      Hiding it threw away an in-flight draft the moment a decision
+      arrived mid-type; the cards/dock presentation lets the draft survive
+      so one Enter (after the bar resolves) picks up where the typing
+      stopped. The bar still owns the keyboard (arrows decide, not move).
 
     Notice order follows the mockup ``requestApproval``: the approval
     notice first, then — when a lane was focused — the auto-return's
@@ -416,18 +430,35 @@ async def mount_approval(
     app.palette.apply_filter(None)
     if app.approval_bar is not None:
         app.approval_bar.remove()
+        _remove_pending_change(app)
     bar = ApprovalBar(ticket_id, prompt, options or ("Allow once", "Allow always", "Deny"))
-    app.composer.display = False
     await app.query_one("#composer-slot", Container).mount(bar)
     # Publish the bar only once it is fully mounted. Callers use non-None as
     # the ready signal; exposing it before this await raced the focus/notice
     # setup and made approval presentation observably half-initialized.
     app.approval_bar = bar
+    block = pending_change_block(app.allocator.next_id, prompt, detail)
+    if block is not None:
+        app.append_block(block)
+        app._pending_change_block_id = block.id
     bar.focus()
     app.show_notice(APPROVAL_NOTICE, duration=APPROVAL_NOTICE_DURATION)
     if lane_was_focused:
         app.show_notice("back to parent · approval required", duration=APPROVAL_NOTICE_DURATION)
     app.refresh_status()
+
+
+def _remove_pending_change(app: TuiApp) -> None:
+    """Drop the live card once its ticket resolves (any path). Silent when
+    a /clear already unmounted every block beneath it — a stale id is
+    exactly what a clear means here."""
+    block_id = app._pending_change_block_id
+    app._pending_change_block_id = None
+    if block_id:
+        try:
+            app.transcript.remove_block(block_id)
+        except LookupError:
+            pass  # /clear already unmounted every block
 
 
 def echo_steer(app: TuiApp, text: str) -> None:
@@ -971,6 +1002,105 @@ def go_back_to_parent(app: TuiApp) -> None:
     state, not a session lifecycle edge).
     """
     app.run_worker(app.transcript.restore_main(), exclusive=False)
+
+
+_PENDING_CHANGE_LIMIT = 12
+"""Cap on diff lines in a pending-change card: the decision (Allow/Deny)
+never needs the whole patch inline — seeing that it touches
+``session.py`` plus the hunk heads is the diff-first read."""
+
+
+def _page_diff_lines(diff: str, limit: int) -> tuple[str, ...]:
+    lines = tuple(line for line in diff.rstrip("\n").splitlines() if line.strip())
+    if len(lines) > limit:
+        return (*lines[:limit], f"… {len(lines) - limit} more")
+    return lines
+
+
+def _coalesced(content: str) -> tuple[str, ...]:
+    """One row per body line (spaces coalesced — the card is a digest)."""
+    return tuple(" ".join(line.split()) for line in content.splitlines() if line.strip())
+
+
+def pending_change_lines(tool_input: Mapping[str, object]) -> tuple[str, ...] | None:
+    """The diff a live approval is gating, synthesized from the staged
+    tool input (ergonomic upgrade 2 — diff-first).
+
+    Priority: an explicit patch (``patch``/``diff``/``unified_diff``) wins
+    verbatim; then before/after (``new_string`` against ``old_string``,
+    write ``content``) is shaped into a unified-diff digest. Line-level
+    alignment is deliberately out of scope — the card answers "what
+    changes", not "apply this patch".
+    """
+    for key in ("patch", "diff", "unified_diff"):
+        raw = tool_input.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return _page_diff_lines(raw, _PENDING_CHANGE_LIMIT)
+    path = tool_input.get("file_path") or tool_input.get("path") or tool_input.get("filePath") or ""
+    new = tool_input.get("new_string") or tool_input.get("new_str") or tool_input.get("content")
+    old = tool_input.get("old_string") or tool_input.get("old_str")
+    if not isinstance(new, str) or not new.strip():
+        return None
+    new_rows = tuple(" ".join(line.split()) for line in new.splitlines() if line.strip())
+    old_rows = (
+        tuple(" ".join(line.split()) for line in old.splitlines() if line.strip())
+        if isinstance(old, str)
+        else ()
+    )
+    if not new_rows:
+        return None
+    head: list[str] = [f"--- a/{path}", f"+++ b/{path}"] if path else []
+    budget = _PENDING_CHANGE_LIMIT - len(head) - 1  # fn header + "@@ 1 @@"
+    # Split the remaining budget evenly so a long new side never starves
+    # the before read (the diff-first claim rests on showing BOTH sides).
+    old_share = budget // 2 if old_rows else 0
+    shown_old = list(old_rows[:old_share])
+    shown_new = list(new_rows[: budget - len(shown_old)])
+    omitted = (len(old_rows) - len(shown_old)) + (len(new_rows) - len(shown_new))
+    lines = (
+        *head,
+        "@@ 1 @@",
+        *tuple(f"-{line}" for line in shown_old),
+        *tuple(f"+{line}" for line in shown_new),
+    )
+    if omitted:
+        return (*lines, f"… {omitted} more")
+    return lines
+
+
+def pending_change_block(
+    allocator_next_id: Callable[[], str],
+    prompt: str,
+    detail: object,
+) -> "PendingChange | None":
+    """Build the diff-first card for one live approval, or ``None`` when
+    nothing richer than the bar's prompt exists (an unknown tool input
+    must never invent a patch the model did not send)."""
+    from ..kernel.approval import ApprovalDetail
+
+    command = ""
+    cwd = ""
+    rule_lines: list[str] = []
+    lines: tuple[str, ...] | None = None
+    if isinstance(detail, ApprovalDetail):
+        command = detail.command
+        cwd = detail.cwd
+        if detail.rule:
+            rule_lines.append(detail.rule)
+        if detail.capability:
+            rule_lines.append(detail.capability)
+        lines = pending_change_lines(detail.tool_input)
+    title = command or prompt.removesuffix("?").removeprefix("Allow ")
+    if not title:
+        return None
+    body = lines if lines is not None else ()
+    return PendingChange(
+        id=allocator_next_id(),
+        title=title,
+        detail=" · ".join(part for part in (cwd, " · ".join(rule_lines)) if part),
+        body=body,
+        body_style="diff" if lines is not None else "plain",
+    )
 
 
 def timeline_entries(app: TuiApp) -> tuple[TimelineEntry, ...]:

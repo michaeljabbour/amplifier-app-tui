@@ -831,7 +831,11 @@ class RealRuntimeAdapter(RuntimeAdapter):
             app, ticket = self.app, head
             if self._app_loop is not None:
                 self._app_loop.call_soon_threadsafe(
-                    app.present_approval, ticket.ticket_id, ticket.prompt, ticket.options
+                    app.present_approval,
+                    ticket.ticket_id,
+                    ticket.prompt,
+                    ticket.options,
+                    ticket.detail,
                 )
 
     async def submit(self, text: str, attachments: tuple[Any, ...] = ()) -> None:

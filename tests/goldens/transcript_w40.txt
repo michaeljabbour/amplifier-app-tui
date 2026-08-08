@@ -25,6 +25,16 @@
 === blocked ===
 [$red]  ⊘ blocked · [/][$red]git push --force origin main[/][$dim] · outside user authorization[/][$dim] · finding safer path[/]
 
+=== pending_change ===
+[$orange]  ■ [/][$orange]pending · [/][bold $bright]update src/session_store.py[/][$dim] · ~/dev/amplifier · write outside chat · write[/]
+[$teal]      --- a/src/session_store.py[/]
+[$teal]      +++ b/src/session_store.py[/]
+[bold $blue]      @@ 1 @@[/]
+[$red on $bg-tab]      -def save(session):[/]
+[$red on $bg-tab]      -    legacy_write(session)[/]
+[$green on $bg-tab]      +def save(session):[/]
+[$green on $bg-tab]      +    durable_store.write(session)[/]
+
 === working_status ===
 [$orange]✳ [/][bold $bright]w[/][$bright]o[/][$fg]r[/][$dim]king[/][$dim] · 8s · ↓ 3.2k tok · thinking · [/][$dimmer]esc to interrupt · type to steer[/]
 

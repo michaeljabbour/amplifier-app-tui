@@ -290,6 +290,7 @@ class TuiApp(App[ResumeSessionRequest]):
         self._turn_started_at: float | None = None  # attention-bell elapsed basis
         self.esc_sequence = app_support.EscSequence()
         self.approval_bar: ApprovalBar | None = None
+        self._pending_change_block_id: str | None = None
         self._pending_custom_decision: str | None = None
         self.steer_echoes: dict[str, str] = {}  # steer message_id → ↳ echo block id
         self._lanes_fanout_open = False  # active-lane edge for the auto-open
@@ -1607,7 +1608,13 @@ class TuiApp(App[ResumeSessionRequest]):
             self._splash = None
             self.call_later(splash.dismiss_splash, immediate=immediate)
 
-    def present_approval(self, ticket_id: str, prompt: str, options: tuple[str, ...]) -> None:
+    def present_approval(
+        self,
+        ticket_id: str,
+        prompt: str,
+        options: tuple[str, ...],
+        detail: object = None,
+    ) -> None:
         """Show the inline approval bar for one ticket (spec §7)."""
         if self.mode_id == "auto":
             # Auto is unattended progress: park the human choice, deny only
@@ -1617,7 +1624,7 @@ class TuiApp(App[ResumeSessionRequest]):
             self.show_notice("auto deferred decision · current call denied · work continues")
             self._refresh_footer()
             return
-        self.call_later(app_support.mount_approval, self, ticket_id, prompt, tuple(options))
+        self.call_later(app_support.mount_approval, self, ticket_id, prompt, tuple(options), detail)
 
     def on_approval_bar_resolved(self, message: ApprovalBar.Resolved) -> None:
         message.stop()
@@ -1626,7 +1633,7 @@ class TuiApp(App[ResumeSessionRequest]):
             self.journal.record_ask(bar.prompt, approved=message.choice != "Deny")
             bar.remove()
             self.approval_bar = None
-        self.composer.display = True
+        app_support._remove_pending_change(self)
         self.composer.focus_input()
         self.adapter.answer_approval(message.ticket_id, message.choice)
         self._refresh_footer()
@@ -1646,7 +1653,7 @@ class TuiApp(App[ResumeSessionRequest]):
         prompt, options = bar.prompt, bar.options
         bar.remove()
         self.approval_bar = None
-        self.composer.display = True
+        app_support._remove_pending_change(self)
         self.composer.focus_input()
         # Real runtime routes through the broker (which parks the shared
         # needs-you item and fires the decision Notification the app
