@@ -33,6 +33,7 @@ Context = Literal[
     "rewind",  # rewind picker strip open
     "sessions",  # sessions picker strip open (S2: interactive session table)
     "themes",  # theme picker strip open (live preview; esc reverts)
+    "keys",  # which-key overlay open (read-only cheat sheet; esc/f1 closes)
     "approval",  # approval bar replaces the composer
     "needs_you",  # needs-you block focused
     "evidence",  # evidence block open
@@ -49,6 +50,7 @@ ALL_CONTEXTS: frozenset[Context] = frozenset(
         "rewind",
         "sessions",
         "themes",
+        "keys",
         "approval",
         "needs_you",
         "evidence",
@@ -103,6 +105,7 @@ _LANE_FOCUS: frozenset[Context] = frozenset({"lane_focus"})
 _REWIND: frozenset[Context] = frozenset({"rewind"})
 _SESSIONS: frozenset[Context] = frozenset({"sessions"})
 _THEMES: frozenset[Context] = frozenset({"themes"})
+_KEYS: frozenset[Context] = frozenset({"keys"})
 _APPROVAL: frozenset[Context] = frozenset({"approval"})
 _EVIDENCE: frozenset[Context] = frozenset({"evidence"})
 _RUNNING: frozenset[Context] = frozenset({"running"})
@@ -145,6 +148,12 @@ KEYMAP: tuple[Binding, ...] = (
     _b("show_ledger", ("ctrl+l",), "ctrl-l", NO_APPROVAL),
     _b("show_needs_you", ("ctrl+y",), "ctrl-y", NO_APPROVAL),
     _b("open_rewind", ("ctrl+r",), "ctrl-r", NO_APPROVAL),
+    # Which-key overlay: f1 toggles a read-only cheat sheet rendered FROM
+    # THIS TABLE (ui/keys_overlay.py), so the reference can never drift
+    # from what is actually bound. It never takes the composer's focus,
+    # and esc dismisses it via ESC_CHAIN's first entry. f1 claims no
+    # other slot in this table or in TextArea's defaults.
+    _b("show_keys", ("f1",), "f1 keys", NO_APPROVAL),
     # Return to the current/most-recent turn's final-answer start anchor
     # (AC2, compliance 2026-08-02 B1). ctrl+f is free in the global table
     # AND in ComposerInput's TextArea bindings (unlike ctrl+a/ctrl+e, which
@@ -230,6 +239,7 @@ KEYMAP: tuple[Binding, ...] = (
     _b("close_rewind", ("escape",), "esc", _REWIND),
     _b("close_sessions", ("escape",), "esc", _SESSIONS),
     _b("close_theme_picker", ("escape",), "esc", _THEMES),
+    _b("close_keys", ("escape",), "esc", _KEYS),
     _b("close_lanes", ("escape",), "esc", _LANES),
     _b("close_evidence", ("escape",), "esc", _EVIDENCE),
     _b("approval_deny", ("escape",), "esc", _APPROVAL),
@@ -241,6 +251,7 @@ KEYMAP: tuple[Binding, ...] = (
 
 
 ESC_CHAIN: tuple[tuple[Context, str], ...] = (
+    ("keys", "close_keys"),
     ("lane_focus", "lane_unfocus"),
     ("palette", "close_palette"),
     ("rewind", "close_rewind"),
@@ -251,6 +262,10 @@ ESC_CHAIN: tuple[tuple[Context, str], ...] = (
 )
 """Esc priority order (DESIGN-SPEC §5, extended by S2 for the sessions
 picker): the first entry whose context is active consumes the Esc press.
+``keys`` leads: the which-key overlay is pure read-only chrome, so while
+it is open Esc must dismiss it rather than peek at whatever lies beneath
+(closing a palette, unfocusing a lane, interrupting a turn are all real
+state changes the user did not ask for).
 ``sessions`` and ``themes`` sit right after ``rewind`` -- single-purpose
 picker strips opened by an explicit command, so they share precedence
 ahead of the more ambient ``lanes`` panel. (Approval and evidence esc handling are
@@ -270,6 +285,7 @@ FOOTER_HINTS: dict[str, str] = {
     "mention": "↑↓ select · enter/tab insert · esc close",
     "sessions": "↑↓ select · enter open · r resume · esc close",
     "themes": "↑↓ preview · enter keep · esc revert",
+    "keys": "esc/f1 close · typing still reaches the composer",
     "needs_you": "enter submit · ctrl-j newline · esc cancel",
     "running": "esc interrupt · enter steer · shift+enter queue",
     "idle": "",
@@ -334,6 +350,7 @@ HELP_ACTIONS: tuple[str, ...] = (
     "toggle_plan_overflow",
     "stash_prompt",
     "open_palette",
+    "show_keys",
 )
 """Actions worth teaching once, in ``/keys`` listing order (item D4).
 
@@ -368,6 +385,7 @@ ACTION_HELP: dict[str, str] = {
     "toggle_plan_overflow": "expand or collapse the plan panel's hidden rows",
     "stash_prompt": "stash the in-progress draft; /unstash restores it",
     "open_palette": "open the command palette",
+    "show_keys": "toggle the on-screen keys overlay (context-aware cheat sheet)",
 }
 """One-line descriptions for :func:`help_rows`, keyed by keymap action id.
 
