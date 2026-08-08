@@ -198,9 +198,8 @@ def _cmd_rename(ctx: CommandContext, args: str) -> None:
 
 
 def _cmd_sessions(ctx: CommandContext, args: str) -> None:
-    """``/sessions`` — list this project's stored sessions."""
-    del args
-    ctx.show_sessions()
+    """``/sessions [query]`` — list this project's stored sessions."""
+    ctx.show_sessions(args.strip())
 
 
 def _cmd_branch(ctx: CommandContext, args: str) -> None:
@@ -546,7 +545,7 @@ BUILTIN_COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec(
         group="Between",
         name="/sessions",
-        desc="list stored sessions for this project",
+        desc="list stored sessions; /sessions <query> filters",
         tag="built-in",
         handler=_cmd_sessions,
     ),

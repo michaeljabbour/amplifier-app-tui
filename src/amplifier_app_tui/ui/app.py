@@ -32,6 +32,7 @@ import asyncio
 import logging
 import threading
 import time
+from collections import Counter
 from decimal import Decimal
 from typing import Any
 
@@ -300,6 +301,11 @@ class TuiApp(App[ResumeSessionRequest]):
         self.live_tail = LiveTail(id="live-tail")
         self.notice_slot = NoticeSlot(id="notice-slot")
         self.palette = PaletteStrip(self._commands.specs, id="palette-strip")
+        self._command_usage: Counter[str] = Counter()
+        """Frecency counts for palette ranking — bumped on every slash
+        dispatch path (typed, palette-picked, steered, or queued). Fed to
+        the strip as a live read-through mapping; never persisted."""
+        self.palette.set_usage(self._command_usage)
         # Open registry (story #2): any runtime registration — skills at
         # boot, recipe/pipeline verbs later — re-feeds the palette rows.
         self._commands.subscribe(self._sync_palette_commands)
@@ -1094,22 +1100,35 @@ class TuiApp(App[ResumeSessionRequest]):
         ok, detail = await self.adapter.rename_session(name)
         self.show_notice(f"session renamed · {detail}" if ok else detail)
 
-    def show_sessions(self) -> None:
-        self.run_worker(self._show_sessions(), exclusive=False)
+    def show_sessions(self, query: str = "") -> None:
+        self.run_worker(self._show_sessions(query), exclusive=False)
 
-    async def _show_sessions(self) -> None:
-        """``/sessions``: open the interactive picker (S2 compliance gap 2).
+    async def _show_sessions(self, query: str = "") -> None:
+        """``/sessions [query]``: open the interactive picker (S2 compliance gap 2).
 
         An empty roster shows a notice instead of an empty strip (mirrors
-        ``open_rewind_strip`` on zero checkpoints). Enter opens a row's
-        full-id detail via :meth:`on_sessions_strip_session_activated`;
-        ``r`` requests a clean shutdown-and-resume of the highlighted row.
+        ``open_rewind_strip`` on zero checkpoints). A non-blank *query*
+        pre-filters the roster (substring or fuzzy over name, bundle, id,
+        and tags); a query that matches nothing costs a notice, never an
+        empty strip. Enter opens a row's full-id detail via
+        :meth:`on_sessions_strip_session_activated`; ``r`` requests a
+        clean shutdown-and-resume of the highlighted row.
         """
         summaries = await self.adapter.session_summaries()
         if not summaries:
             self.show_notice("no stored sessions \u00b7 this project has no history yet")
             return
-        self.sessions_strip.show_sessions(summaries, current=self.adapter.session_short)
+        query = query.strip()
+        if query:
+            from ..kernel.session_manager import summary_matches
+
+            summaries = [s for s in summaries if summary_matches(s, query)]
+            if not summaries:
+                self.show_notice(f"no sessions match '{query}'")
+                return
+        self.sessions_strip.show_sessions(
+            summaries, current=self.adapter.session_short, query=query
+        )
         self._refresh_footer()
 
     # -- prompt-stash (HGT from opencode) -----------------------------------
@@ -1610,6 +1629,10 @@ class TuiApp(App[ResumeSessionRequest]):
 
     # -- composer semantics -----------------------------------------------------------
 
+    def _note_command_use(self, name: str) -> None:
+        """Bump the frecency count for a dispatched slash command."""
+        self._command_usage[name.strip().casefold()] += 1
+
     def on_composer_submit(self, message: Composer.Submit) -> None:
         message.stop()
         text = message.text
@@ -1624,10 +1647,12 @@ class TuiApp(App[ResumeSessionRequest]):
         self.palette.apply_filter(None)
         if text.startswith("/"):
             if self._commands.parse_and_run(self._ctx, text):
+                self._note_command_use(text.split(maxsplit=1)[0])
                 self._refresh_footer()
                 return
             if selected is not None:
                 self._commands.run(selected.name, self._ctx)
+                self._note_command_use(selected.name)
                 self._refresh_footer()
                 return
             # Story #1 amendment to the mockup: zero matches no longer
@@ -1687,8 +1712,11 @@ class TuiApp(App[ResumeSessionRequest]):
         selected = self.palette.selected_command if self.palette.is_open else None
         if selected is not None:
             self.palette.apply_filter(None)
-            if not self._commands.parse_and_run(self._ctx, message.text):
+            if self._commands.parse_and_run(self._ctx, message.text):
+                self._note_command_use(message.text.split(maxsplit=1)[0])
+            else:
                 self._commands.run(selected.name, self._ctx)
+                self._note_command_use(selected.name)
             self._refresh_footer()
             return
         # A focused lane targets THAT delegate: mid-turn Enter steers the
@@ -1737,8 +1765,11 @@ class TuiApp(App[ResumeSessionRequest]):
         selected = self.palette.selected_command if self.palette.is_open else None
         if selected is not None:
             self.palette.apply_filter(None)
-            if not self._commands.parse_and_run(self._ctx, message.text):
+            if self._commands.parse_and_run(self._ctx, message.text):
+                self._note_command_use(message.text.split(maxsplit=1)[0])
+            else:
                 self._commands.run(selected.name, self._ctx)
+                self._note_command_use(selected.name)
             self._refresh_footer()
             return
         if not self.turn_active:
@@ -1939,6 +1970,7 @@ class TuiApp(App[ResumeSessionRequest]):
         self.composer.clear()
         self.palette.apply_filter(None)
         self._commands.run(message.command.name, self._ctx)
+        self._note_command_use(message.command.name)
         self.composer.focus_input()
         self._refresh_footer()
 
