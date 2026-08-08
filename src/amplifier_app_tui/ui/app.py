@@ -80,7 +80,7 @@ from .lanes_panel import LanesPanel
 from .live_tail import LiveTail
 from .needs_you import NeedsYouList
 from .notices import NoticeSlot
-from .palette import PaletteStrip
+from .palette import CommandSpec as PaletteCommandSpec, PaletteStrip
 from .plan_panel import PlanPanel, plan_drill_notice, plan_overflow_notice
 from .queued_strip import QueuedStrip
 from .reducer import TranscriptReducer
@@ -1633,6 +1633,17 @@ class TuiApp(App[ResumeSessionRequest]):
         """Bump the frecency count for a dispatched slash command."""
         self._command_usage[name.strip().casefold()] += 1
 
+    def _palette_selection_runs(self, text: str, selected: PaletteCommandSpec) -> bool:
+        """AC3 guard for Enter-runs-top-match: the implicit top row runs
+        only while the typed head is still a prefix of it (recall-as-you-
+        type). Anything else — including a fuzzy recall row — needs a
+        deliberate arrow-key move first, so a typo'd command costs a
+        suggestion notice instead of silently invoking a different one."""
+        if self.palette.selection_explicit:
+            return True
+        head = text.split(maxsplit=1)[0]
+        return selected.name.casefold().startswith(head.casefold())
+
     def on_composer_submit(self, message: Composer.Submit) -> None:
         message.stop()
         text = message.text
@@ -1650,7 +1661,7 @@ class TuiApp(App[ResumeSessionRequest]):
                 self._note_command_use(text.split(maxsplit=1)[0])
                 self._refresh_footer()
                 return
-            if selected is not None:
+            if selected is not None and self._palette_selection_runs(text, selected):
                 self._commands.run(selected.name, self._ctx)
                 self._note_command_use(selected.name)
                 self._refresh_footer()
@@ -1710,7 +1721,7 @@ class TuiApp(App[ResumeSessionRequest]):
         # Mockup onKeyDown: an open palette match runs BEFORE the steer
         # branch — a slash command typed mid-turn runs, never steers (§6).
         selected = self.palette.selected_command if self.palette.is_open else None
-        if selected is not None:
+        if selected is not None and self._palette_selection_runs(message.text, selected):
             self.palette.apply_filter(None)
             if self._commands.parse_and_run(self._ctx, message.text):
                 self._note_command_use(message.text.split(maxsplit=1)[0])
@@ -1763,7 +1774,7 @@ class TuiApp(App[ResumeSessionRequest]):
         # Mockup onKeyDown: every Enter — shift held or not — runs an open
         # palette's top match BEFORE the queue/submit branch (§5/§6).
         selected = self.palette.selected_command if self.palette.is_open else None
-        if selected is not None:
+        if selected is not None and self._palette_selection_runs(message.text, selected):
             self.palette.apply_filter(None)
             if self._commands.parse_and_run(self._ctx, message.text):
                 self._note_command_use(message.text.split(maxsplit=1)[0])

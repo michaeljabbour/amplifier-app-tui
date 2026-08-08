@@ -286,6 +286,7 @@ class PaletteStrip(VerticalScroll):
         self._selected = 0
         self._usage: Mapping[str, int] = {}
         self._highlights: dict[str, tuple[int, ...]] = {}
+        self._selection_explicit = False
 
     # -- public API ----------------------------------------------------
 
@@ -307,6 +308,12 @@ class PaletteStrip(VerticalScroll):
         if not self._filtered:
             return None
         return self._filtered[self._selected]
+
+    @property
+    def selection_explicit(self) -> bool:
+        """True once the user moves the highlight with the arrow keys —
+        the implicit top row alone is not deliberate intent (AC3)."""
+        return self._selection_explicit
 
     def set_commands(self, commands: Sequence[CommandSpec]) -> None:
         """Replace the command list (re-applies the current filter)."""
@@ -332,6 +339,7 @@ class PaletteStrip(VerticalScroll):
             self._filter = None
             self._filtered = ()
             self._selected = 0
+            self._selection_explicit = False
             self._highlights = {}
             self.display = False
             self.remove_children()
@@ -343,12 +351,14 @@ class PaletteStrip(VerticalScroll):
             for spec in self._filtered
         }
         self._selected = 0
+        self._selection_explicit = False
         self._rebuild()
 
     def move_selection(self, delta: int) -> None:
         """Move the highlighted row by *delta*, clamped to the list."""
         if not self._filtered:
             return
+        self._selection_explicit = True
         self._selected = max(0, min(len(self._filtered) - 1, self._selected + delta))
         self._apply_selection()
 

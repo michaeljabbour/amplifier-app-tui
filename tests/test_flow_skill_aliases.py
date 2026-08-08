@@ -138,7 +138,11 @@ async def test_skill_name_and_shortcut_register_and_show_in_palette() -> None:
 
         await type_text(pilot, "/cosam")
         assert await wait_for(pilot, lambda: app.palette.is_open)
-        assert [c.name for c in app.palette.filtered_commands] == ["/cosam"]
+        # The exact alias leads; the canonical row trails as fuzzy recall.
+        assert [c.name for c in app.palette.filtered_commands] == [
+            "/cosam",
+            "/cranky-old-sam",
+        ]
         alias = app.palette.filtered_commands[0]
         assert alias.tag == "skill" and "cranky-old-sam" in alias.desc
 
