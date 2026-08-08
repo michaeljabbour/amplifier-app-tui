@@ -12,6 +12,8 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+from .fuzzy import fuzzy_indices, fuzzy_score
+
 IGNORED_DIRECTORIES = frozenset(
     {
         ".git",
@@ -70,29 +72,45 @@ def filter_file_mentions(paths: Sequence[str], query: str, *, limit: int = 8) ->
     """Rank file paths for a case-insensitive composer query.
 
     Basename prefix matches lead, then path prefix, basename substring, and
-    path substring. Shorter paths win within a tier; the original path breaks
-    ties deterministically.
+    path substring; a fuzzy subsequence pass over the basename and then the
+    full path catches skipped-letter queries (``tkn`` finds ``tokens.py``).
+    Within a tier, higher match quality leads, shorter paths win next, and
+    the original path breaks ties deterministically.
     """
     needle = query.casefold().lstrip("@")
-    ranked: list[tuple[int, int, str, str]] = []
+    ranked: list[tuple[int, float, int, str, str]] = []
     for path in paths:
         folded = path.casefold()
         basename = path.rsplit("/", 1)[-1].casefold()
+        quality = 0.0
         if not needle:
             tier = 0
         elif basename.startswith(needle):
             tier = 0
+            quality = fuzzy_score(needle, basename) or 0.0
         elif folded.startswith(needle):
             tier = 1
+            quality = fuzzy_score(needle, folded) or 0.0
         elif needle in basename:
             tier = 2
+            quality = fuzzy_score(needle, basename) or 0.0
         elif needle in folded:
             tier = 3
+            quality = fuzzy_score(needle, folded) or 0.0
         else:
-            continue
-        ranked.append((tier, len(path), folded, path))
+            indices = fuzzy_indices(needle, basename)
+            if indices is not None:
+                tier = 4
+                quality = fuzzy_score(needle, basename, indices) or 0.0
+            else:
+                indices = fuzzy_indices(needle, folded)
+                if indices is None:
+                    continue
+                tier = 5
+                quality = fuzzy_score(needle, folded, indices) or 0.0
+        ranked.append((tier, -quality, len(path), folded, path))
     ranked.sort()
-    return tuple(item[3] for item in ranked[:limit])
+    return tuple(item[4] for item in ranked[:limit])
 
 
 __all__ = [
