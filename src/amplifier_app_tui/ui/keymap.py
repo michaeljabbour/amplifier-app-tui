@@ -32,6 +32,7 @@ Context = Literal[
     "lane_focus",  # a subagent lane is focused (child transcript shown)
     "rewind",  # rewind picker strip open
     "sessions",  # sessions picker strip open (S2: interactive session table)
+    "themes",  # theme picker strip open (live preview; esc reverts)
     "approval",  # approval bar replaces the composer
     "needs_you",  # needs-you block focused
     "evidence",  # evidence block open
@@ -47,6 +48,7 @@ ALL_CONTEXTS: frozenset[Context] = frozenset(
         "lane_focus",
         "rewind",
         "sessions",
+        "themes",
         "approval",
         "needs_you",
         "evidence",
@@ -100,6 +102,7 @@ _LANES: frozenset[Context] = frozenset({"lanes"})
 _LANE_FOCUS: frozenset[Context] = frozenset({"lane_focus"})
 _REWIND: frozenset[Context] = frozenset({"rewind"})
 _SESSIONS: frozenset[Context] = frozenset({"sessions"})
+_THEMES: frozenset[Context] = frozenset({"themes"})
 _APPROVAL: frozenset[Context] = frozenset({"approval"})
 _EVIDENCE: frozenset[Context] = frozenset({"evidence"})
 _RUNNING: frozenset[Context] = frozenset({"running"})
@@ -193,6 +196,11 @@ KEYMAP: tuple[Binding, ...] = (
     # shutdown-and-relaunch through the existing resume path. Enter remains
     # the distinct inspect/copy-details action.
     _b("sessions_resume", ("r",), "r resume", _SESSIONS),
+    # Theme picker (bare /theme): moving the highlight previews live;
+    # enter keeps, esc reverts to the opening theme.
+    _b("themes_up", ("up",), "↑↓ preview", _THEMES),
+    _b("themes_down", ("down",), "↑↓ preview", _THEMES),
+    _b("themes_choose", ("enter",), "enter keep", _THEMES),
     _b("evidence_prev", ("left",), "←/→", _EVIDENCE),
     _b("evidence_next", ("right",), "←/→", _EVIDENCE),
     _b("evidence_expand", ("enter",), "enter", _EVIDENCE),
@@ -221,6 +229,7 @@ KEYMAP: tuple[Binding, ...] = (
     _b("close_palette", ("escape",), "esc", _PALETTE),
     _b("close_rewind", ("escape",), "esc", _REWIND),
     _b("close_sessions", ("escape",), "esc", _SESSIONS),
+    _b("close_theme_picker", ("escape",), "esc", _THEMES),
     _b("close_lanes", ("escape",), "esc", _LANES),
     _b("close_evidence", ("escape",), "esc", _EVIDENCE),
     _b("approval_deny", ("escape",), "esc", _APPROVAL),
@@ -236,14 +245,15 @@ ESC_CHAIN: tuple[tuple[Context, str], ...] = (
     ("palette", "close_palette"),
     ("rewind", "close_rewind"),
     ("sessions", "close_sessions"),
+    ("themes", "close_theme_picker"),
     ("lanes", "close_lanes"),
     ("running", "interrupt_running"),
 )
 """Esc priority order (DESIGN-SPEC §5, extended by S2 for the sessions
 picker): the first entry whose context is active consumes the Esc press.
-``sessions`` sits right after ``rewind`` -- both are single-purpose picker
-strips opened by an explicit command, so they share precedence ahead of
-the more ambient ``lanes`` panel. (Approval and evidence esc handling are
+``sessions`` and ``themes`` sit right after ``rewind`` -- single-purpose
+picker strips opened by an explicit command, so they share precedence
+ahead of the more ambient ``lanes`` panel. (Approval and evidence esc handling are
 context-exclusive — the approval bar owns the keyboard, and evidence esc
 only fires while the evidence block has focus — so they sit outside the
 global chain.)"""
@@ -259,6 +269,7 @@ FOOTER_HINTS: dict[str, str] = {
     "palette": "↑↓ select · enter run · esc close",
     "mention": "↑↓ select · enter/tab insert · esc close",
     "sessions": "↑↓ select · enter open · r resume · esc close",
+    "themes": "↑↓ preview · enter keep · esc revert",
     "needs_you": "enter submit · ctrl-j newline · esc cancel",
     "running": "esc interrupt · enter steer · shift+enter queue",
     "idle": "",
