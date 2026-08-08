@@ -982,6 +982,7 @@ def handle_esc(app: TuiApp, *, now: float | None = None) -> None:
         "palette": lambda: app.palette.filter_text is not None,
         "rewind": lambda: bool(app.rewind.display),
         "sessions": lambda: bool(app.sessions_strip.display),
+        "themes": lambda: bool(app.theme_strip.display),
         "lanes": lambda: bool(app.lanes_panel.display),
         "running": lambda: app.turn_active,
     }
@@ -990,6 +991,7 @@ def handle_esc(app: TuiApp, *, now: float | None = None) -> None:
         "close_palette": app.close_palette,
         "close_rewind": app.rewind.close_strip,
         "close_sessions": app.sessions_strip.close_strip,
+        "close_theme_picker": app.theme_strip.close_strip,
         "close_lanes": app.lanes_panel.action_close,
         "interrupt_running": app.interrupt_turn,
     }

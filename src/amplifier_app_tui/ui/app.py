@@ -64,6 +64,7 @@ from . import app_support, keymap, notifications, transcript_render
 from .approval_bar import ApprovalBar
 from .chrome import APP_TITLE_NAME, TitleBar, write_terminal_title
 from .sessions_strip import ResumeSessionRequest, SessionsStrip
+from .theme_strip import ThemeStrip
 from .command_context import AppCommandContext
 from .composer import Composer, ComposerDraft
 from .decision_capture import DecisionCaptureStrip
@@ -313,6 +314,10 @@ class TuiApp(App[ResumeSessionRequest]):
         self.plan_panel = PlanPanel(id="plan-panel")
         self.rewind = RewindStrip(id="rewind-strip")
         self.sessions_strip = SessionsStrip(id="sessions-strip")
+        self.theme_strip = ThemeStrip(id="theme-strip")
+        self._theme_picker_revert: str | None = None
+        """Theme active when the picker opened; restored if Esc closes the
+        picker without a keep (live-preview revert), cleared on choose."""
         self.queued_strip = QueuedStrip(id="queued-strip")
         self.file_mentions = FileMentionStrip(id="file-mentions")
         self.history_recall = HistoryRecallStrip(id="history-recall")
@@ -334,6 +339,7 @@ class TuiApp(App[ResumeSessionRequest]):
             yield self.plan_panel
         yield self.rewind
         yield self.sessions_strip
+        yield self.theme_strip
         yield self.queued_strip
         yield self.file_mentions
         yield self.history_recall
@@ -2522,19 +2528,62 @@ class TuiApp(App[ResumeSessionRequest]):
     def set_theme_by_name(self, name: str) -> None:
         """Switch the spec theme at runtime (``/theme``, DESIGN-SPEC §1).
 
-        Empty *name* cycles slate → graphite → carbon; unknown names get
-        a notice listing the valid themes.
+        A named theme jumps straight to it; empty *name* opens the
+        live-preview picker (:meth:`open_theme_picker`); unknown names
+        get a notice listing the valid themes.
         """
         names = tuple(THEME_TOKENS)
         if not name:
-            current = self.theme.removeprefix(THEME_NAME_PREFIX)
-            index = names.index(current) if current in names else -1
-            name = names[(index + 1) % len(names)]
+            self.open_theme_picker()
+            return
         if name not in THEME_TOKENS:
             self.show_notice(f"unknown theme · {name} · themes: {', '.join(names)}")
             return
         self.theme = theme_id(name)
         self.show_notice(f"theme {name}")
+
+    def open_theme_picker(self) -> None:
+        """Bare ``/theme``: open the live-preview theme picker.
+
+        Records the active theme so Esc reverts to it; arrow keys preview
+        each theme as a real repaint and enter keeps the highlight.
+        """
+        current = self.theme.removeprefix(THEME_NAME_PREFIX)
+        self._theme_picker_revert = current
+        self.theme_strip.show_picker(tuple(THEME_TOKENS), current=current)
+        self._refresh_footer()
+
+    def on_theme_strip_preview_theme(self, message: ThemeStrip.PreviewTheme) -> None:
+        """Live preview: repaint in the highlighted theme (no notice --
+        nothing is kept or reverted yet)."""
+        message.stop()
+        if message.name in THEME_TOKENS:
+            self.theme = theme_id(message.name)
+
+    def on_theme_strip_theme_chosen(self, message: ThemeStrip.ThemeChosen) -> None:
+        """Enter/click keeps the theme: clear the revert marker BEFORE
+        closing so the Closed handler doesn't restore the opening theme."""
+        message.stop()
+        name = message.name
+        self._theme_picker_revert = None
+        self.theme_strip.close_strip()
+        self._restore_keyboard()
+        self._refresh_footer()
+        if name in THEME_TOKENS:
+            self.theme = theme_id(name)
+            self.show_notice(f"theme {name}")
+
+    def on_theme_strip_closed(self, message: ThemeStrip.Closed) -> None:
+        """Esc close reverts the preview to the opening theme (the marker
+        is already None when the close followed a keep, so that path
+        collapses to just focus/refresh)."""
+        message.stop()
+        revert = self._theme_picker_revert
+        self._theme_picker_revert = None
+        if revert is not None and revert in THEME_TOKENS:
+            self.theme = theme_id(revert)
+        self._restore_keyboard()
+        self._refresh_footer()
 
     def open_permissions(self) -> None:
         self.append_block(
@@ -2563,6 +2612,8 @@ class TuiApp(App[ResumeSessionRequest]):
             return "palette"
         if self.sessions_strip.is_open:
             return "sessions"
+        if self.theme_strip.is_open:
+            return "themes"
         if self.turn_active:
             return "running"
         return "idle"
