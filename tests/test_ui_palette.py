@@ -11,6 +11,7 @@ from amplifier_app_tui.ui.palette import (
     CMD_COL_MIN_WIDTH,
     PALETTE_GROUPS,
     PaletteStrip,
+    command_match_indices,
     command_row_cells,
     filter_commands,
     group_header_text,
@@ -81,11 +82,37 @@ def test_real_command_registry_satisfies_palette_protocol() -> None:
         assert spec.group in PALETTE_GROUPS
 
 
-def test_filter_is_substring_on_command_name() -> None:
+def test_filter_ranks_prefix_then_substring_then_fuzzy() -> None:
     assert [c.name for c in filter_commands(COMMANDS, "/")] == [c.name for c in COMMANDS]
-    assert [c.name for c in filter_commands(COMMANDS, "/mo")] == ["/mode"]
-    assert [c.name for c in filter_commands(COMMANDS, "/re")] == ["/rewind"]
+    # "/mo": /mode by prefix; /improve + /permissions only match fuzzy.
+    assert [c.name for c in filter_commands(COMMANDS, "/mo")] == [
+        "/mode",
+        "/improve",
+        "/permissions",
+    ]
+    # "/re": /rewind by prefix; /improve only matches fuzzy.
+    assert [c.name for c in filter_commands(COMMANDS, "/re")] == ["/rewind", "/improve"]
+    # Pure fuzzy recall: skipped letters still find the command.
+    assert [c.name for c in filter_commands(COMMANDS, "/ldg")] == ["/ledger"]
     assert filter_commands(COMMANDS, "/nope") == ()
+
+
+def test_filter_usage_breaks_ties_within_a_tier() -> None:
+    # Both fuzzy matches for "/mo": five uses outrank the better raw score.
+    assert [c.name for c in filter_commands(COMMANDS, "/mo", usage={"/permissions": 5})] == [
+        "/mode",
+        "/permissions",
+        "/improve",
+    ]
+
+
+def test_command_match_indices_report_name_offsets() -> None:
+    # Contiguous span for prefix/substring, per-hit offsets for fuzzy;
+    # coordinates count the leading "/".
+    assert command_match_indices("/mode", "/mo") == (1, 2)
+    assert command_match_indices("/ledger", "/ldg") == (1, 3, 4)
+    assert command_match_indices("/mode", "/") == ()
+    assert command_match_indices("/mode", "/zzz") == ()
 
 
 def test_group_headers_only_when_filter_is_exactly_slash() -> None:
