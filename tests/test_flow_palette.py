@@ -97,11 +97,13 @@ async def test_slash_opens_palette_with_group_headers_and_filters() -> None:
         # Rows carry the right-aligned origin tag data (built-in / skill).
         assert {c.tag for c in app.palette.filtered_commands} == {"built-in", "skill"}
 
-        # Live substring filter as you type: "/led" → only /ledger, no headers.
+        # Live ranked filter: "/led" leads /ledger (prefix) with the fuzzy
+        # /allowed-dirs recall row behind it, and no group headers.
         await type_text(pilot, "led")
         assert await wait_for(
             pilot,
-            lambda: tuple(c.name for c in app.palette.filtered_commands) == ("/ledger",),
+            lambda: tuple(c.name for c in app.palette.filtered_commands)
+            == ("/ledger", "/allowed-dirs"),
         )
         assert await wait_for(pilot, lambda: not list(app.palette.query(_GroupHeader)))
 
@@ -114,7 +116,8 @@ async def test_enter_runs_top_match_with_user_line_echo() -> None:
         await type_text(pilot, "/led")
         assert await wait_for(
             pilot,
-            lambda: tuple(c.name for c in app.palette.filtered_commands) == ("/ledger",),
+            lambda: tuple(c.name for c in app.palette.filtered_commands)
+            == ("/ledger", "/allowed-dirs"),
         )
         await pilot.press("enter")
         await pilot.pause()
@@ -288,12 +291,13 @@ async def test_trailing_space_keeps_palette_open_with_trimmed_filter() -> None:
     async with app.run_test(size=SIZE) as pilot:
         await seed_done(pilot, app)
         await type_text(pilot, "/mode ")
-        # substring filter: "/mode" matches /mode, /modes and /model
+        # Ranked filter: /mode, /modes, /model by prefix, then the fuzzy
+        # /codemode + /module recall rows (scored, /codemode first).
         assert await wait_for(
             pilot,
             lambda: (
                 tuple(c.name for c in app.palette.filtered_commands)
-                == ("/mode", "/modes", "/model")
+                == ("/mode", "/modes", "/model", "/codemode", "/module")
             ),
         )
         assert app.palette.is_open
