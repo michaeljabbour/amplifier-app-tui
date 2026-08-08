@@ -531,3 +531,28 @@ def test_resolve_for_resume_refuses_indexing_state(store: SessionStore) -> None:
     result = sm.resolve_for_resume(store, "nometa01")
 
     assert result.status == "corrupt"
+
+
+# -- summary_matches (/sessions query) --------------------------------------
+
+
+def test_summary_matches_blank_query_matches_everything() -> None:
+    summary = sm.SessionSummary(session_id="aaaa1111")
+    assert sm.summary_matches(summary, "")
+    assert sm.summary_matches(summary, "   ")
+
+
+def test_summary_matches_substring_case_insensitive() -> None:
+    summary = sm.SessionSummary(session_id="aaaa1111bbbb", name="Auth Sweep", bundle="tui")
+    assert sm.summary_matches(summary, "auth")
+    assert sm.summary_matches(summary, "sweep")
+    assert sm.summary_matches(summary, "TUI")  # bundle
+    assert not sm.summary_matches(summary, "zzz")
+
+
+def test_summary_matches_fuzzy_over_name_id_and_tags() -> None:
+    summary = sm.SessionSummary(session_id="aaaa1111bbbb", name="auth-sweep", tags=("backend",))
+    assert sm.summary_matches(summary, "swp")  # fuzzy over name
+    assert sm.summary_matches(summary, "aa11")  # short-id substring
+    assert sm.summary_matches(summary, "bckn")  # fuzzy over tag
+    assert not sm.summary_matches(summary, "zzz")
