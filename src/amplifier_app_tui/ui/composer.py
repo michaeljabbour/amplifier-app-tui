@@ -157,6 +157,17 @@ class ComposerInput(TextArea):
     stock TextArea behavior.
     """
 
+    BINDINGS = [
+        # Readline word ops (alt+b/f/d): the shell muscle memory the stock
+        # TextArea coverage (ctrl+arrows for word moves, alt+delete for
+        # word kill) doesn't reach. These merge with TextArea's defaults;
+        # the composer's own _on_key intercepts below leave alt+ chords to
+        # ordinary binding dispatch.
+        ("alt+b", "cursor_word_left"),
+        ("alt+f", "cursor_word_right"),
+        ("alt+d", "delete_word_right"),
+    ]
+
     DEFAULT_CSS = """
     ComposerInput {
         width: 1fr;
