@@ -23,8 +23,9 @@ outside the chain:
     4             rewind                 close the rewind picker strip
     5             sessions               close the sessions picker strip
     6             themes                 close the theme picker strip
-    7             lanes                  close the agent-lanes panel
-    8             running                interrupt the running turn
+    7             timeline               close the timeline scrubber strip
+    8             lanes                  close the agent-lanes panel
+    9             running                interrupt the running turn
     ============  =====================  ==============================
 """
 
@@ -67,6 +68,7 @@ from .approval_bar import ApprovalBar
 from .chrome import APP_TITLE_NAME, TitleBar, write_terminal_title
 from .sessions_strip import ResumeSessionRequest, SessionsStrip
 from .theme_strip import ThemeStrip
+from .timeline_strip import TimelineStrip
 from .command_context import AppCommandContext
 from .composer import Composer, ComposerDraft
 from .decision_capture import DecisionCaptureStrip
@@ -318,6 +320,7 @@ class TuiApp(App[ResumeSessionRequest]):
         self.rewind = RewindStrip(id="rewind-strip")
         self.sessions_strip = SessionsStrip(id="sessions-strip")
         self.theme_strip = ThemeStrip(id="theme-strip")
+        self.timeline_strip = TimelineStrip(id="timeline-strip")
         self._theme_picker_revert: str | None = None
         """Theme active when the picker opened; restored if Esc closes the
         picker without a keep (live-preview revert), cleared on choose."""
@@ -344,6 +347,7 @@ class TuiApp(App[ResumeSessionRequest]):
         yield self.rewind
         yield self.sessions_strip
         yield self.theme_strip
+        yield self.timeline_strip
         yield self.queued_strip
         yield self.file_mentions
         yield self.history_recall
@@ -2097,6 +2101,27 @@ class TuiApp(App[ResumeSessionRequest]):
         self._restore_keyboard()
         self._refresh_footer()
 
+    def on_timeline_strip_moved(self, message: TimelineStrip.Moved) -> None:
+        """Cursor move scrubs the transcript live (theme-picker preview idiom)."""
+        message.stop()
+        self.transcript.scroll_block_visible(message.block_id, top=True)
+
+    def on_timeline_strip_type_through(self, message: TimelineStrip.TypeThrough) -> None:
+        # Same mockup contract as the rewind picker: printable keys typed
+        # at the strip land in the composer ("/" opens the palette live).
+        message.stop()
+        self.composer.focus_input()
+        self.composer.insert_text(message.character)
+
+    def on_timeline_strip_closed(self, message: TimelineStrip.Closed) -> None:
+        """Enter keeps the landed scroll position; esc returns to the tail --
+        a pure look-around must not move anything (theme-picker revert idiom)."""
+        message.stop()
+        if not message.kept:
+            self.transcript.scroll_end(animate=False, immediate=True)
+        self._restore_keyboard()
+        self._refresh_footer()
+
     def on_sessions_strip_session_activated(self, message: SessionsStrip.SessionActivated) -> None:
         """A session row was activated (Enter or click) -- S2 gap 1 + 2:
         show its full-id detail (``r``/the trailing glyph is the distinct
@@ -2376,12 +2401,25 @@ class TuiApp(App[ResumeSessionRequest]):
         self.show_notice(f"tail · {record.lane.name}")
 
     def action_toggle_thinking(self) -> None:
-        """ctrl+g: expand/collapse thinking (issue #129).
+        """ctrl+g: thinking peek while a turn runs, timeline scrubber when idle.
 
-        The durable home is the transcript's collapsible Thinking block, so
-        ctrl-g toggles the newest one and scrolls it into view. When no
-        durable block exists yet (a still-streaming demo turn), it falls
-        back to PR #128's ephemeral live-tail reveal (peek ⇄ content)."""
+        One chord, two context-exclusive meanings (the keymap table holds
+        both on disjoint contexts): a running turn has a live box worth
+        peeking at, an idle session does not -- there ctrl+g opens the
+        turn film strip instead, and while that strip is open it
+        toggle-closes it (the f1 overlay idiom).
+
+        Thinking branch (issue #129): the durable home is the transcript's
+        collapsible Thinking block, so ctrl-g toggles the newest one and
+        scrolls it into view. When no durable block exists yet (a
+        still-streaming demo turn), it falls back to PR #128's ephemeral
+        live-tail reveal (peek ⇄ content)."""
+        if self.timeline_strip.display:
+            self.timeline_strip.close_strip()
+            return
+        if not self.turn_active and self.footer_context() == "idle":
+            app_support.open_timeline(self)
+            return
         for block in reversed(self.transcript.blocks):
             if block.kind == "thinking" and block.text:
                 toggled = block.model_copy(update={"expanded": not block.expanded})
@@ -2649,6 +2687,8 @@ class TuiApp(App[ResumeSessionRequest]):
             return "sessions"
         if self.theme_strip.is_open:
             return "themes"
+        if self.timeline_strip.display:
+            return "timeline"
         if self.turn_active:
             return "running"
         return "idle"

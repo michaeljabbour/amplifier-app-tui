@@ -37,6 +37,7 @@ from ..model.queues import NeedsYouItem
 from . import keymap, notifications
 from .footer import FooterState
 from .plan_panel import plan_counts, plan_panel_max_height, plan_panel_width
+from .timeline_strip import TimelineEntry, snippet_of
 from .transcript import TranscriptView
 
 if TYPE_CHECKING:
@@ -972,6 +973,32 @@ def go_back_to_parent(app: TuiApp) -> None:
     app.run_worker(app.transcript.restore_main(), exclusive=False)
 
 
+def timeline_entries(app: TuiApp) -> tuple[TimelineEntry, ...]:
+    """One jump target per completed turn, scanned from the visible
+    transcript: each turn rule pairs with the user_line that opened its
+    turn (a rule is cut at turn END, so the scan pairs it with the prompt
+    line seen before it)."""
+    entries: list[TimelineEntry] = []
+    pending_prompt = ""
+    for block in app.transcript.blocks:
+        if block.kind == "user_line":
+            pending_prompt = block.text
+        elif block.kind == "turn_rule":
+            entries.append(TimelineEntry(block.id, len(entries) + 1, snippet_of(pending_prompt)))
+            pending_prompt = ""
+    return tuple(entries)
+
+
+def open_timeline(app: TuiApp) -> None:
+    """ctrl+g while idle: open the timeline scrubber on the session's turns."""
+    entries = timeline_entries(app)
+    if not entries:
+        app.show_notice("no turns yet · nothing to scrub")
+        return
+    app.timeline_strip.show_entries(entries)
+    app._refresh_footer()
+
+
 def _strip_is_open(app: TuiApp, attr: str) -> bool:
     """Whether an optional strip-like widget exists and is displayed."""
     strip = getattr(app, attr, None)
@@ -1006,6 +1033,7 @@ def handle_esc(app: TuiApp, *, now: float | None = None) -> None:
         "rewind": lambda: _strip_is_open(app, "rewind"),
         "sessions": lambda: _strip_is_open(app, "sessions_strip"),
         "themes": lambda: _strip_is_open(app, "theme_strip"),
+        "timeline": lambda: _strip_is_open(app, "timeline_strip"),
         "lanes": lambda: _strip_is_open(app, "lanes_panel"),
         "running": lambda: app.turn_active,
     }
@@ -1016,6 +1044,7 @@ def handle_esc(app: TuiApp, *, now: float | None = None) -> None:
         "close_rewind": lambda: _close_strip(app, "rewind", "close_strip"),
         "close_sessions": lambda: _close_strip(app, "sessions_strip", "close_strip"),
         "close_theme_picker": lambda: _close_strip(app, "theme_strip", "close_strip"),
+        "close_timeline": lambda: _close_strip(app, "timeline_strip", "close_strip"),
         "close_lanes": lambda: _close_strip(app, "lanes_panel", "action_close"),
         "interrupt_running": app.interrupt_turn,
     }
