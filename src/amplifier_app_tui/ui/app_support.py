@@ -10,7 +10,7 @@ surface — no hidden state.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from time import monotonic
@@ -70,6 +70,7 @@ _GLOBAL_ACTIONS = frozenset(
         "plan_drilldown",
         "toggle_plan_overflow",
         "stash_prompt",
+        "show_keys",
     }
 )
 
@@ -971,28 +972,51 @@ def go_back_to_parent(app: TuiApp) -> None:
     app.run_worker(app.transcript.restore_main(), exclusive=False)
 
 
+def _strip_is_open(app: TuiApp, attr: str) -> bool:
+    """Whether an optional strip-like widget exists and is displayed."""
+    strip = getattr(app, attr, None)
+    if strip is None:
+        return False
+    is_open = getattr(strip, "is_open", None)
+    if isinstance(is_open, bool):
+        return is_open
+    return bool(getattr(strip, "display", False))
+
+
+def _close_strip(app: TuiApp, attr: str, method_name: str) -> None:
+    """Close an optional strip-like widget if the app has it."""
+    strip = getattr(app, attr, None)
+    if strip is None:
+        return
+    method = getattr(strip, method_name, None)
+    if callable(method):
+        method()
+
+
 def handle_esc(app: TuiApp, *, now: float | None = None) -> None:
     """Resolve Esc priority plus interrupt-then-backtrack (spec §5)."""
     pressed_at = monotonic() if now is None else now
-    checks = {
+    checks: dict[keymap.Context, Callable[[], bool]] = {
+        "keys": lambda: _strip_is_open(app, "keys_overlay"),
         "lane_focus": lambda: app.transcript.focused_lane is not None,
         # Mockup Escape: ``if (this.palFilter !== null)`` — ANY live slash
         # filter consumes the Esc, even a zero-match one whose strip is
         # hidden, so typed "/…" text never falls through to interrupt.
         "palette": lambda: app.palette.filter_text is not None,
-        "rewind": lambda: bool(app.rewind.display),
-        "sessions": lambda: bool(app.sessions_strip.display),
-        "themes": lambda: bool(app.theme_strip.display),
-        "lanes": lambda: bool(app.lanes_panel.display),
+        "rewind": lambda: _strip_is_open(app, "rewind"),
+        "sessions": lambda: _strip_is_open(app, "sessions_strip"),
+        "themes": lambda: _strip_is_open(app, "theme_strip"),
+        "lanes": lambda: _strip_is_open(app, "lanes_panel"),
         "running": lambda: app.turn_active,
     }
-    actions = {
+    actions: dict[str, Callable[[], None]] = {
+        "close_keys": lambda: _close_strip(app, "keys_overlay", "close"),
         "lane_unfocus": lambda: go_back_to_parent(app),
         "close_palette": app.close_palette,
-        "close_rewind": app.rewind.close_strip,
-        "close_sessions": app.sessions_strip.close_strip,
-        "close_theme_picker": app.theme_strip.close_strip,
-        "close_lanes": app.lanes_panel.action_close,
+        "close_rewind": lambda: _close_strip(app, "rewind", "close_strip"),
+        "close_sessions": lambda: _close_strip(app, "sessions_strip", "close_strip"),
+        "close_theme_picker": lambda: _close_strip(app, "theme_strip", "close_strip"),
+        "close_lanes": lambda: _close_strip(app, "lanes_panel", "action_close"),
         "interrupt_running": app.interrupt_turn,
     }
     for context, action in keymap.ESC_CHAIN:

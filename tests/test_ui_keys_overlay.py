@@ -125,3 +125,120 @@ def test_keys_overlay_has_no_hex_literals() -> None:
     smuggle hex values past tests/test_ui_themes.py's single-source rule."""
     source = inspect.getsource(keys_overlay)
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", source)
+
+
+# -- app wiring (the real TuiApp over the demo runtime) --------------------------
+
+from amplifier_app_tui.ui.app import TuiApp  # noqa: E402
+from amplifier_app_tui.ui.demo_wiring import DemoRuntimeAdapter  # noqa: E402
+
+from .test_flow_helpers import seed_done, set_mode, type_text, wait_for  # noqa: E402
+
+
+async def _reach_pytest_approval(pilot, app: TuiApp) -> None:
+    """Seed, switch to chat (auto is the boot default), run the build turn
+    up to its chat-mode pytest approval."""
+    await seed_done(pilot, app)
+    await set_mode(pilot, app, "chat")
+    await type_text(pilot, "hi")
+    await pilot.press("enter")
+    assert await wait_for(pilot, lambda: app.approval_bar is not None)
+
+
+@pytest.mark.asyncio
+async def test_f1_opens_esc_closes_and_the_footer_tracks() -> None:
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await seed_done(pilot, app)
+        assert not app.keys_overlay.is_open
+        await pilot.press("f1")
+        await pilot.pause()
+        assert app.keys_overlay.is_open
+        assert app.keys_overlay.context == "idle"
+        assert app.footer_bar.state.context == "keys"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.keys_overlay.is_open
+        assert app.footer_bar.state.context == "idle"
+
+
+@pytest.mark.asyncio
+async def test_typing_still_reaches_the_composer_while_pinned() -> None:
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await seed_done(pilot, app)
+        await pilot.press("f1")
+        await pilot.pause()
+        await type_text(pilot, "hi")
+        await pilot.pause()
+        assert app.composer.text == "hi"
+        assert app.keys_overlay.is_open
+
+
+@pytest.mark.asyncio
+async def test_f1_toggles_off() -> None:
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await seed_done(pilot, app)
+        await pilot.press("f1")
+        await pilot.pause()
+        assert app.keys_overlay.is_open
+        await pilot.press("f1")
+        await pilot.pause()
+        assert not app.keys_overlay.is_open
+        assert app.footer_bar.state.context == "idle"
+
+
+@pytest.mark.asyncio
+async def test_pinned_overlay_tracks_context_and_esc_orders_keys_before_palette() -> None:
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await seed_done(pilot, app)
+        await pilot.press("f1")
+        await pilot.pause()
+        await type_text(pilot, "/")
+        await pilot.pause()
+        assert app.palette.filter_text is not None
+        assert app.keys_overlay.context == "palette", "pinned help follows the live context"
+        # Esc closes the read-only overlay first (ESC_CHAIN); the stateful
+        # palette survives that Esc and takes the next one.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.keys_overlay.is_open
+        assert app.palette.filter_text is not None
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.palette.filter_text is None
+
+
+@pytest.mark.asyncio
+async def test_f1_is_ignored_while_an_approval_is_open() -> None:
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await _reach_pytest_approval(pilot, app)
+        await pilot.press("f1")
+        await pilot.pause()
+        assert not app.keys_overlay.is_open, "f1 is dead while the modal bar owns the keyboard"
+        assert app.footer_bar.state.context == "approval"
+
+
+@pytest.mark.asyncio
+async def test_an_approval_opening_while_pinned_keeps_honest_footer_and_f1_close() -> None:
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await seed_done(pilot, app)
+        await set_mode(pilot, app, "chat")
+        await pilot.press("f1")
+        await pilot.pause()
+        assert app.keys_overlay.is_open
+        await type_text(pilot, "hi")
+        await pilot.press("enter")
+        assert await wait_for(pilot, lambda: app.approval_bar is not None)
+        # The pin survives -- but the footer tells the truth now: esc denies
+        # the approval, it does not close the overlay.
+        assert app.keys_overlay.is_open
+        assert app.footer_bar.state.context == "approval"
+        await pilot.press("f1")
+        await pilot.pause()
+        assert not app.keys_overlay.is_open
+        assert app.footer_bar.state.context == "approval"

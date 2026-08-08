@@ -17,12 +17,14 @@ outside the chain:
     ============  =====================  ==============================
     priority      context (active when)  action
     ============  =====================  ==============================
-    1             lane_focus             restore the parent transcript
-    2             palette                close the command palette
-    3             rewind                 close the rewind picker strip
-    4             sessions               close the sessions picker strip
-    5             lanes                  close the agent-lanes panel
-    6             running                interrupt the running turn
+    1             keys                   close the keys overlay
+    2             lane_focus             restore the parent transcript
+    3             palette                close the command palette
+    4             rewind                 close the rewind picker strip
+    5             sessions               close the sessions picker strip
+    6             themes                 close the theme picker strip
+    7             lanes                  close the agent-lanes panel
+    8             running                interrupt the running turn
     ============  =====================  ==============================
 """
 
@@ -77,6 +79,7 @@ from .file_mentions import (
     close_file_mentions,
     handle_file_mention_intent,
 )
+from .keys_overlay import KeysOverlay
 from .lanes_panel import LanesPanel
 from .live_tail import LiveTail
 from .needs_you import NeedsYouList
@@ -322,6 +325,7 @@ class TuiApp(App[ResumeSessionRequest]):
         self.file_mentions = FileMentionStrip(id="file-mentions")
         self.history_recall = HistoryRecallStrip(id="history-recall")
         self.decision_capture = DecisionCaptureStrip(id="decision-capture")
+        self.keys_overlay = KeysOverlay(id="keys-overlay")
         self.composer = Composer(kitty_protocol=kitty_protocol, id="composer")
         self.footer_bar = FooterBar(id="footer-bar")
 
@@ -344,6 +348,7 @@ class TuiApp(App[ResumeSessionRequest]):
         yield self.file_mentions
         yield self.history_recall
         yield self.decision_capture
+        yield self.keys_overlay
         with Container(id="composer-slot"):
             yield self.composer
         yield self.footer_bar
@@ -1032,6 +1037,20 @@ class TuiApp(App[ResumeSessionRequest]):
             spans.append(Segment(text=f"  {label.ljust(label_width)}  ", style_token="teal"))
             spans.append(Segment(text=f"{description}\n", style_token="dim"))
         self.append_block(Answer(id=self.allocator.next_id(), spans=tuple(spans)))
+
+    def action_show_keys(self) -> None:
+        """F1 toggles the live which-key overlay."""
+        if self.keys_overlay.is_open:
+            # Toggle-close always works -- even if an approval arrives while
+            # the overlay is pinned, esc belongs to the bar there and f1 is
+            # the only way back out.
+            self.keys_overlay.close()
+        elif self.approval_bar is None:
+            # The approval bar owns the keyboard; an overlay it could never
+            # dismiss (esc belongs to the bar) would lie, and the modal's
+            # own notice may not be overwritten -- so f1 is dead there.
+            self.keys_overlay.show(self._underlying_context())
+        self._refresh_footer()
 
     def activate_native_mode(self, name: str | None) -> None:
         """``/mode <bundle-mode>`` ADDs to the active set; ``/mode off`` clears all."""
@@ -2585,6 +2604,11 @@ class TuiApp(App[ResumeSessionRequest]):
         self._restore_keyboard()
         self._refresh_footer()
 
+    def on_keys_overlay_closed(self, message: KeysOverlay.Closed) -> None:
+        """F1/Esc close returns footer hints to the underlying context."""
+        message.stop()
+        self._refresh_footer()
+
     def open_permissions(self) -> None:
         self.append_block(
             app_support.permissions_block(
@@ -2603,6 +2627,17 @@ class TuiApp(App[ResumeSessionRequest]):
 
     def footer_context(self) -> keymap.Context:
         if self.approval_bar is not None:
+            # Approval hints are the truthful ones even while the overlay is
+            # pinned -- there "esc closes the overlay" would lie.
+            return "approval"
+        if self.keys_overlay.is_open:
+            return "keys"
+        return self._underlying_context()
+
+    def _underlying_context(self) -> keymap.Context:
+        """The context beneath the keys overlay -- what its pinned help rows
+        describe and what the footer returns to once it closes."""
+        if self.approval_bar is not None:
             return "approval"
         if self._pending_custom_decision:
             return "needs_you"
@@ -2619,6 +2654,9 @@ class TuiApp(App[ResumeSessionRequest]):
         return "idle"
 
     def _refresh_footer(self) -> None:
+        if self.keys_overlay.is_open:
+            # Pinned help tracks the live context instead of going stale.
+            self.keys_overlay.show(self._underlying_context())
         self.footer_bar.update_state(app_support.footer_state(self))
 
     def _refresh_title(self) -> None:
