@@ -27,7 +27,7 @@ variables; rich renderables resolve token names via
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Protocol, runtime_checkable
 
 from rich.style import Style
@@ -37,6 +37,8 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.widgets import Static
+
+from ..kernel.fuzzy import fuzzy_indices, fuzzy_score
 
 PALETTE_GROUPS: tuple[str, ...] = ("During", "Parallel", "Ship", "Between", "Repair")
 """Group header order per the mockup's command table."""
@@ -77,12 +79,67 @@ class CommandSpec(Protocol):
     def group(self) -> str: ...
 
 
-def filter_commands(commands: Sequence[CommandSpec], filter_text: str) -> tuple[CommandSpec, ...]:
-    """Substring filter over command names (mockup: ``cmd.includes(filter)``).
+def filter_commands(
+    commands: Sequence[CommandSpec],
+    filter_text: str,
+    *,
+    usage: Mapping[str, int] | None = None,
+) -> tuple[CommandSpec, ...]:
+    """Rank commands for a composer filter: prefix → substring → fuzzy.
 
-    The filter includes its leading ``/`` so ``"/"`` matches everything.
+    The filter includes its leading ``/`` so ``"/"`` (or a blank
+    remainder) returns every command in registry order. Otherwise a
+    match on the slash-stripped, casefolded name earns a tier — prefix
+    matches lead, then substring, then a fuzzy subsequence pass that
+    forgives skipped letters (``/ldg`` finds ``/ledger``). Within a
+    tier, rows rank by frecency (usage count per name), then fuzzy
+    score, then registry order as the stable tiebreak.
     """
-    return tuple(c for c in commands if filter_text in c.name)
+    needle = filter_text[1:] if filter_text.startswith("/") else filter_text
+    needle = needle.casefold()
+    if not needle:
+        return tuple(commands)
+    counts = usage or {}
+    ranked: list[tuple[int, int, float, int, CommandSpec]] = []
+    for order, spec in enumerate(commands):
+        body = spec.name[1:] if spec.name.startswith("/") else spec.name
+        folded = body.casefold()
+        score = 0.0
+        if folded.startswith(needle):
+            tier = 0
+        elif needle in folded:
+            tier = 1
+        else:
+            indices = fuzzy_indices(needle, folded)
+            if indices is None:
+                continue
+            tier = 2
+            score = fuzzy_score(needle, folded, indices) or 0.0
+        ranked.append((tier, -counts.get(spec.name.casefold(), 0), -score, order, spec))
+    ranked.sort(key=lambda entry: entry[:4])
+    return tuple(entry[4] for entry in ranked)
+
+
+def command_match_indices(name: str, filter_text: str) -> tuple[int, ...]:
+    """Offsets of the filter's match inside *name* (including the ``/``).
+
+    Prefix/substring matches return their contiguous span; fuzzy matches
+    return each matched offset. Empty when the filter is blank or there
+    is no match, so the row renders plain.
+    """
+    needle = filter_text[1:] if filter_text.startswith("/") else filter_text
+    needle = needle.casefold()
+    if not needle:
+        return ()
+    offset = 1 if name.startswith("/") else 0
+    folded = name[offset:].casefold()
+    at = folded.find(needle)
+    if at >= 0:
+        return tuple(range(at + offset, at + offset + len(needle)))
+    indices = fuzzy_indices(needle, folded)
+    if indices is None:
+        return ()
+    return tuple(i + offset for i in indices)
 
 
 def show_group_headers(filter_text: str) -> bool:
@@ -131,21 +188,28 @@ class _CommandRow(Static):
     }
     """
 
-    def __init__(self, spec: CommandSpec, index: int) -> None:
+    def __init__(
+        self, spec: CommandSpec, index: int, *, highlights: tuple[int, ...] = ()
+    ) -> None:
         super().__init__(id=f"palette-row-{index}")
         self.spec = spec
         self.index = index
+        self.highlights = highlights
 
     def render(self) -> Table:
         tokens = self.app.theme_variables
         selected = self.has_class("-selected")
         cmd, desc, tag = command_row_cells(self.spec)
+        teal = tokens.get("teal")
+        cmd_text = Text()
+        for pos, ch in enumerate(cmd):
+            cmd_text.append(ch, style=Style(color=teal, bold=pos in self.highlights))
         grid = Table.grid(expand=True, padding=(0, 1))
         grid.add_column(min_width=CMD_COL_MIN_WIDTH, no_wrap=True)
         grid.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
         grid.add_column(justify="right", no_wrap=True)
         grid.add_row(
-            Text(cmd, style=Style(color=tokens.get("teal"))),
+            cmd_text,
             Text(desc, style=Style(color=tokens.get("fg" if selected else "dim"))),
             Text(tag, style=Style(color=tokens.get("dimmer"))),
         )
@@ -220,6 +284,8 @@ class PaletteStrip(VerticalScroll):
         self._filter: str | None = None
         self._filtered: tuple[CommandSpec, ...] = ()
         self._selected = 0
+        self._usage: Mapping[str, int] = {}
+        self._highlights: dict[str, tuple[int, ...]] = {}
 
     # -- public API ----------------------------------------------------
 
@@ -247,6 +313,14 @@ class PaletteStrip(VerticalScroll):
         self._commands = tuple(commands)
         self.apply_filter(self._filter)
 
+    def set_usage(self, usage: Mapping[str, int]) -> None:
+        """Feed frecency counts (casefolded name → uses) for row ranking.
+
+        The mapping is read through live — later bumps re-rank the next
+        :meth:`apply_filter` without another call here.
+        """
+        self._usage = usage
+
     def apply_filter(self, filter_text: str | None) -> None:
         """Slave the palette to the composer text.
 
@@ -258,11 +332,16 @@ class PaletteStrip(VerticalScroll):
             self._filter = None
             self._filtered = ()
             self._selected = 0
+            self._highlights = {}
             self.display = False
             self.remove_children()
             return
         self._filter = filter_text
-        self._filtered = filter_commands(self._commands, filter_text)
+        self._filtered = filter_commands(self._commands, filter_text, usage=self._usage)
+        self._highlights = {
+            spec.name: command_match_indices(spec.name, filter_text)
+            for spec in self._filtered
+        }
         self._selected = 0
         self._rebuild()
 
@@ -316,7 +395,9 @@ class PaletteStrip(VerticalScroll):
             if headers and spec.group != last_group:
                 last_group = spec.group
                 rows.append(_GroupHeader(spec.group))
-            rows.append(_CommandRow(spec, index))
+            rows.append(
+                _CommandRow(spec, index, highlights=self._highlights.get(spec.name, ()))
+            )
         await self.mount(*rows)
         self._apply_selection()
 
@@ -333,6 +414,7 @@ __all__ = [
     "CommandSpec",
     "PALETTE_GROUPS",
     "PaletteStrip",
+    "command_match_indices",
     "command_row_cells",
     "filter_commands",
     "group_header_text",
