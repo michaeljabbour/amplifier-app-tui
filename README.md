@@ -254,6 +254,14 @@ bundle.md                   the repo's amplifier bundle (packaged copy kept byte
 
 ## Documentation
 
+The user-facing documentation site lives in [`docs-site/`](docs-site/) and is published by
+GitHub Pages at <https://michaeljabbour.github.io/amplifier-app-tui/> — start with
+[Setup](docs-site/setup.md), then [Quickstart](docs-site/quickstart.md).
+[`docs-site/llms.txt`](docs-site/llms.txt) is served at the site root as `/llms.txt`: it is the
+agent-readable index of every published page and the source documents below.
+
+Engineering documentation in this repository:
+
 | Read | For |
 |---|---|
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | driving the TUI: modes, steering, approvals, lanes, rewind, keys, commands |
@@ -264,7 +272,7 @@ bundle.md                   the repo's amplifier bundle (packaged copy kept byte
 | [docs/BACKLOG.md](docs/BACKLOG.md) | what's next, calibrated against what's already shipped |
 | [docs/design-v3-cohesive.html](docs/design-v3-cohesive.html) | executable mockup — exact strings, colors, timing, state machines |
 | [docs/decisions/](docs/decisions/) | ADRs — why it's shaped this way (ADR-0007 = the architecture rules; ADR-0008 = the `amplifier-tui` command name) |
-| [docs/plans/](docs/plans/) | dated implementation plans, each with a status banner (all landed to date) |
+| [docs/plans/](docs/plans/) | dated implementation plans and design/decision docs; statuses range from implemented to proposed-only, and not every file carries a status banner |
 
 ## Architecture
 
