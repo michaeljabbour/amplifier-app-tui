@@ -32,7 +32,7 @@ fail() {
 
 usage() {
     cat <<'EOF'
-Usage: install.sh [--ref REF] [--launch] [--no-update-shell]
+Usage: install.sh [--ref REF] [--no-update-shell]
 
 Install amplifier-app-tui from its Git repository. REF defaults to main and
 is resolved to a full commit SHA before installation. A 40-character commit
@@ -40,7 +40,6 @@ SHA may be supplied directly for a reviewed, immutable application-source instal
 
 Options:
   --ref REF          branch, tag, or full 40-character commit
-  --launch           open amplifier-tui after installation (uses /dev/tty)
   --no-update-shell  do not ask uv to add its tool bin directory to PATH
   -h, --help         show this help
 EOF
@@ -298,4 +297,5 @@ if [ "$launch" -eq 1 ]; then
 fi
 
 say "Installed. Run: $app_bin"
+say "If your current shell cannot find amplifier-tui, run the absolute path above or restart after uv tool update-shell."
 say "First launch will guide provider setup; use --demo for an offline tour."

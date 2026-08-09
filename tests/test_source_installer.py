@@ -31,7 +31,25 @@ PUBLIC_DOCS = (
     ROOT / "docs" / "SETTINGS.md",
     ROOT / "docs" / "ARCHITECTURE.md",
     ROOT / "docs" / "DESIGN-SPEC.md",
+    ROOT / "docs-site" / "index.md",
+    ROOT / "docs-site" / "setup.md",
+    ROOT / "docs-site" / "quickstart.md",
+    ROOT / "docs-site" / "update-reset.md",
+    ROOT / "docs-site" / "using-the-tui.md",
+    ROOT / "docs-site" / "configuration.md",
+    ROOT / "docs-site" / "reference.md",
+    ROOT / "docs-site" / "troubleshooting.md",
+    ROOT / "docs-site" / "development.md",
 )
+
+# Pages allowed to show the hardened wrapper, mapped to the heading that must
+# precede it on that page. Each page phrases its review-first/advanced-install
+# heading a little differently, so the heading text is per-doc rather than a
+# single shared literal.
+REVIEW_FIRST_DOCS: dict[str, str] = {
+    "docs/INSTALL.md": "## Review-first / advanced install",
+    "docs-site/setup.md": "## Advanced: review-first install",
+}
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -151,9 +169,7 @@ def test_install_command_contract_separates_public_and_hardened_commands() -> No
     for token in ("--launch", "pipefail", "--proto", "--tlsv1.2", "bash -s --"):
         assert token not in PUBLIC_SOURCE_INSTALL_COMMAND
 
-    assert (
-        HARDENED_SOURCE_INSTALL_COMMAND == f'bash -o pipefail -c "{expected_hardened_pipeline}"'
-    )
+    assert HARDENED_SOURCE_INSTALL_COMMAND == f'bash -o pipefail -c "{expected_hardened_pipeline}"'
     assert "--launch" not in HARDENED_SOURCE_INSTALL_COMMAND
     for token in ("pipefail", "--proto", "--tlsv1.2", "bash -s --"):
         assert token in HARDENED_SOURCE_INSTALL_COMMAND
@@ -303,21 +319,49 @@ def test_public_docs_do_not_document_launch_flag() -> None:
         assert "--launch" not in path.read_text(encoding="utf-8"), path
 
 
-def test_current_public_docs_inventory_tracks_existing_hardened_wrapper() -> None:
+def test_public_docs_show_short_install_command_first() -> None:
     docs = {
-        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8")
-        for path in PUBLIC_DOCS
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8") for path in PUBLIC_DOCS
     }
 
-    assert docs["README.md"].count(HARDENED_SOURCE_INSTALL_COMMAND) == 2
-    assert docs["docs/INSTALL.md"].count(HARDENED_SOURCE_INSTALL_COMMAND) == 1
-    for rel_path in (
-        "docs/USER-GUIDE.md",
-        "docs/SETTINGS.md",
-        "docs/ARCHITECTURE.md",
-        "docs/DESIGN-SPEC.md",
-    ):
-        assert HARDENED_SOURCE_INSTALL_COMMAND not in docs[rel_path]
+    for rel_path in ("README.md", "docs/INSTALL.md", "docs-site/setup.md"):
+        assert PUBLIC_SOURCE_INSTALL_COMMAND in docs[rel_path]
+
+    install_top = "\n".join(docs["docs/INSTALL.md"].splitlines()[:35])
+    assert PUBLIC_SOURCE_INSTALL_COMMAND in install_top
+    assert docs["README.md"].index(PUBLIC_SOURCE_INSTALL_COMMAND) < docs["README.md"].index(
+        "amplifier-tui doctor"
+    )
+
+
+def test_hardened_wrapper_appears_only_in_review_first_docs() -> None:
+    """The hardened wrapper is confined to each page's own review-first section.
+
+    Every doc listed in ``REVIEW_FIRST_DOCS`` may show the hardened wrapper exactly
+    once, but only after that page's own review-first/advanced-install heading, and
+    the short public command must still appear earlier on the page than the
+    hardened one -- the public command leads; the hardened wrapper is never the
+    primary/recommended install. Every other public doc -- including README.md,
+    which has no review-first section at all -- must not contain the hardened
+    wrapper anywhere.
+    """
+    docs = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8") for path in PUBLIC_DOCS
+    }
+
+    for rel_path, heading in REVIEW_FIRST_DOCS.items():
+        text = docs[rel_path]
+        assert text.count(HARDENED_SOURCE_INSTALL_COMMAND) == 1, rel_path
+        heading_index = text.index(heading)
+        hardened_index = text.index(HARDENED_SOURCE_INSTALL_COMMAND)
+        public_index = text.index(PUBLIC_SOURCE_INSTALL_COMMAND)
+        assert heading_index < hardened_index, rel_path
+        assert public_index < hardened_index, rel_path
+
+    for rel_path, text in docs.items():
+        if rel_path in REVIEW_FIRST_DOCS:
+            continue
+        assert HARDENED_SOURCE_INSTALL_COMMAND not in text, rel_path
 
 
 def test_documented_pipefail_wrapper_propagates_download_failure(tmp_path: Path) -> None:

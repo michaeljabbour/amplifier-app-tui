@@ -9,18 +9,19 @@ A full-screen terminal UI for [Amplifier](https://github.com/microsoft/amplifier
 ## Install
 
 The current distribution is a **latest-source channel** for macOS, Linux, and WSL. This
-single command installs the app and opens first-launch provider setup:
+single command installs the app. Run `amplifier-tui` afterward to launch first-run provider setup:
 
 ```sh
-bash -o pipefail -c "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash -s -- --launch"
+curl -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash
 ```
 
 The installer gets `uv` from Astral when needed, resolves `main` once to a full commit,
 checks out that exact revision, exports its committed `uv.lock`, installs the application
 under those locked runtime dependency versions, verifies the command, handles its `PATH`,
-and then launches the built-in setup flow. You need Bash, Git, curl, and an internet
-connection; it never uses `sudo`. There is no separate `init` step. Bash `pipefail` makes a
-failed bootstrap download return a failure instead of silently running an empty shell.
+and prints exactly how to run the verified executable. You need Bash, Git, curl, and an internet
+connection; it never uses `sudo`. There is no separate `init` step. If you want to inspect the
+script first or use a fail-closed shell wrapper, see the review-first section in the
+[install guide](docs/INSTALL.md#review-first--advanced-install).
 
 This is intentionally labeled a source install: the bootstrap URL follows `main`, and the
 project does not yet publish a signed binary/PyPI release or background app updater. The

@@ -20,17 +20,17 @@ installer changes merge and that job passes. A retained clean-machine release sm
 real WSL smoke are still required before those environments are called release-proven. No
 minimum OS release or hardware floor has been established, so this guide does not invent one.
 
-## One-line install and setup
+## One-line install
 
 On macOS, Linux, or WSL, run:
 
 ```sh
-bash -o pipefail -c "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash -s -- --launch"
+curl -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash
 ```
 
-The wrapper intentionally uses Bash `pipefail`: if the download is missing,
-blocked, or interrupted, the one-line command exits nonzero instead of treating
-an empty shell as a successful install.
+That is the public fast path. It keeps copy/paste setup short while the app's
+own `amplifier-tui update` and `amplifier-tui reset` commands keep using the
+hardened argv form internally for repair and update execution.
 
 The installer:
 
@@ -42,8 +42,8 @@ The installer:
    never a floating branch or a fresh dependency re-resolution;
 5. verifies the installed `amplifier-tui` executable and makes its directory
    discoverable on `PATH`; and
-6. opens the app. First launch detects existing Amplifier/provider configuration or
-   guides provider setup. It does not require a separate `init` command.
+6. prints the exact executable path to run. First launch detects existing
+   Amplifier/provider configuration or guides provider setup. It does not require a separate `init` command.
 
 The bootstrap URL above follows `main`, so it is intentionally the **source channel**.
 The app source and runtime package versions are pinned after resolution, but the downloaded
@@ -61,6 +61,20 @@ Replace the example SHA with the exact reviewed commit. Supplying a branch or ta
 also supported; the installer resolves it to a commit before installation. Every install
 uses the selected commit's own `uv.lock`, so updating dependencies is a deliberate repository
 change: update the lock, test it, and install a new application commit.
+
+## Review-first / advanced install
+
+If you need the curl-piped form to fail closed when the download is missing,
+blocked, or interrupted, use the hardened wrapper:
+
+```sh
+bash -o pipefail -c "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash -s --"
+```
+
+The extra flags require HTTPS/TLS 1.2 at curl and make Bash return the curl
+failure instead of treating an empty shell as a successful install. This is the
+same execution contract the app uses for programmatic update/reset reinstall
+flows.
 
 ## What changes on the machine
 
@@ -82,22 +96,22 @@ Windows requires a separate installer and is not currently supported.
 
 ## Updating
 
-There is no background app update. Re-run the same one-line source installer to resolve and
-install the then-current `main` commit, including that commit's locked dependencies. To stay
+There is no background app update. Run `amplifier-tui update` to resolve and
+install the then-current `main` commit via the same source-installer contract, including that commit's locked dependencies. To stay
 on an audited build, keep using its full commit SHA:
 
 ```sh
 sh ./scripts/install.sh --ref 0123456789abcdef0123456789abcdef01234567
 ```
 
-`amplifier-tui update` is different: it refreshes mounted Amplifier bundles and
-modules; it does not replace the application package.
+`amplifier-tui update` updates the application package. Advanced users can run
+`amplifier-tui bundle refresh` to refresh mounted Amplifier bundle/module caches.
 
 If startup reports `Remote branch <40-character SHA> not found`, the commit may
 still be valid: older Amplifier Foundation builds incorrectly passed full commit
 hashes to `git clone --branch`. Reinstall the application from a release/source
 revision containing the commit-SHA activation fix. Clearing caches or running
-`amplifier-tui update` does not upgrade that application dependency.
+`amplifier-tui bundle refresh` does not upgrade that application dependency.
 
 ## Verify, demo, and uninstall
 
