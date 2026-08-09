@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterable, Sequence
 from rich.cells import cell_len
 
 from ..model.blocks import (
+    GLYPH_ATTENTION,
     GLYPH_BLOCKED,
     GLYPH_BULLET,
     GLYPH_CHECKBOX_CHECKED,
@@ -884,6 +885,7 @@ def _clip(text: str, budget: int) -> str:
 _DELEGATE_GLYPHS: dict[str, tuple[str, StyleToken]] = {
     "running": (GLYPH_LANE_RUNNING, "dimmer"),
     "done": (GLYPH_PLAN_DONE, "green"),
+    "incomplete": (GLYPH_ATTENTION, "orange"),
     "error": (GLYPH_ERROR, "red"),
     "cancelled": (GLYPH_BLOCKED, "red"),
 }

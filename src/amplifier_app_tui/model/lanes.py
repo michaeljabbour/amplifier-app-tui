@@ -27,7 +27,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .blocks import GLYPH_ATTENTION, GLYPH_BLOCKED, GLYPH_ERROR, StyleToken
 
-LaneStateName = Literal["booting", "running", "working", "attention", "done", "error", "cancelled"]
+LaneStateName = Literal[
+    "booting", "running", "working", "attention", "done", "incomplete", "error", "cancelled"
+]
 """The full lane lifecycle (D5 AC1).
 
 ``booting``/``running``/``working`` are ordinary in-flight phases (a
@@ -68,11 +70,14 @@ _STATE_GLYPHS: dict[LaneStateName, tuple[str, StyleToken]] = {
     "working": ("■", "fg"),
     "attention": (GLYPH_ATTENTION, "orange"),
     "done": ("✔", "dim"),
+    "incomplete": (GLYPH_ATTENTION, "orange"),
     "error": (GLYPH_ERROR, "red"),
     "cancelled": (GLYPH_BLOCKED, "red"),
 }
 
-TERMINAL_LANE_STATES: frozenset[LaneStateName] = frozenset({"done", "error", "cancelled"})
+TERMINAL_LANE_STATES: frozenset[LaneStateName] = frozenset(
+    {"done", "incomplete", "error", "cancelled"}
+)
 """Lane states that will never change again — the ONE place "is this lane
 finished" is defined, so :class:`LaneRegistry` (active/tail/advance/reopen)
 and the reducer's child-activity guard can never drift out of sync on what
@@ -80,6 +85,7 @@ counts as terminal."""
 
 _TERMINAL_VERBS: dict[LaneStateName, str] = {
     "done": "done",
+    "incomplete": "incomplete",
     "error": "failed",
     "cancelled": "cancelled",
 }

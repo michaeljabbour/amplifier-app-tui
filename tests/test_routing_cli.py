@@ -14,6 +14,7 @@ import yaml
 from click.testing import CliRunner
 from rich.console import Console
 
+import amplifier_app_tui.main as main_mod
 from amplifier_app_tui.kernel import bundle_admin
 from amplifier_app_tui.main import _manage_matrix_target, main
 
@@ -38,6 +39,7 @@ def _seed_matrix(home: Path, name: str, roles: dict) -> None:
 def _redirect(monkeypatch, tmp_path: Path):
     paths = bundle_admin.settings_paths(tmp_path / "proj", tmp_path / "home")
     monkeypatch.setattr(bundle_admin, "settings_paths", lambda *a, **k: paths)
+    monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: True)
     return paths
 
 
@@ -103,6 +105,7 @@ def test_routing_use_roundtrip(tmp_path: Path, monkeypatch) -> None:
     result = CliRunner().invoke(main, ["routing", "use", "quality"])
     assert result.exit_code == 0
     assert "active routing matrix" in result.output
+    assert "2/2 routing role(s) have no compatible configured provider" in result.output
     data = bundle_admin.read_scope(paths.global_settings)
     assert data["routing"]["matrix"] == "quality"
 

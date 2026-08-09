@@ -1,95 +1,80 @@
 ---
 layout: default
 title: Amplifier App TUI
+description: Install the terminal workspace, try the offline demo, and choose the fastest path into the documentation.
 permalink: /
+hide_title: true
 ---
 
-Amplifier TUI is a full-screen terminal interface for [Amplifier](https://github.com/microsoft/amplifier). You type a task into a composer and watch the work land in a live transcript. You steer it while the turn is still running and approve the actions it wants to take. You can rewind when it goes the wrong way — all without leaving the keyboard. It installs as its own command, `amplifier-tui`, and reads the same `~/.amplifier/` configuration the wider Amplifier platform uses, so an existing setup carries over.
+<div class="home-eyebrow"><span class="icon icon-command-line" aria-hidden="true"></span><span>{{ site.data.product.brand_name | downcase }}</span></div>
 
-## The whole support story
+<h1 class="home-title">{{ site.data.product.brand_name }}</h1>
 
-Three commands. Everything else on this site is optional depth.
+<p class="home-deck">A terminal workspace for work that thinks back.</p>
 
-| Command | What it does |
-|---|---|
-| `amplifier-tui` | Launch the app. The first run walks you through provider setup if nothing is configured yet. |
-| `amplifier-tui update` | Update the installed app itself to the current `main` commit. |
-| `amplifier-tui reset` | Clear the regenerable cache and registry state, then repair the install. Sessions, settings, and keys are kept. |
+<div class="home-value-grid">
+  <div class="home-value">
+    <span class="icon icon-check-circle value-icon value-icon-green" aria-hidden="true"></span>
+    <div><strong>Work with context</strong><p>Project-aware sessions resume where you left off, with durable history and the right local context.</p></div>
+  </div>
+  <div class="home-value">
+    <span class="icon icon-arrow-trending-up value-icon value-icon-amber" aria-hidden="true"></span>
+    <div><strong>Ship with confidence</strong><p>Steer live work, approve consequential actions, and keep every change traceable.</p></div>
+  </div>
+</div>
 
-## Install
+<section class="home-section install-section" aria-labelledby="install-heading" markdown="1">
+  <h2 id="install-heading" data-toc-title="Install">Install in one command</h2>
+  <p class="section-kicker">macOS, Linux, or WSL.</p>
 
-On macOS, Linux, or WSL:
+  <pre class="install-command" data-copy-text="curl -fsSL https://raw.githubusercontent.com/{{ site.data.product.repository }}/main/scripts/install.sh | bash"><code aria-label="curl -fsSL https://raw.githubusercontent.com/{{ site.data.product.repository }}/main/scripts/install.sh pipe bash">curl -fsSL <span aria-hidden="true">…</span> | bash</code></pre>
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash
-```
+  <p class="launch-line">Then launch it: <code>{{ site.data.product.command }}</code></p>
+</section>
 
-Then launch it:
+<section class="demo-panel" aria-labelledby="demo-heading">
+  <div class="demo-intro"><h2 id="demo-heading">Try the demo</h2><p>See {{ site.data.product.brand_name }} plan and work in a real interface—offline and without credentials.</p><a href="{{ '/quickstart/#try-the-offline-demo-first' | relative_url }}">Open demo guide <span aria-hidden="true">→</span></a></div>
+  <div class="demo-terminal" aria-label="Example terminal status"><span class="terminal-prompt">›</span><code>{{ site.data.product.command }} --demo</code><span class="terminal-summary">Session history is durable; the work stays reviewable.</span><strong>Plan 3/3</strong><span class="terminal-status"></span></div>
+</section>
 
-```sh
-amplifier-tui
-```
+<section class="home-section paths-section" aria-labelledby="paths-heading">
+  <h2 id="paths-heading">Start with a path</h2>
+  <p class="section-kicker">Choose the route that matches what you want to do.</p>
+  <div class="path-grid">
+    <a class="path-link path-green" href="{{ '/setup/' | relative_url }}"><span class="icon icon-arrow-right" aria-hidden="true"></span><span><strong>Start here</strong><small>Install, launch, and take your first step.</small></span></a>
+    <a class="path-link path-blue" href="{{ '/reference/' | relative_url }}"><span class="icon icon-book-open" aria-hidden="true"></span><span><strong>Reference</strong><small>Commands, flags, shortcuts, and configuration.</small></span></a>
+    <a class="path-link path-cyan" href="{{ '/using-the-tui/' | relative_url }}"><span class="icon icon-command-line" aria-hidden="true"></span><span><strong>Work in the TUI</strong><small>Drive work, steer plans, and approve actions.</small></span></a>
+    <a class="path-link path-teal" href="{{ '/engineering/' | relative_url }}"><span class="icon icon-cube" aria-hidden="true"></span><span><strong>Understand the system</strong><small>Architecture, data model, protocols, and decisions.</small></span></a>
+    <a class="path-link path-indigo" href="{{ '/configuration/' | relative_url }}"><span class="icon icon-cog-6-tooth" aria-hidden="true"></span><span><strong>Configure</strong><small>Providers, models, routing, bundles, and permissions.</small></span></a>
+    <a class="path-link path-violet" href="{{ '/development/' | relative_url }}"><span class="icon icon-user-group" aria-hidden="true"></span><span><strong>Contribute</strong><small>Build with us. Improve code, contracts, or docs.</small></span></a>
+    <a class="path-link path-amber" href="{{ '/update-reset/' | relative_url }}"><span class="icon icon-arrow-path" aria-hidden="true"></span><span><strong>Maintain</strong><small>Update, reset, and troubleshoot safely.</small></span></a>
+  </div>
+</section>
 
-The installer fetches `uv` from Astral only if you do not already have it, resolves `main` to one exact commit, installs under that commit's committed lockfile, and prints the path to the verified executable. Requirements, verification, and the review-first install form are on the [Setup]({{ '/setup/' | relative_url }}) page.
+<section class="home-section library-section" aria-labelledby="library-heading">
+  <h2 id="library-heading">Everything, on this site</h2>
+  <p>Deep dives for engineers and contributors: <a href="{{ '/development/architecture/' | relative_url }}">architecture</a>, <a href="{{ '/development/design-contract/' | relative_url }}">design contract</a>, and <a href="{{ '/development/guide/' | relative_url }}">development guide</a>.</p>
+  <p>Search reads every section, not just page titles. <strong>Ask the docs</strong> turns those same local results into a cited answer; when the browser already provides an on-device language model, it can polish that answer without putting a hosted API key in this static site.</p>
+</section>
 
-## Try it with no credentials
+<section class="home-section support-section" aria-labelledby="support-heading">
+  <h2 id="support-heading" data-toc="false">Three commands cover the support story</h2>
+  <p class="section-kicker">Launch, update, and repair. Everything else is optional depth.</p>
+  <table>
+    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ site.data.product.command }}</code></td><td>Launch the app or enter guided first-run configuration.</td></tr>
+      <tr><td><code>{{ site.data.product.command }} update</code></td><td>Check and update the installed application itself.</td></tr>
+      <tr><td><code>{{ site.data.product.command }} reset</code></td><td>Preview and repair regenerable state while preserving sessions, settings, and keys.</td></tr>
+    </tbody>
+  </table>
+</section>
 
-`--demo` is a flag on the app, not a subcommand. It runs a scripted session that is fully offline — no bundle, no network, no API key:
-
-```sh
-amplifier-tui --demo
-```
-
-Use it to see the real interface before you decide to configure a provider.
-
-## Documentation map
-
-**Getting started**
-
-- [Setup]({{ '/setup/' | relative_url }}) — requirements, install, verification, provider configuration, uninstall.
-- [Quickstart]({{ '/quickstart/' | relative_url }}) — your first session: prompt, steer, palette, interrupt, resume.
-- [Update and reset]({{ '/update-reset/' | relative_url }}) — keeping the install current and repairing it safely.
-
-**Using the TUI**
-
-- [Using the TUI]({{ '/using-the-tui/' | relative_url }}) — transcript and composer, modes, approvals, subagent lanes, rewind, sessions.
-
-**Configuration**
-
-- [Configuration]({{ '/configuration/' | relative_url }}) — settings scopes, credentials, providers and priority, routing, bundles, write boundaries.
-
-**Reference**
-
-- [Reference]({{ '/reference/' | relative_url }}) — CLI commands, slash commands, keybindings, file locations, headless output contract.
-
-**Troubleshooting**
-
-- [Troubleshooting]({{ '/troubleshooting/' | relative_url }}) — command not found, install failures, missing credentials, wrong provider selected.
-
-**Development**
-
-- [Development]({{ '/development/' | relative_url }}) — clone, run from source, and the local test gates.
-
-## For agents
-
-[`llms.txt`]({{ '/llms.txt' | relative_url }}) is the machine-readable index of this site. Read it first to discover every page before crawling anything else.
-
-## Engineering documentation
-
-Deeper internal documentation lives in the repository, not on this site:
-
-- [README](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/README.md)
-- [Install guide](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/INSTALL.md)
-- [User guide](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/USER-GUIDE.md)
-- [Settings reference](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/SETTINGS.md)
-- [Architecture](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/ARCHITECTURE.md)
-- [Design spec](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/DESIGN-SPEC.md)
-
-## What this project does not ship
-
-Being explicit saves you a search:
-
-- No PyPI package, Homebrew/WinGet/apt channel, or native binary — the install is a source install of Python under a committed lockfile.
-- No signed release artifact. The bootstrap script you download is not signed.
-- No background updater. Nothing updates until you run a command yourself.
-- No native Windows support. WSL works and reports as Linux.
+<details class="scope-details" markdown="1">
+  <summary>Distribution boundaries</summary>
+  <ul>
+    <li>The current channel is a source install under a committed lockfile; it is not a PyPI, Homebrew, WinGet, or native-binary release.</li>
+    <li>There is no background updater. The app changes only when you run an explicit command.</li>
+    <li>macOS, Linux, and WSL are supported. Native Windows is not.</li>
+  </ul>
+</details>

@@ -4,10 +4,10 @@ title: Development
 permalink: /development/
 ---
 
-Contributor quick start for working on Amplifier TUI from a repository checkout. The
-authoritative guides live in the repository — `AGENTS.md` and `docs/DEVELOPMENT.md`, both
-linked at the bottom of this page — and this page is a faithful short form of them. Where
-they disagree with anything here, the repository wins.
+Contributor quick start for working on {{ site.data.product.display_name }} from a repository checkout. This page
+is the task-first path; the complete [agent contract]({{ '/development/agent-contract/' | relative_url }})
+and [development guide]({{ '/development/guide/' | relative_url }}) are published on this
+site directly from their authoritative repository sources.
 
 If you only want to *use* the app, start at [Setup]({{ '/setup/' | relative_url }}) instead;
 nothing on this page is required to run it.
@@ -33,8 +33,8 @@ uv sync
 ## Run what you just built
 
 ```sh
-uv run amplifier-tui --demo     # scripted session — no bundle, no network, no credentials
-uv run amplifier-tui doctor     # setup checkup; exit 0 = ready, exit 1 = findings exist
+uv run {{ site.data.product.command }} --demo     # scripted session — no bundle, no network, no credentials
+uv run {{ site.data.product.command }} doctor     # setup checkup; exit 0 = ready, exit 1 = findings exist
 ```
 
 `--demo` is the fastest way to eyeball a UI change: it drives the app's scripted
@@ -121,8 +121,8 @@ Conventions to keep when you edit a page:
 - Every page opens with YAML frontmatter carrying the default layout and a title.
 - Internal links go through Jekyll's `relative_url` filter so they keep working under the
   site's project base path. Never link to a `.md` file as if it were a published route —
-  Jekyll serves `setup.md` at `/setup/`. Deep links into repository-only documents use
-  their absolute GitHub URL instead.
+  Jekyll serves `setup.md` at `/setup/`. Authoritative repository guidance is mapped to a
+  public route by `_data/source-docs.json` and staged by `scripts/stage_docs_site.py`.
 - The shell is static on purpose: no JavaScript, no external fonts, no CDN assets.
 - `llms.txt` is published at the site root as the agent-readable index of every page. Add
   an entry there whenever you add a page.
@@ -152,16 +152,17 @@ that `llms.txt` lists every page, and that the documented command surface stays 
 The complete checklist — including the SDK, event-boundary, and bundle-pin items — is in
 the development guide below.
 
-## Deeper references
+## Complete references
 
-These live in the repository, not on this site:
+These are source-synchronized into the site during the Pages build:
 
 | Read | For |
 |---|---|
-| [AGENTS.md](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/AGENTS.md) | the short contributor contract: quick commands and the non-negotiables |
-| [docs/DEVELOPMENT.md](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/DEVELOPMENT.md) | the authoritative workflow: full test-suite map, goldens, bundle pins, PR checklist |
-| [docs/ARCHITECTURE.md](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/ARCHITECTURE.md) | how it is built, module by module: boot, event pipeline, governance, persistence |
-| [docs/DESIGN-SPEC.md](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/DESIGN-SPEC.md) | the behavioral spec the app is built to — authoritative for strings and states |
+| [Agent contributor contract]({{ '/development/agent-contract/' | relative_url }}) | quick commands and the non-negotiables |
+| [Development guide]({{ '/development/guide/' | relative_url }}) | full test-suite map, goldens, bundle pins, PR checklist |
+| [Architecture]({{ '/development/architecture/' | relative_url }}) | how it is built, module by module: boot, event pipeline, governance, persistence |
+| [Design contract]({{ '/development/design-contract/' | relative_url }}) | the authoritative behavioral spec for strings and states |
+| [Engineering library]({{ '/engineering/' | relative_url }}) | SDKs, session control, research, decisions, and staged adoption |
 
 For the commands this site documents for users, see the
 [reference]({{ '/reference/' | relative_url }}).

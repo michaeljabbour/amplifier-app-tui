@@ -757,6 +757,8 @@ class _Turn:
     deferred: bool = False
     """Turn hit the trust boundary and deferred a decision to the queue."""
     cancelled: bool = False
+    incomplete: bool = False
+    """The orchestrator stopped before completing the requested turn."""
     last_ts: float = 0.0
     agent_total: int = 0
     """Subagents spawned this turn — pins ``coordinating N agents``."""
@@ -1244,6 +1246,8 @@ class TranscriptReducer:
             case ev.OrchestratorComplete():
                 if event.status == "cancelled" and self._turn is not None:
                     self._turn.cancelled = True
+                elif event.status == "incomplete" and self._turn is not None:
+                    self._turn.incomplete = True
             case ev.GoalProgress():
                 self._goal_progress(event)
             case ev.CancelCompleted():
@@ -1605,7 +1609,7 @@ class TranscriptReducer:
         # may have changed the adapter's close-out spec for this prompt.
         spec = self._spec_lookup(turn.prompt) or turn.spec
         if spec is None:
-            self._finalize_response(event.response)
+            self._finalize_response(event.response, final=not turn.incomplete)
         if turn.working_id is not None:
             self._host.remove_block(turn.working_id)
         # Tool calls that never got a post/error (a policy-denied tool
@@ -1625,6 +1629,8 @@ class TranscriptReducer:
             shipped = spec.shipped and not turn.cancelled
             if turn.cancelled:
                 kind = "interrupted"
+            elif turn.incomplete:
+                kind = "incomplete"
             elif shipped:
                 kind = "shipped"
             else:
@@ -1645,6 +1651,8 @@ class TranscriptReducer:
             shipped = bool(event.files_changed) and not turn.cancelled
             if turn.cancelled:
                 kind = "interrupted"
+            elif turn.incomplete:
+                kind = "incomplete"
             elif shipped:
                 kind = "shipped"
             elif turn.mode == "plan":
@@ -1713,6 +1721,10 @@ class TranscriptReducer:
             # Mockup runTurn close-out: the interrupted turn's end notice
             # fires only once the turn actually stops (spec §11).
             self._host.show_notice("turn interrupted · context saved")
+        elif turn.incomplete:
+            self._host.show_notice(
+                "turn incomplete · continue, or use /goal for autonomous follow-through"
+            )
         elif spec is None:
             # Real runtime: the demo script carries its own end-notice
             # Notification events; here the reducer synthesizes spec §11's
@@ -1833,7 +1845,7 @@ class TranscriptReducer:
             if self._turn is not None:
                 self._turn.rendered_answers.add(text.strip())
 
-    def _finalize_response(self, response: str) -> None:
+    def _finalize_response(self, response: str, *, final: bool = True) -> None:
         """Promote or append the real turn's one authoritative answer."""
         turn = self._turn
         text = response.strip()
@@ -1853,7 +1865,7 @@ class TranscriptReducer:
                     id=block_id,
                     spans=answer_spans(response),
                     evidence_refs=links,
-                    final=True,
+                    final=final,
                 )
             )
             turn.rendered_answers.add(text)
@@ -1870,7 +1882,7 @@ class TranscriptReducer:
                 id=self._ids.next_id(),
                 spans=answer_spans(response),
                 evidence_refs=links,
-                final=True,
+                final=final,
             )
         )
         turn.rendered_answers.add(text)
@@ -2560,16 +2572,18 @@ class TranscriptReducer:
 
     def _agent_completed(self, event: ev.AgentCompleted) -> None:
         result = event.result or ("" if event.success else "failed")
+        incomplete = event.incomplete
         record = self.lanes.get(event.sub_session_id)
         self._lane.clear_tail(record.session_id if record is not None else event.sub_session_id)
         if record is not None:
             # Focus-transcript close-out (mockup focusLane state recap):
             # ``✳ `` dimmer + dim italic state line, never clickable.
-            recap = (
-                "completed · result reported back to parent"
-                if event.success
-                else ("failed" if result in ("", "failed") else f"failed · {result}")
-            )
+            if incomplete:
+                recap = "incomplete · continuation required"
+            elif event.success:
+                recap = "completed · result reported back to parent"
+            else:
+                recap = "failed" if result in ("", "failed") else f"failed · {result}"
             self._lane.append_block(
                 record,
                 Answer(
@@ -2587,11 +2601,11 @@ class TranscriptReducer:
         # as "failed · failed". One shared, meaningful hint feeds BOTH the
         # chat's ✳ marker and the lane's own activity text, so neither
         # surface can independently regress the other (D5 AC1 reconciliation).
-        meaningful_hint = hint if (event.success or hint != "failed") else ""
+        meaningful_hint = hint if (event.success or incomplete or hint != "failed") else ""
         settled = self.lanes.complete(
             event.sub_session_id,
             result=meaningful_hint,
-            state="done" if event.success else "error",
+            state="incomplete" if incomplete else ("done" if event.success else "error"),
         )
         if settled is not None and settled.lane.state == "error":
             # B7 gap 3 (production error transition #3 -- a failed
@@ -2606,7 +2620,11 @@ class TranscriptReducer:
             self._host.attention_error(
                 meaningful_hint or f"{event.agent} failed", occasion=event.sub_session_id
             )
-        if event.success:
+        if incomplete:
+            marker = f"{event.agent} incomplete" + (
+                f" · {meaningful_hint}" if meaningful_hint else " · continuation required"
+            )
+        elif event.success:
             marker = f"{event.agent} done" + (f" · {meaningful_hint}" if meaningful_hint else "")
         else:
             marker = f"{event.agent} failed" + (f" · {meaningful_hint}" if meaningful_hint else "")
@@ -2614,7 +2632,7 @@ class TranscriptReducer:
         row = self._delegate_rows.get(event.sub_session_id)
         if row is not None:
             end_ts = event.ts  # same clock domain as spawned_ts — no fallback
-            row.state = "done" if event.success else "error"
+            row.state = "incomplete" if incomplete else ("done" if event.success else "error")
             row.elapsed_s = max(0.0, end_ts - row.spawned_ts)
             row.snippet = result
             if all(r.state != "running" for r in self._delegate_rows.values()):

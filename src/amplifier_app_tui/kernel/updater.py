@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 from ..install_contract import APP_REPO_URL, SOURCE_INSTALL_COMMAND, source_install_argv
+from ..product import DISTRIBUTION_NAME, EXECUTABLE_NAME
 from .config import (
     DEFAULT_BUNDLE,
     SettingsPaths,
@@ -23,11 +25,14 @@ from .config import (
 _GENERIC_UNCHECKABLE = "Update checking not supported for this source type"
 
 # The clearer header for the deduplicated "couldn't be checked" section.
-UNCHECKABLE_LABEL = "local/non-git sources skipped (no remote to compare)"
+# A row can also land here when an upstream checker reports ``False`` while
+# omitting the remote SHA. That is not evidence of freshness, so the public
+# command refuses to paint a misleading green check.
+UNCHECKABLE_LABEL = "sources not compared"
 
 # The three Amplifier packages the "Amplifier" table reports on, and where
 # their upstream lives. The app itself is git-hosted; core is the PyPI one.
-APP_PACKAGE = "amplifier-app-tui"
+APP_PACKAGE = DISTRIBUTION_NAME
 FOUNDATION_REPO_URL = "https://github.com/microsoft/amplifier-foundation"
 DEV_UPDATE_COMMAND = "git pull --ff-only && uv sync"
 """Dev-checkout repair/update guidance; printed, not run, by public lifecycle commands."""
@@ -72,12 +77,12 @@ def unique_sources(statuses: Iterable[BundleUpdate]) -> list[SourceRow]:
     it 15×. This collapses to one row per distinct ``(name, cached, remote)`` — the
     flat, app-cli-style view — so genuinely different pinned versions still show
     separately but identical repeats appear once. Only rows with a real remote
-    comparison (``has_update is not None``) are included; local/non-git sources are
+    revision are included; local/non-git sources and incomplete comparisons are
     summarized once by :func:`uncheckable_sources`. Pure/offline."""
     seen: dict[tuple[str, str | None, str | None], SourceRow] = {}
     for status in statuses:
         for row in status.sources:
-            if row.has_update is not None:
+            if row.has_update is not None and row.remote is not None:
                 seen.setdefault((row.name, row.cached, row.remote), row)
     return [seen[key] for key in sorted(seen, key=lambda k: (k[0], k[1] or "", k[2] or ""))]
 
@@ -89,9 +94,10 @@ def uncheckable_sources(statuses: Iterable[BundleUpdate]) -> list[tuple[str, str
     bundles appears exactly once. The returned ``reason`` is blank for the stock
     "not supported for this source type" case (the section label already says
     so); genuine failures (ls-remote errors, unresolvable refs) keep their text.
-    Reads the structured ``sources`` rows when present; falls back to the legacy
-    ``unknown`` reason strings (``"name: reason"``) so older/stubbed callers still
-    render. Pure/offline."""
+    A missing remote revision also lands here even if an upstream adapter called
+    the row current: absence is not a comparison. Reads structured ``sources``
+    rows when present and falls back to legacy ``unknown`` strings so older
+    callers still render. Pure/offline."""
 
     def _clean(reason: str) -> str:
         reason = reason.strip()
@@ -101,8 +107,9 @@ def uncheckable_sources(statuses: Iterable[BundleUpdate]) -> list[tuple[str, str
     for status in statuses:
         if status.sources:
             for row in status.sources:
-                if row.has_update is None:
-                    seen.setdefault(row.name, _clean(row.reason or ""))
+                if row.has_update is None or row.remote is None:
+                    reason = row.reason or "no remote revision reported"
+                    seen.setdefault(row.name, _clean(reason))
         else:
             for entry in status.unknown:
                 name, _, detail = entry.partition(":")
@@ -118,6 +125,34 @@ def count_stale_sources(statuses: Iterable[BundleUpdate]) -> int:
     update, not 11 — the number must match the ``●`` rows the table shows.
     Pure/offline."""
     return sum(1 for row in unique_sources(statuses) if row.has_update)
+
+
+def _shape_source_status(source: object) -> SourceRow:
+    """Turn a foundation source status into an honest tri-state row.
+
+    Both revisions are required before a green check or update marker is
+    meaningful. Some foundation adapters report ``has_update=True`` while the
+    cached revision is absent; presenting that as a confirmed update is a
+    false positive, so it belongs in the neutral not-compared section.
+    """
+    cached = _short_sha(getattr(source, "cached_commit", None))
+    remote = _short_sha(getattr(source, "remote_commit", None))
+    has_update = getattr(source, "has_update", None)
+    reason = None
+    if cached is None or remote is None:
+        has_update = None
+        reason = str(
+            getattr(source, "error", None)
+            or getattr(source, "summary", "")
+            or ("cached revision unavailable" if cached is None else "remote revision unavailable")
+        )
+    return SourceRow(
+        name=display_name(str(getattr(source, "source_uri", "") or "")),
+        cached=cached,
+        remote=remote,
+        has_update=has_update,
+        reason=reason,
+    )
 
 
 # Foundation cache entries are ``<repo>-<content hash>`` (16 hex chars today;
@@ -452,7 +487,10 @@ def run_app_self_update(identity: AppIdentity | None = None) -> tuple[bool, str]
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()
         return (False, detail[-1] if detail else f"installer exited {proc.returncode}")
-    return (True, "amplifier-tui updated; run `amplifier-tui version` to verify")
+    return (
+        True,
+        f"{EXECUTABLE_NAME} updated; run `{EXECUTABLE_NAME} version` to verify",
+    )
 
 
 _IDENTITY_STATE_NAME = "tui_identity.json"
@@ -609,7 +647,7 @@ class AnchorsStatus:
             remote = (self.remote_commit or "unknown")[:8]
             return (
                 f"anchors (@{self.ref}) is behind upstream · {cached} → {remote} · "
-                "run `amplifier-tui bundle refresh`"
+                f"run `{EXECUTABLE_NAME} bundle refresh`"
             )
         if self.has_update is False:
             cached = (self.cached_commit or self.remote_commit or "")[:8]
@@ -683,7 +721,12 @@ async def refresh_anchors(amplifier_home: Path | None = None) -> bool:
 
 
 def _amplifier_home(amplifier_home: Path | None) -> Path:
-    return amplifier_home or (Path.home() / ".amplifier")
+    if amplifier_home is not None:
+        return amplifier_home
+    configured = os.environ.get("AMPLIFIER_HOME")
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".amplifier"
 
 
 def display_name(target: str) -> str:
@@ -758,23 +801,7 @@ async def check_bundles(
             summary = str(getattr(status, "summary", "") or "")
             rows: list[SourceRow] = []
             for source in getattr(status, "sources", None) or []:
-                has_update = getattr(source, "has_update", None)
-                reason = None
-                if has_update is None:
-                    reason = str(
-                        getattr(source, "error", None)
-                        or getattr(source, "summary", "")
-                        or "reason unavailable"
-                    )
-                rows.append(
-                    SourceRow(
-                        name=display_name(str(getattr(source, "source_uri", "") or "")),
-                        cached=_short_sha(getattr(source, "cached_commit", None)),
-                        remote=_short_sha(getattr(source, "remote_commit", None)),
-                        has_update=has_update,
-                        reason=reason,
-                    )
-                )
+                rows.append(_shape_source_status(source))
             # Legacy reason strings, derived from the structured rows so the
             # two views can never disagree.
             unknown = tuple(
@@ -797,6 +824,73 @@ async def check_bundles(
                 BundleUpdate(name, target, f"check failed: {error}", False, error=str(error))
             )
     return results
+
+
+async def check_cached_sources(
+    amplifier_home: Path | None = None,
+) -> list[BundleUpdate]:
+    """Compare already-cached git sources without changing the cache.
+
+    Foundation's normal bundle loader prepares missing source caches as part
+    of composition, which is correct for launch/update but violates the
+    ``--check-only`` promise.  This read-only path instead inspects existing
+    cache metadata and compares each recorded commit with ``git ls-remote``.
+    It never loads a bundle, fetches a repository, or writes an identity file.
+    """
+    import asyncio
+    import json
+
+    cache_dir = _amplifier_home(amplifier_home) / "cache"
+    metadata_paths = sorted(cache_dir.glob("*/.amplifier_cache_meta.json"))
+    if not metadata_paths:
+        return []
+
+    async def _one(path: Path) -> SourceRow:
+        try:
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict):
+                raise ValueError("cache metadata is not an object")
+            git_url = str(metadata.get("git_url") or "").strip()
+            ref = str(metadata.get("ref") or "main").strip()
+            cached = str(metadata.get("commit") or "").strip() or None
+            name = display_name(git_url) if git_url else path.parent.name
+            if not git_url:
+                return SourceRow(name=name, cached=_short_sha(cached), reason="missing git URL")
+            if _is_sha(ref):
+                remote = ref
+            else:
+                remote = await asyncio.to_thread(_ls_remote_sha, git_url, ref)
+            if not remote:
+                return SourceRow(
+                    name=name,
+                    cached=_short_sha(cached),
+                    reason=f"could not compare @{ref}",
+                )
+            return SourceRow(
+                name=name,
+                cached=_short_sha(cached),
+                remote=_short_sha(remote),
+                has_update=(cached != remote) if cached else None,
+                reason=None if cached else "cached commit not recorded",
+            )
+        except Exception as error:  # noqa: BLE001 — one corrupt cache must not abort the report
+            return SourceRow(name=path.parent.name, reason=f"unreadable cache metadata: {error}")
+
+    rows = tuple(await asyncio.gather(*(_one(path) for path in metadata_paths)))
+    return [
+        BundleUpdate(
+            name="cached sources",
+            target="cache",
+            summary=f"{len(rows)} cached source(s)",
+            has_updates=any(row.has_update is True for row in rows),
+            sources=rows,
+            unknown=tuple(
+                f"{row.name}: {row.reason or 'reason unavailable'}"
+                for row in rows
+                if row.has_update is None
+            ),
+        )
+    ]
 
 
 async def update_bundles(targets: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
@@ -842,13 +936,14 @@ def self_update_hint(identity: AppIdentity | None = None) -> str:
         app_line = f"to update the app itself (dev checkout): `{DEV_UPDATE_COMMAND}`"
     else:
         app_line = (
-            f"to update the app itself: `amplifier-tui update` (runs `{SOURCE_INSTALL_COMMAND}`)"
+            f"to update the app itself: `{EXECUTABLE_NAME} update` "
+            f"(runs `{SOURCE_INSTALL_COMMAND}`)"
         )
     return (
         f"{app_line}\n"
         "to update the Amplifier platform: `uv tool upgrade amplifier`\n"
-        "to refresh advanced bundle/module caches: `amplifier-tui bundle refresh`\n"
-        "then verify: `amplifier-tui version`"
+        f"to refresh advanced bundle/module caches: `{EXECUTABLE_NAME} bundle refresh`\n"
+        f"then verify: `{EXECUTABLE_NAME} version`"
     )
 
 
@@ -871,6 +966,7 @@ __all__ = [
     "app_identity",
     "check_app_update",
     "check_bundles",
+    "check_cached_sources",
     "check_packages",
     "count_stale_sources",
     "describe_identity_change",

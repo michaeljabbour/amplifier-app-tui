@@ -5,35 +5,35 @@ permalink: /update-reset/
 ---
 
 One command for everyday use; three more when something is wrong — and of those three,
-`amplifier-tui bundle refresh` is the advanced one. Nothing here runs on its own: there is no
+`{{ site.data.product.command }} bundle refresh` is the advanced one. Nothing here runs on its own: there is no
 background updater, so the installed app only changes when you ask it to.
 
 ## Which command do I need?
 
 | Command | What it changes | Reach for it when |
 |---|---|---|
-| `amplifier-tui` | Launches the app. Nothing else, once a provider is configured — a first run with none writes `keys.env` and `settings.yaml`. | Everyday use. |
-| `amplifier-tui update` | The installed app package itself. | The installed app is behind the latest source commit. |
-| `amplifier-tui bundle refresh` | The source cache behind mounted bundles and modules. Advanced. | Bundle or module sources are stale. |
-| `amplifier-tui reset` | Local state under the app home, then repairs the install. | Local state is broken and updating did not help. |
+| `{{ site.data.product.command }}` | Launches the app. Nothing else, once a provider is configured — a first run with none writes `keys.env` and `settings.yaml`. | Everyday use. |
+| `{{ site.data.product.command }} update` | The installed app package itself. | The installed app is behind the latest source commit. |
+| `{{ site.data.product.command }} bundle refresh` | The source cache behind mounted bundles and modules. Advanced. | Bundle or module sources are stale. |
+| `{{ site.data.product.command }} reset` | Local state under the app home, then repairs the install. | Local state is broken and updating did not help. |
 
-`amplifier-tui update` and `amplifier-tui bundle refresh` are separate commands with separate
+`{{ site.data.product.command }} update` and `{{ site.data.product.command }} bundle refresh` are separate commands with separate
 jobs. Top-level `update` does **not** touch bundle or module source caches, and
-`amplifier-tui bundle refresh` never updates the installed app.
+`{{ site.data.product.command }} bundle refresh` never updates the installed app.
 
 ## Check what you have first
 
 ```sh
-amplifier-tui version
+{{ site.data.product.command }} version
 ```
 
 This prints the installed app identity, then the `core` and `foundation` versions it resolved. For
 a git-sourced install the label carries the short commit, which is the real signal — this project
 does not bump its version string on every commit.
 
-## `amplifier-tui update` — update the app
+## `{{ site.data.product.command }} update` — update the app
 
-`amplifier-tui update` updates the app itself. It resolves the identity of the package that is
+`{{ site.data.product.command }} update` updates the app itself. It resolves the identity of the package that is
 actually installed — read from installed distribution metadata, never from a hardcoded version
 string — and then acts on how the app got there.
 
@@ -65,20 +65,23 @@ for example `upgraded · <old-label> → <new-label>`.
 The two that change the decision — [all flags in the Reference]({{ '/reference/' | relative_url }}#update).
 
 ```sh
-amplifier-tui update --check-only     # is anything newer?
-amplifier-tui update -y               # update, no prompt
-amplifier-tui update --force -v       # repair a wedged install, show the installer command
+{{ site.data.product.command }} update --check-only     # is anything newer?
+{{ site.data.product.command }} update -y               # update, no prompt
+{{ site.data.product.command }} update --force -v       # repair a wedged install, show the installer command
 ```
+
+Applying an update asks first and defaults to **No**. Use `--yes` only for an unattended run you
+already intend to change.
 
 `--force` is the one to know: when the check reports you are already current but the install still
 misbehaves, `--force` runs the source installer anyway.
 
 What it leaves alone: bundle and module source caches. Those belong to
-`amplifier-tui bundle refresh`, below.
+`{{ site.data.product.command }} bundle refresh`, below.
 
-## `amplifier-tui bundle refresh` — refresh bundle and module sources
+## `{{ site.data.product.command }} bundle refresh` — refresh bundle and module sources
 
-This is the advanced command, and it is separate on purpose. `amplifier-tui bundle refresh`
+This is the advanced command, and it is separate on purpose. `{{ site.data.product.command }} bundle refresh`
 refreshes the source cache behind every composed bundle: the active bundle, every app overlay
 composed onto it (including the routing-matrix overlay when routing is enabled), and the pinned
 Anchors include. It also prints advisory rows for the app, core, and foundation packages — advisory
@@ -92,17 +95,20 @@ only. It never self-updates the app and never runs the app installer.
 The two that change the decision — [all flags in the Reference]({{ '/reference/' | relative_url }}#bundle).
 
 ```sh
-amplifier-tui bundle refresh --check-only
-amplifier-tui bundle refresh -y
-amplifier-tui bundle refresh --force
+{{ site.data.product.command }} bundle refresh --check-only
+{{ site.data.product.command }} bundle refresh -y
+{{ site.data.product.command }} bundle refresh --force
 ```
+
+Both the normal and `--force` apply paths preview their work and default to **No**. `--check-only`
+never clears the uv cache or records comparison state; cancelling also changes nothing.
 
 Use `--force` when a source is pinned to a floating ref such as `@main`: it cleans the uv cache
 first, so those sources genuinely re-fetch instead of resolving back to the same cached copy.
 `--verbose` lists every local or non-git source that was skipped, instead of collapsing them into
 one summary line.
 
-## `amplifier-tui reset` — safe repair
+## `{{ site.data.product.command }} reset` — safe repair
 
 `reset` is a repair command, not a factory wipe. By default it clears only the two
 auto-regenerating categories, then repairs the install.
@@ -151,30 +157,30 @@ The four this page walks through — [all flags in the Reference]({{ '/reference
 Look before you leap:
 
 ```sh
-amplifier-tui reset --list      # the category taxonomy, then exit
-amplifier-tui reset --dry-run   # what would be removed, and the repair command that would run
+{{ site.data.product.command }} reset --list      # the category taxonomy, then exit
+{{ site.data.product.command }} reset --dry-run   # what would be removed, and the repair command that would run
 ```
 
 Then run it:
 
 ```sh
-amplifier-tui reset                       # clear cache + registry, then repair
-amplifier-tui reset --no-reinstall        # clear only; leave the installed tool alone
-amplifier-tui reset -c cache -y           # scripted; cache only, no prompt
-amplifier-tui reset --install-source .    # repair from the clone you are standing in
+{{ site.data.product.command }} reset                       # clear cache + registry, then repair
+{{ site.data.product.command }} reset --no-reinstall        # clear only; leave the installed tool alone
+{{ site.data.product.command }} reset -c cache -y           # scripted; cache only, no prompt
+{{ site.data.product.command }} reset --install-source .    # repair from the clone you are standing in
 ```
 
 ## When to use which
 
 | Situation | Command |
 |---|---|
-| You just want to work | `amplifier-tui` |
-| The installed app is stale | `amplifier-tui update` |
-| Bundle or module sources are stale | `amplifier-tui bundle refresh` |
-| Local state is broken, or the install is wedged | `amplifier-tui reset` |
+| You just want to work | `{{ site.data.product.command }}` |
+| The installed app is stale | `{{ site.data.product.command }} update` |
+| Bundle or module sources are stale | `{{ site.data.product.command }} bundle refresh` |
+| Local state is broken, or the install is wedged | `{{ site.data.product.command }} reset` |
 
-Work narrow to wide: `amplifier-tui update` for a stale app, `amplifier-tui bundle refresh` for
-stale bundle and module source caches, `amplifier-tui reset` last. Reset is the widest of the
+Work narrow to wide: `{{ site.data.product.command }} update` for a stale app, `{{ site.data.product.command }} bundle refresh` for
+stale bundle and module source caches, `{{ site.data.product.command }} reset` last. Reset is the widest of the
 three, so reach for it once the narrower two have failed to explain the problem.
 
 ## Next
@@ -182,5 +188,5 @@ three, so reach for it once the narrower two have failed to explain the problem.
 - [Troubleshooting]({{ '/troubleshooting/' | relative_url }}) — symptom-first fixes, including
   provider selection.
 - [Configuration]({{ '/configuration/' | relative_url }}) — where settings, keys, and bundles live.
-- [Install guide](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/INSTALL.md) —
-  the deep install and update reference in the repository.
+- [Install reference]({{ '/setup/install-reference/' | relative_url }}) —
+  exact installer behavior, updating, verification, and uninstall.

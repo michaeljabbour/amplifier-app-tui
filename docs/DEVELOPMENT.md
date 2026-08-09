@@ -14,13 +14,14 @@ uv run pytest tests/test_ui_reducer_outcomes.py   # one file
 uv run pytest -q -k "steer"                       # by keyword
 uv run pytest -q --cov=src/amplifier_app_tui --cov-report=term  # with coverage
 uv run ruff check .                  # lint
+uv run ruff format --check .         # formatting
 uv run pyright src/                  # types
 (cd sdk/typescript && npm ci && npm test)  # TypeScript SDK build + tests
 uv run amplifier-tui --demo       # eyeball changes on the scripted session
 ```
 
 CI (`.github/workflows/ci.yml`) runs exactly: `uv sync --frozen` → `ruff check .` →
-`pyright src/` → `pytest -q` with coverage (floor: 85%, actual ~89%), then the perf and
+`ruff format --check .` → `pyright src/` → `pytest -q` with coverage (floor: 85%, actual ~89%), then the perf and
 snapshot tests uninstrumented — coverage tracing blows the frame budget on CI runners.
 If those pass locally, CI passes. PR titles are linted for Conventional Commits format
 (`.github/workflows/pr-title.yml`) — squash-merge titles become the permanent history.

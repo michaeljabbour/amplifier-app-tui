@@ -296,6 +296,51 @@ async def test_checkpoint_begin_failure_rejects_turn_without_ui_close_out() -> N
     assert runtime._executing is False
 
 
+@pytest.mark.parametrize("mode", ["plan", "brainstorm"])
+async def test_read_only_postures_do_not_take_workspace_mutation_lease(mode: str) -> None:
+    class ReadOnlySession:
+        async def execute(self, text: str) -> str:
+            return f"read-only: {text}"
+
+    class MustNotBegin:
+        def begin(self, checkpoint_id: str, prompt: str) -> None:
+            raise AssertionError(f"unexpected checkpoint {checkpoint_id}: {prompt}")
+
+        def finish(self, checkpoint_id: str) -> None:
+            raise AssertionError(f"unexpected finish {checkpoint_id}")
+
+    runtime = RealRuntime(mode=lambda: mode)
+    runtime._initialized = SimpleNamespace(session=ReadOnlySession(), session_id="sess-read")
+    runtime._checkpoint_store = MustNotBegin()
+
+    assert await runtime.submit("inspect only") == "read-only: inspect only"
+
+
+async def test_checkpoint_contention_preserves_actionable_cause() -> None:
+    from amplifier_app_tui.kernel.checkpoints import WorkspaceCheckpointUnavailableError
+
+    class NeverExecute:
+        async def execute(self, text: str) -> str:
+            raise AssertionError(f"unexpected execution: {text}")
+
+    class ContendedStore:
+        def begin(self, checkpoint_id: str, prompt: str) -> None:
+            del checkpoint_id, prompt
+            raise WorkspaceCheckpointUnavailableError(
+                "workspace checkpoint storage is in use by another TUI; cannot begin checkpoint"
+            )
+
+    runtime = RealRuntime()
+    runtime._initialized = SimpleNamespace(session=NeverExecute(), session_id="sess-busy")
+    runtime._checkpoint_store = ContendedStore()
+
+    with pytest.raises(
+        WorkspaceCheckpointUnavailableError,
+        match="in use by another TUI.*Retry when the other turn finishes",
+    ):
+        await runtime.submit("keep me")
+
+
 async def test_submit_keeps_failed_tool_and_fallback_before_close_out(tmp_path: Path) -> None:
     """A recoverable tool failure is an event, not a turn boundary."""
     runtime = RealRuntime(project_dir=tmp_path)

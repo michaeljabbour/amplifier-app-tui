@@ -6,6 +6,7 @@ keys are written to a ``tmp_path`` keys file, never the real ~/.amplifier.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -45,6 +46,7 @@ def _stub(monkeypatch, tmp_path: Path, *, schema=None, choices=None, stub_schema
     proj.mkdir(exist_ok=True)
     monkeypatch.setenv("AMPLIFIER_HOME", str(home))
     monkeypatch.chdir(proj)
+    monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: True)
 
     path = tmp_path / "keys.env"
     written: list = []
@@ -132,6 +134,17 @@ def test_init_yes_without_provider_is_status_only(tmp_path: Path, monkeypatch) -
     assert result.exit_code == 0
     assert "providers:" in result.output
     assert not path.exists()  # nothing written
+
+
+def test_provider_add_blank_selection_reports_no_change(tmp_path: Path, monkeypatch) -> None:
+    path, written = _stub(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(main, ["provider", "add"], input="\n")
+
+    assert result.exit_code == 0
+    assert "No provider selected · nothing changed." in result.output
+    assert written == []
+    assert not path.exists()
 
 
 def test_init_requires_key_with_yes(tmp_path: Path, monkeypatch) -> None:
@@ -222,7 +235,31 @@ def test_init_console_first_run_adds_provider(tmp_path: Path, monkeypatch) -> No
     assert setup.read_keys(path)["ANTHROPIC_API_KEY"] == "sk-interactive"
     (entry,) = written
     assert entry["module"] == "provider-anthropic"
-    assert "Amplifier Setup" in result.output  # lands on the dashboard after
+    assert "Amplifier control center" in result.output  # lands on the dashboard after
+
+
+def test_init_empty_state_only_offers_actions_that_can_work(tmp_path: Path, monkeypatch) -> None:
+    _stub(monkeypatch, tmp_path)
+    result = CliRunner().invoke(main, ["init"], input="d\nd\n")
+    assert result.exit_code == 0, result.output
+    first_menu = result.output.split("Choice:", 1)[0]
+    assert "[a] Add a provider" in first_menu
+    assert "[w] Change write scope" in first_menu
+    assert "[d] Done" in first_menu
+    for unavailable in ("Edit a provider", "Remove a provider", "Reorder", "Test connections"):
+        assert unavailable not in first_menu
+
+
+def test_init_provider_picker_accepts_a_name(tmp_path: Path, monkeypatch) -> None:
+    path, written = _stub(monkeypatch, tmp_path)
+    result = CliRunner().invoke(
+        main,
+        ["init"],
+        input="a\nanthropic\nsk-by-name\nd\nd\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert setup.read_keys(path)["ANTHROPIC_API_KEY"] == "sk-by-name"
+    assert written[0]["module"] == "provider-anthropic"
 
 
 def test_init_console_dashboard_renders_tables(tmp_path: Path, monkeypatch) -> None:
@@ -235,12 +272,12 @@ def test_init_console_dashboard_renders_tables(tmp_path: Path, monkeypatch) -> N
     _seed_matrix(tmp_path, "balanced")
     result = CliRunner().invoke(main, ["init"], input="\n")  # blank → default [d]
     assert result.exit_code == 0, result.output
-    assert "Amplifier Setup" in result.output
-    assert "Providers" in result.output
-    assert "★ anthropic" in result.output
+    assert "Amplifier control center" in result.output
+    assert "Provider" in result.output
+    assert "anthropic" in result.output
     assert "claude-x" in result.output
-    assert "Routing: balanced" in result.output
-    assert "Manage providers" in result.output
+    assert "balanced" in result.output
+    assert "Models and routing" in result.output
 
 
 def test_init_console_routing_select(tmp_path: Path, monkeypatch) -> None:
@@ -626,6 +663,50 @@ def test_provider_add_model_listing_failure_falls_back_to_free_text(
     assert "could not list models · ConnectionError: endpoint unreachable" in result.output
     (entry,) = written
     assert entry["config"]["default_model"] == "some-local-model"
+
+
+def test_provider_add_late_cancel_leaves_staged_credentials_untouched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    schema = setup.ProviderFields(
+        module_id="provider-vllm",
+        key_var="VLLM_API_KEY",
+        key_field_id="api_key",
+        base_url_var="VLLM_BASE_URL",
+        base_url_default=None,
+        has_models=True,
+        display_name="vLLM",
+        config_fields=(
+            _field(
+                "api_key",
+                display_name="API Key",
+                field_type="secret",
+                env_var="VLLM_API_KEY",
+            ),
+            _field("thinking_budget", display_name="Thinking Budget", requires_model=True),
+        ),
+    )
+    path, written = _stub(monkeypatch, tmp_path, schema=schema, choices=(_VLLM_CHOICE,))
+    probed: list[dict] = []
+
+    async def _listing(module_id, collected=None, **kwargs):
+        del module_id, kwargs
+        probed.append(dict(collected or {}))
+        return setup.ModelCatalog(models=(setup.ProviderModel(id="model-1"),))
+
+    monkeypatch.setattr(setup, "list_provider_models", _listing)
+    result = CliRunner().invoke(
+        main,
+        ["provider", "add", "vllm"],
+        input="sk-staged-never-written\n1\n",  # EOF at the post-model field
+    )
+
+    assert result.exit_code == 0, result.output
+    assert probed == [{"api_key": "sk-staged-never-written"}]
+    assert "cancelled · nothing changed" in result.output
+    assert written == []
+    assert not path.exists()
+    assert "VLLM_API_KEY" not in os.environ
 
 
 def test_provider_add_second_instance_gets_its_own_credential_var(

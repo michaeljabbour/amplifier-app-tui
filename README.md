@@ -9,7 +9,8 @@ A full-screen terminal UI for [Amplifier](https://github.com/microsoft/amplifier
 ## Install
 
 The current distribution is a **latest-source channel** for macOS, Linux, and WSL. This
-single command installs the app. Run `amplifier-tui` afterward to launch first-run provider setup:
+single command installs the app. Run `amplifier-tui` afterward to launch; first run opens
+the same guided control center available later as `amplifier-tui config`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash
@@ -34,7 +35,7 @@ release-infrastructure gap.
 - **No API key yet?** `amplifier-tui --demo` runs the full UI on a scripted session — free, offline, zero credentials. When you're ready, keys come from your provider (e.g. [console.anthropic.com](https://console.anthropic.com/settings/keys) — the packaged bundle uses Anthropic by default).
 - **Already have `ANTHROPIC_API_KEY` exported?** The first launch reads it directly (environment variables win over saved keys).
 - **`amplifier-tui: command not found`?** Run `uv tool update-shell` and restart your terminal.
-- **Something off?** `amplifier-tui doctor` checks install, PATH, platform, Python/uv versions, permissions, settings, and the same bundle/provider/credential preflight used by a real launch (exit 0 = ready). It explains each fix in plain language — the exact command or shell line to run, not just what's wrong (`--demo` never needs a key).
+- **Something off?** `amplifier-tui doctor` checks install, PATH, platform, Python/uv versions, permissions, settings, and the same bundle/provider/credential preflight used by a real launch (exit 0 = ready). It explains each fix in plain language — the exact command or shell line to run, not just what's wrong. It changes no settings or user data, but its strict readiness check may contact your configured provider (`--demo` never needs a key).
 
 Credentials and settings live in `~/.amplifier/` (`keys.env`, `settings.yaml`) — the same configuration the full [Amplifier](https://github.com/microsoft/amplifier) platform uses, in both directions: if you already run Amplifier, the TUI picks up your setup with zero extra configuration.
 
@@ -86,8 +87,11 @@ Options and subcommands:
 
 ```sh
 amplifier-tui --bundle NAME_OR_URI   # pick a bundle (default: settings/bundled)
+amplifier-tui config                 # guided durable settings control center
+amplifier-tui config show --json     # redacted effective config for scripts
+amplifier-tui config paths           # exact settings locations; never prints secrets
 amplifier-tui doctor                 # setup checkup; exit 1 when findings exist
-amplifier-tui init                   # set up a provider key in ~/.amplifier/keys.env
+amplifier-tui init                   # provider-first entry into the same control center
 amplifier-tui sessions               # list stored session ids for this project
 amplifier-tui resume SESSION_ID      # relaunch the TUI resuming a stored session
 amplifier-tui run "PROMPT"           # execute one prompt headlessly, print the response
@@ -113,6 +117,14 @@ displayed number or exact matrix name to select it (`1`, `anthropic`, `runpod`);
 scope, and `d` to finish. For the rare custom name that collides with a control or
 is numeric, use `select NAME`; colon-prefixed controls such as `:done` stay
 unambiguous. The selected matrix applies when the next session starts.
+
+`config` is the human-friendly hub for providers, models and routing, bundles,
+directory access, notifications, settings paths, and read-only maintenance previews.
+Every existing direct command remains the automation API. A bare `config` requires a
+real terminal and never hangs on redirected stdin; use `config show --json`, `config
+paths --json`, or the direct command groups in scripts. This durable control center is
+different from the in-session `/config` command, which edits the currently mounted
+session through the app's configurator.
 
 JSON modes reserve stdout for machine-readable output; module diagnostics go to stderr.
 `json` and `json-trace` emit one document, while `jsonl` flushes `session.started`,

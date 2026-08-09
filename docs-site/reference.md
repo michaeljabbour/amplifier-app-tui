@@ -4,23 +4,23 @@ title: Reference
 permalink: /reference/
 ---
 
-Every documented command, flag, slash command, keybinding, and file location Amplifier TUI ships today. Tables first; per-command detail follows.
+Every documented command, flag, slash command, keybinding, and file location {{ site.data.product.display_name }} ships today. Tables first; per-command detail follows.
 
 ## Command summary
 
 Most sessions only ever need three commands:
 
 ```sh
-amplifier-tui           # launch the interactive TUI
-amplifier-tui update    # update the installed app
-amplifier-tui reset     # repair or clean local app state
+{{ site.data.product.command }}           # launch the interactive TUI
+{{ site.data.product.command }} update    # update the installed app
+{{ site.data.product.command }} reset     # repair or clean local app state
 ```
 
 Everything else on this page is discoverable, advanced surface — never required for day-to-day use. The full top-level command surface, one line each:
 
 | Command | Purpose |
 |---|---|
-| `amplifier-tui` | Launch the interactive TUI (bare invocation) |
+| `{{ site.data.product.command }}` | Launch the interactive TUI (bare invocation) |
 | `run [PROMPT]` | One-shot: run a single prompt against a real session; text, JSON, or JSONL output |
 | `serve` | Bidirectional JSONL session protocol over stdio, for out-of-process front-ends |
 | `control-token` | Issue, list, or revoke credentials for `serve`'s control plane |
@@ -36,18 +36,19 @@ Everything else on this page is discoverable, advanced surface — never require
 | `bundle` | Manage bundles: list, show, use, add, warm, remove, refresh |
 | `allowed-dirs` | Manage directories the AI may write to |
 | `denied-dirs` | Manage directories the AI may never write to |
-| `init` | Configure a provider (and routing); no flags opens the setup console |
+| `config` | Durable settings control center, plus redacted scriptable inspection |
+| `init` | Configure a provider and routing; no flags opens the provider-focused control center |
 | `provider` | Manage configured providers: list, add, use, remove, dashboard |
 | `notify` | Configure attention notifications: bell, desktop, ntfy push |
 | `update` | Update the installed app itself |
 | `source` | Override module/bundle source URIs |
 | `routing` | Manage routing matrices: list, use, show, create, manage |
 
-`--demo` is a **flag** on the bare `amplifier-tui` command above, not a subcommand of its own — see Launching, below.
+`--demo` is a **flag** on the bare `{{ site.data.product.command }}` command above, not a subcommand of its own — see Launching, below.
 
 ## Launching
 
-### Bare `amplifier-tui`
+### Bare `{{ site.data.product.command }}`
 
 | Option | Kind | Help text |
 |---|---|---|
@@ -59,12 +60,12 @@ Everything else on this page is discoverable, advanced surface — never require
 | `--dry-run` | flag | Resolve mounts/providers and report what would launch; change/launch nothing. |
 | `--version` | flag | Print the app version and exit (Click's built-in flag — see `version`, below, for the fuller identity check). |
 
-`--demo` is a flag on the top-level command, **not a subcommand**: `amplifier-tui --demo` is correct, `amplifier-tui demo` is not a real invocation.
+`--demo` is a flag on the top-level command, **not a subcommand**: `{{ site.data.product.command }} --demo` is correct, `{{ site.data.product.command }} demo` is not a real invocation.
 
-With no subcommand given, `amplifier-tui`:
+With no subcommand given, `{{ site.data.product.command }}`:
 
 1. Validates overrides first — exits 1 if `--model` is given without `--provider`, or if `--mode` names anything outside `chat` / `plan` / `brainstorm` / `build` / `auto`.
-2. If `--dry-run`: resolves mounts/providers and prints a "Would Launch" table (bundle, provider, model, routing, providers/tools configured), then exits — nothing launches. `--demo --dry-run` short-circuits straight to exit 0, since demo mode has no real mounts or providers to preflight.
+2. If `--dry-run`: reads existing settings and prints a strictly read-only "Would Launch" table (bundle, provider, model, routing, and provider count), then exits without preparing caches, importing a provider, contacting the network, or launching. Tool count is shown as `not resolved (read-only)` because learning it would require composing the bundle. `--demo --dry-run` short-circuits straight to exit 0, since demo mode has no real mounts or providers to preview.
 3. Otherwise it launches: unless `--demo`, a first-run gate configures a provider if none exists yet (an interactive terminal is walked through `init`; a non-interactive shell tries environment auto-detection, or exits 1 with a remediation message). Then a preflight resolves the bundle and provider **before** the terminal takes over the screen — a failure prints `✗ cannot launch: <error>` / `→ <remediation>` to stderr and exits 1 without ever touching the screen. Only then does the TUI actually boot.
 
 ### `--version` vs `version`
@@ -130,15 +131,35 @@ Runs an interactive session as a **bidirectional line protocol on stdio** — th
 | `--from-env` | Non-interactive: configure a provider detected from env vars. |
 | `--yes`, `-y` | Non-interactive: never prompt (needs --api-key). |
 
-With **no flags**, `init` opens the combined setup **console**: it renders the configured-providers table plus the active routing resolution, then loops on `[p]` manage providers, `[r]` manage routing, `[w]` change write scope, `[d]` done. First run (no providers configured) drops straight into the provider console. Passing any flag bypasses the console and takes the non-interactive path.
+With **no flags**, `init` opens the provider section of the durable settings control center.
+First run (no providers configured) enters a focused provider wizard automatically. Passing any
+flag bypasses the control center and targets the direct setup path; outside a terminal that path
+requires `--yes` or `--from-env`.
+
+### `config`
+
+Bare `config` opens the complete durable-settings control center. It begins with a redacted
+dashboard and one numbered path each for providers, models and routing, bundles, directory
+access, notifications, settings paths, and safe maintenance previews.
+
+| Surface | Purpose |
+|---|---|
+| `config --scope global\|project\|local` | Choose the initial write scope for interactive changes (default `global`) |
+| `config show` | Print effective provider, routing, bundle, access, and notification state |
+| `config show --json` | Emit the same redacted snapshot as one JSON document |
+| `config paths` | Print every settings path without reading or printing secret values |
+| `config paths --json` | Emit those paths as one JSON document |
+
+The in-session `/config` slash command is different: it edits the currently mounted live
+session. Top-level `{{ site.data.product.command }} config` manages durable setup for future launches.
 
 ### `doctor`
 
-No options. Prints a setup checkup report. **Exit 0 = ready, exit 1 = findings exist.** Runs the same bundle/provider preflight an interactive boot does, in strict mode — it proves credentials actually work, not just that a bundle resolves.
+No options. Prints a setup checkup report. **Exit 0 = ready, exit 1 = findings exist.** Runs the same bundle/provider preflight an interactive boot does, in strict mode — it proves credentials actually work, not just that a bundle resolves. It changes no settings or user data, but may contact the configured provider and prepare or inspect source caches.
 
 ### `version`
 
-No options. Prints `amplifier-tui <identity>`, then `core <version>` / `foundation <version>`, all read via `importlib.metadata` rather than trusting the hardcoded version string alone. The identity includes the short commit for a git-sourced install.
+No options. Prints `{{ site.data.product.command }} <identity>`, then `core <version>` / `foundation <version>`, all read via `importlib.metadata` rather than trusting the hardcoded version string alone. The identity includes the short commit for a git-sourced install.
 
 ### `update`
 
@@ -149,7 +170,9 @@ No options. Prints `amplifier-tui <identity>`, then `core <version>` / `foundati
 | `--force` | Run the source installer even if no update is detected. |
 | `--verbose`, `-v` | Print the installer command before running it. |
 
-`amplifier-tui update` updates the **app** itself — the installed `amplifier-tui` package/executable — by checking the upstream repository and running the source installer when a newer commit exists on `main`. It never touches bundle or module caches; that is the separate, advanced `amplifier-tui bundle refresh` command (below), which refreshes each mounted bundle's module source cache and never updates the app. Keep the two straight: `update` is the app; `bundle refresh` is the bundle/module cache. In an editable/dev-checkout install, `update` does not run the installer at all — it prints `git pull --ff-only && uv sync` instead, so it never clobbers a developer's own checkout.
+`{{ site.data.product.command }} update` updates the **app** itself — the installed `{{ site.data.product.command }}` package/executable — by checking the upstream repository and running the source installer when a newer commit exists on `main`. It never touches bundle or module caches; that is the separate, advanced `{{ site.data.product.command }} bundle refresh` command (below), which refreshes each mounted bundle's module source cache and never updates the app. Keep the two straight: `update` is the app; `bundle refresh` is the bundle/module cache. In an editable/dev-checkout install, `update` does not run the installer at all — it prints `git pull --ff-only && uv sync` instead, so it never clobbers a developer's own checkout.
+
+The apply prompt defaults to **No**. `--yes` is the explicit automation path.
 
 ### `reset`
 
@@ -181,7 +204,7 @@ No options. Prints `amplifier-tui <identity>`, then `core <version>` / `foundati
 | `show NAME` | Version, description, includes, and mount counts |
 | `add URI` | Register a bundle, validated before it's added (`--name`/`-n`, `--app`, `--warm`, scope options) |
 | `warm NAME` | Pre-install a bundle's modules once, outside the boot install burst |
-| `remove NAME` | Drop a bundle from the discovery registry (scope options) |
+| `remove NAME` | Preview and drop a bundle from the discovery registry (`--yes`/`-y`, scope options; prompt defaults to No) |
 | `update NAME` | One-line update-status check for a single bundle (via foundation) |
 | `refresh` | **Advanced.** Refresh mounted bundle/module source caches (`--check-only`, `--yes`/`-y`, `--force`, `--verbose`/`-v`) |
 
@@ -197,7 +220,9 @@ No options. Prints `amplifier-tui <identity>`, then `core <version>` / `foundati
 | `--force` | uv cache clean first, then re-fetch every source. |
 | `--verbose`, `-v` | List every skipped local/non-git source. |
 
-`bundle refresh` never updates the app itself (that's `amplifier-tui update`, above); it only refreshes each composed bundle's module source cache, plus advisory app/core/foundation version rows and the pinned Anchors include's own freshness.
+`bundle refresh` never updates the app itself (that's `{{ site.data.product.command }} update`, above); it only refreshes each composed bundle's module source cache, plus advisory app/core/foundation version rows and the pinned Anchors include's own freshness.
+Its apply prompt defaults to **No**. `--check-only`, including with `--force`, does not clear
+the uv cache or record comparison state; cancelling also changes nothing.
 
 ### `provider`
 
@@ -206,7 +231,7 @@ No options. Prints `amplifier-tui <identity>`, then `core <version>` / `foundati
 | `list` | List configured providers; `★` marks the primary (lowest-priority) one |
 | `add [PROVIDER_TYPE]` | Add a provider — interactive picker + field-driven wizard when `PROVIDER_TYPE` is omitted |
 | `use NAME` | Set `NAME` to priority `1` |
-| `remove NAME` | Remove `NAME` from every scope |
+| `remove NAME` | Preview removal from every settings scope; prompt defaults to No, `--yes`/`-y` skips it, and stored credentials are kept |
 | `dashboard` | Show configured providers, the primary, and a switch hint |
 
 `add`'s notable flags (verbatim where captured in source):
@@ -216,14 +241,17 @@ No options. Prints `amplifier-tui <identity>`, then `core <version>` / `foundati
 | `--instance-id` | Name a second instance of the same provider type (e.g. runpod). Routing matrices target this id. |
 | `--scope` | Settings scope to write the provider entry into. (`global` \| `project` \| `local`, default `global`) |
 
-`--api-key`, `--base-url`, and `--model` set those fields directly instead of using the interactive wizard; `--yes`/`-y` skips prompts. For how provider *priority* actually resolves (lower number wins, bundled Anthropic fallback at `100`), see [Configuration]({{ '/configuration/' | relative_url }}).
+`--api-key`, `--base-url`, and `--model` prefill those fields; the wizard can still ask for any
+remaining provider-declared values. `--yes`/`-y` is the fully non-interactive path. For how
+provider *priority* actually resolves (lower number wins, bundled Anthropic fallback at `100`),
+see [Configuration]({{ '/configuration/' | relative_url }}).
 
 ### `routing`
 
 | Subcommand | Purpose |
 |---|---|
 | `list` | List routing matrices; `●` marks the active one |
-| `use MATRIX_NAME` | Select a matrix — applies at next session start (scope options) |
+| `use MATRIX_NAME` | Select a matrix — applies at next session start and warns before saving when roles lack compatible providers (scope options) |
 | `show [MATRIX_NAME]` | Defaults to the active matrix (`--detailed` — "Show the full candidate waterfall per role.") |
 | `create` | Interactive; persists under `~/.amplifier/routing` |
 | `manage` | Interactive select / view / create loop (scope options) |
@@ -611,7 +639,7 @@ The short public command, shown first everywhere:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash
-amplifier-tui
+{{ site.data.product.command }}
 ```
 
 `scripts/install.sh` itself accepts these flags:

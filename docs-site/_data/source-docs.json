@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "link_aliases": {
+    "README.md": "/"
+  },
+  "fragment_aliases": {
+    "README.md#install": "install-heading"
+  },
+  "documents": [
+    {
+      "source": "AGENTS.md",
+      "output": "development/agent-contract.md",
+      "route": "/development/agent-contract/",
+      "title": "Agent contributor contract",
+      "description": "The short contributor contract and repository non-negotiables.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/DEVELOPMENT.md",
+      "output": "development/guide.md",
+      "route": "/development/guide/",
+      "title": "Development guide",
+      "description": "The complete local workflow, test map, bundle lifecycle, and pre-PR checklist.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/ARCHITECTURE.md",
+      "output": "development/architecture.md",
+      "route": "/development/architecture/",
+      "title": "Architecture",
+      "description": "How boot, events, governance, rendering, delegation, and persistence fit together.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/DESIGN-SPEC.md",
+      "output": "development/design-contract.md",
+      "route": "/development/design-contract/",
+      "title": "Design contract",
+      "description": "The normative behavior, strings, states, themes, and interaction requirements.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/USER-GUIDE.md",
+      "output": "reference/user-guide.md",
+      "route": "/reference/user-guide/",
+      "title": "Complete user guide",
+      "description": "The exhaustive day-to-day guide to the screen, commands, keys, sessions, and recovery.",
+      "section": "Reference"
+    },
+    {
+      "source": "docs/SETTINGS.md",
+      "output": "configuration/settings.md",
+      "route": "/configuration/settings/",
+      "title": "Settings reference",
+      "description": "Every settings scope, key, environment variable, and notification option.",
+      "section": "Configure"
+    },
+    {
+      "source": "docs/SESSION-CONTROL.md",
+      "output": "automation/session-control.md",
+      "route": "/automation/session-control/",
+      "title": "Session control protocol",
+      "description": "Authentication, leases, handoffs, status, audit, idempotency, and live attachment.",
+      "section": "Automate"
+    },
+    {
+      "source": "docs/INSTALL.md",
+      "output": "setup/install-reference.md",
+      "route": "/setup/install-reference/",
+      "title": "Install reference",
+      "description": "Requirements, install guarantees, machine changes, updates, verification, and uninstall.",
+      "section": "Start"
+    },
+    {
+      "source": "docs/adoption/README.md",
+      "output": "development/adoption/index.md",
+      "route": "/development/adoption/",
+      "title": "Staged adoption policy",
+      "description": "The five evidence-gated stages for replacing amplifier-app-cli.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/adoption/RUNBOOK.md",
+      "output": "development/adoption/runbook.md",
+      "route": "/development/adoption/runbook/",
+      "title": "Adoption runbook",
+      "description": "The commands, evidence, participant steps, rollback path, and owner decisions for each stage.",
+      "section": "Build"
+    },
+    {
+      "source": "sdk/python/README.md",
+      "output": "automation/python.md",
+      "route": "/automation/python/",
+      "title": "Python SDK",
+      "description": "Install and drive the versioned JSONL subprocess contract from Python.",
+      "section": "Automate"
+    },
+    {
+      "source": "sdk/typescript/README.md",
+      "output": "automation/typescript.md",
+      "route": "/automation/typescript/",
+      "title": "TypeScript SDK",
+      "description": "Install and drive the versioned JSONL subprocess contract from TypeScript.",
+      "section": "Automate"
+    },
+    {
+      "source": "docs/RESEARCH-BRIEF.md",
+      "output": "development/research.md",
+      "route": "/development/research/",
+      "title": "Architecture research brief",
+      "description": "The stack choice, event contract, risk analysis, and reuse map behind the application.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/tui-v3-cohesive.md",
+      "output": "development/design-background.md",
+      "route": "/development/design-background/",
+      "title": "Design background",
+      "description": "The presentation rationale and interaction model behind the normative design contract.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/decisions/ADR-0005-interaction-modes-and-trust-postures.md",
+      "output": "development/decisions/0005-interaction-modes.md",
+      "route": "/development/decisions/0005-interaction-modes/",
+      "title": "ADR-0005: Interaction modes and trust postures",
+      "description": "Why working modes and permission posture are separate controls.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/decisions/ADR-0006-full-screen-pinned-interactive-shell.md",
+      "output": "development/decisions/0006-full-screen-shell.md",
+      "route": "/development/decisions/0006-full-screen-shell/",
+      "title": "ADR-0006: Full-screen interactive shell",
+      "description": "Why the product uses a pinned full-screen terminal surface.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/decisions/ADR-0007-tui-ground-up-architecture.md",
+      "output": "development/decisions/0007-architecture.md",
+      "route": "/development/decisions/0007-architecture/",
+      "title": "ADR-0007: Ground-up architecture",
+      "description": "The accepted layering, event, runtime, approval, steering, rewind, and testing decisions.",
+      "section": "Build"
+    },
+    {
+      "source": "docs/decisions/ADR-0008-console-script-name.md",
+      "output": "development/decisions/0008-console-script-name.md",
+      "route": "/development/decisions/0008-console-script-name/",
+      "title": "ADR-0008: Console script name",
+      "description": "Why the executable remains distinct from the wider Amplifier CLI.",
+      "section": "Build"
+    }
+  ]
+}

@@ -32,6 +32,7 @@ from typing import IO, TYPE_CHECKING, Any, Literal, cast
 import click
 
 from . import __version__
+from .product import EXECUTABLE_NAME
 
 if TYPE_CHECKING:
     from click.shell_completion import CompletionItem
@@ -149,8 +150,8 @@ def _print_resume_hint(session_id: str) -> None:
     """
     if not session_id:
         return
-    click.echo(f"resume this session: amplifier-tui resume {session_id[:8]}")
-    click.echo("list sessions:       amplifier-tui sessions")
+    click.echo(f"resume this session: {_command('resume', session_id[:8])}")
+    click.echo(f"list sessions:       {_command('sessions')}")
 
 
 async def _run_once(
@@ -386,7 +387,7 @@ async def _first_run_gate() -> int | None:
             click.echo(f"auto-configured {configured} from environment", err=True)
             return None
         click.echo(
-            "No AI provider configured. Run `amplifier-tui init` or export a "
+            f"No AI provider configured. Run `{_command('config')}` or export a "
             "provider key (e.g. ANTHROPIC_API_KEY) to get started.",
             err=True,
         )
@@ -400,7 +401,7 @@ async def _first_run_gate() -> int | None:
     if setup.has_configured_provider():
         click.echo("")  # spacer before the full-screen TUI takes over
         return None
-    click.echo("\nNo provider configured yet. Run `amplifier-tui` again when ready.")
+    click.echo(f"\nNo provider configured yet. Run `{_command()}` again when ready.")
     return 0
 
 
@@ -432,6 +433,21 @@ async def _run_preflight(
         model_override=model,
         verify_live=live_verify,
         strict=strict,
+    )
+
+
+async def _run_preflight_preview(
+    bundle: str | None,
+    provider: str | None,
+    model: str | None,
+) -> Any:
+    """Read-only launch-plan seam used only by explicit ``--dry-run``."""
+    from .kernel.preflight import run_preflight_preview
+
+    return await run_preflight_preview(
+        bundle,
+        provider_override=provider,
+        model_override=model,
     )
 
 
@@ -471,9 +487,16 @@ def _render_preflight_dry_run(report: Any) -> None:
     table.add_row("Model", report.model or "(provider default)")
     table.add_row("Routing", "enabled" if report.routing_enabled else "disabled")
     table.add_row("Providers configured", str(report.provider_count))
-    table.add_row("Tool modules configured", str(report.tool_count))
+    tool_count = (
+        str(report.tool_count) if report.tool_count is not None else "not resolved (read-only)"
+    )
+    table.add_row("Tool modules configured", tool_count)
     console.print(table)
-    console.print("DRY RUN -- nothing was launched", style="dim")
+    console.print("DRY RUN · read-only preview · nothing was launched or changed", style="dim")
+    console.print(
+        f"Run `{_command('doctor')}` for live readiness checks.",
+        style="dim",
+    )
 
 
 def _preflight_or_none(
@@ -510,10 +533,7 @@ def _dry_run_preflight(
     if demo:
         click.echo("--demo has no real mounts/providers to preflight (fully offline)")
         return 0
-    # --dry-run is the opt-in "I'll wait for a thorough answer" moment (see
-    # _run_preflight): strict mode confirms the selected model via a bounded
-    # catalog call and refuses inconclusive provider imports.
-    report = asyncio.run(_run_preflight(bundle, provider, model, strict=True))
+    report = asyncio.run(_run_preflight_preview(bundle, provider, model))
     if not report.ok:
         _render_preflight_failure(report)
         return 1
@@ -559,35 +579,117 @@ def _interactive_launch(
     )
 
 
-@click.group(invoke_without_command=True)
-@click.option(
-    "--demo", is_flag=True, help="Run the scripted DemoRuntime instead of a real session."
+_CLI_CONTEXT_SETTINGS = {
+    "help_option_names": ["-h", "--help"],
+    "max_content_width": 100,
+}
+
+
+def _active_command_name() -> str:
+    """Executable name for user-facing hints in the current invocation.
+
+    Click knows the real entry-point name, including a future alias.  Tests and
+    direct function calls have no active context, so the canonical product
+    identity is the deterministic fallback.
+    """
+
+    context = click.get_current_context(silent=True)
+    if context is None:
+        return EXECUTABLE_NAME
+    root = context.find_root()
+    return root.info_name or EXECUTABLE_NAME
+
+
+def _command(*parts: str) -> str:
+    """Display a command using the executable that launched this process."""
+
+    suffix = " ".join(part.strip() for part in parts if part.strip())
+    name = _active_command_name()
+    return f"{name} {suffix}" if suffix else name
+
+
+class _RootGroup(click.Group):
+    """Task-grouped root help without changing any command or script contract."""
+
+    _SECTIONS = (
+        (
+            "Start and return",
+            ("run", "resume", "continue", "sessions"),
+        ),
+        (
+            "Configure and maintain",
+            ("config", "init", "doctor", "update", "reset"),
+        ),
+        (
+            "Direct configuration",
+            ("provider", "routing", "bundle", "notify", "allowed-dirs", "denied-dirs"),
+        ),
+        (
+            "Automation and advanced",
+            ("session", "tool", "serve", "source", "stats", "control-token", "version"),
+        ),
+    )
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        visible = {
+            name: command
+            for name, command in self.commands.items()
+            if not command.hidden and command.get_short_help_str()
+        }
+        rendered: set[str] = set()
+        for heading, names in self._SECTIONS:
+            rows = []
+            for name in names:
+                command = visible.get(name)
+                if command is None:
+                    continue
+                rows.append((name, command.get_short_help_str(limit=formatter.width - 6)))
+                rendered.add(name)
+            if rows:
+                with formatter.section(heading):
+                    formatter.write_dl(rows)
+        remaining = [
+            (name, command.get_short_help_str(limit=formatter.width - 6))
+            for name, command in visible.items()
+            if name not in rendered
+        ]
+        if remaining:
+            with formatter.section("More commands"):
+                formatter.write_dl(sorted(remaining))
+
+
+@click.group(
+    name=EXECUTABLE_NAME,
+    cls=_RootGroup,
+    invoke_without_command=True,
+    context_settings=_CLI_CONTEXT_SETTINGS,
 )
-@click.option("--bundle", default=None, help="Bundle name or URI (default: settings/bundled).")
+@click.option("--demo", is_flag=True, help="Open a fully offline scripted demo session.")
+@click.option("--bundle", default=None, help="Bundle name or URI for this launch.")
 @click.option(
     "--provider",
     "-p",
     default=None,
-    help="Provider override for THIS launch only (not persisted to settings).",
+    help="Provider for this launch only (not saved).",
 )
 @click.option(
     "--model",
     "-m",
     default=None,
-    help="Model override for THIS launch only (requires --provider; not persisted).",
+    help="Model for this launch only (requires --provider; not saved).",
 )
 @click.option(
     "--mode",
     "mode",
     default=None,
-    help="Interaction mode to start in (chat, plan, brainstorm, build, auto).",
+    help="Starting mode: chat, plan, brainstorm, build, or auto.",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Resolve mounts/providers and report what would launch; change/launch nothing.",
+    help="Preview what would launch; change nothing.",
 )
-@click.version_option(__version__, prog_name="amplifier-tui")
+@click.version_option(__version__)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -598,13 +700,13 @@ def main(
     mode: str | None,
     dry_run: bool,
 ) -> None:
-    """Amplifier full-screen TUI (v3 Cohesive).
+    """Amplifier's full-screen terminal workspace.
 
-    ``--provider``/``--model`` override the resolved plan for THIS launch only
-    (never written to a settings scope); ``--mode`` seeds the interaction
-    posture the TUI opens in. Same ephemeral semantics as the ``run`` command.
-    ``--dry-run`` previews the mount/provider resolution and exits without
-    ever launching (see ``run --dry-run``).
+    Run without a command to start the TUI. Use config for the guided
+    control center, doctor when something feels wrong, and update for the app.
+
+    Launch options apply to this session only. --dry-run verifies the
+    bundle and provider without opening the full-screen interface.
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -1061,7 +1163,7 @@ def _echo_cross_project_hint(partial: str) -> None:
     click.echo("  it exists in another project — resume it from there:", err=True)
     for full_id, working_dir in matches[:3]:
         location = working_dir or "(directory unknown)"
-        click.echo(f"    cd {location} && amplifier-tui resume {full_id[:8]}", err=True)
+        click.echo(f"    cd {location} && {_command('resume', full_id[:8])}", err=True)
     if len(matches) > 3:
         click.echo(f"    …and {len(matches) - 3} more", err=True)
 
@@ -1084,7 +1186,7 @@ def _print_ambiguous_candidates(partial_id: str, candidates: tuple[Any, ...]) ->
 
     example = candidates[0].short_id
     Console(stderr=True).print(
-        f"resume one directly, e.g. amplifier-tui resume {example}", style="dim"
+        f"resume one directly, e.g. {_command('resume', example)}", style="dim"
     )
 
 
@@ -1110,7 +1212,7 @@ def _resolve_resume_target(store: Any, partial_id: str) -> str:
             "read (even from backup)",
             err=True,
         )
-        click.echo(f"  remove it: amplifier-tui session delete {short} --force", err=True)
+        click.echo(f"  remove it: {_command('session', 'delete', short, '--force')}", err=True)
         raise SystemExit(RESUME_EXIT_CORRUPT)
     # "not_found"
     click.echo(f"no session found matching '{partial_id}'", err=True)
@@ -1130,7 +1232,7 @@ def _pick_session_id(limit: int) -> str | None:
 
     summaries = session_manager.list_summaries(_session_store(), limit=limit)
     if not summaries:
-        click.echo("no stored sessions · start one with `amplifier-tui`")
+        click.echo(f"no stored sessions · start one with `{_command()}`")
         return None
     if len(summaries) == 1:
         click.echo(f"only one session · resuming {summaries[0].short_id}")
@@ -1194,7 +1296,7 @@ def continue_(bundle: str | None) -> None:
 
     summaries = session_manager.list_summaries(_session_store(), limit=1)
     if not summaries:
-        click.echo("no stored sessions · start one with `amplifier-tui`")
+        click.echo(f"no stored sessions · start one with `{_command()}`")
         raise SystemExit(0)
     latest = summaries[0]
     click.echo(f"continuing {latest.short_id}")
@@ -1314,7 +1416,9 @@ async def _tool_list(bundle: str | None, output_format: str) -> int:
         summary = f"  \u00b7  {tool.description}" if tool.description else ""
         marker = "" if tool.invokable else "  (not invokable)"
         click.echo(f"{tool.name}{summary}{marker}")
-    click.echo("invoke with `amplifier-tui tool invoke <name> key=value ...`", err=True)
+    click.echo(
+        f"invoke with `{_command('tool', 'invoke', '<name>', 'key=value', '...')}`", err=True
+    )
     return 0
 
 
@@ -1428,13 +1532,13 @@ def tool_invoke(
     (numbers, booleans, arrays, objects) and kept as a plain string otherwise:
 
     \b
-        amplifier-tui tool invoke read_file file_path=README.md
-        amplifier-tui tool invoke some_tool data='{"k": "v"}' limit=5
+        tool invoke read_file file_path=README.md
+        tool invoke some_tool data='{"k": "v"}' limit=5
 
     Or pass the whole argument object at once with --json:
 
     \b
-        amplifier-tui tool invoke read_file --json '{"file_path": "README.md"}'
+        tool invoke read_file --json '{"file_path": "README.md"}'
 
     Governance: a one-shot CLI cannot answer an interactive approval, so it runs
     a SAFE posture -- read/test tools run; write/exec/network/spend are refused.
@@ -1578,7 +1682,7 @@ def session_fork(session_id: str, directive: str, new_name: str) -> None:
         click.echo(detail, err=True)
         raise SystemExit(1)
     click.echo(f"forked {resolved[:8]} → {detail}")
-    click.echo(f"resume to run the directive: amplifier-tui resume {detail[:8]}")
+    click.echo(f"resume to run the directive: {_command('resume', detail[:8])}")
 
 
 @session.command("export")
@@ -1661,7 +1765,7 @@ def session_import(file: str, new_name: str) -> None:
         click.echo(str(error), err=True)
         raise SystemExit(1) from None
     click.echo(f"imported → {new_id}")
-    click.echo(f"resume it: amplifier-tui resume {new_id[:8]}")
+    click.echo(f"resume it: {_command('resume', new_id[:8])}")
 
 
 # ``session resume SESSION_ID`` — alias to the top-level ``resume`` command, so
@@ -1673,15 +1777,16 @@ session.add_command(resume, "resume")
 
 @main.command()
 def doctor() -> None:
-    """Setup checkup: prints the report, exit 1 when findings exist.
+    """Check whether Amplifier is ready to launch.
 
-    The standalone command verifies the same bundle/provider launch path as
-    an interactive boot, before claiming the installation is ready.  That
-    closes the previous false-green case where a broken provider source or
-    missing credential was invisible because no live session existed yet.
+    Verifies the install, PATH, permissions, settings, runtime sources, and
+    the same provider preflight used by a real launch. It changes no settings
+    or user data; strict readiness may contact the configured provider and
+    prepare or inspect source caches. Exit 0 is ready; exit 1 means review the findings.
     """
     from .commands.doctor import CheckResult, run_standalone
     from .kernel import updater
+    from shutil import get_terminal_size
 
     async def inspect_launch_readiness() -> tuple[Any, Any]:
         anchors_task = asyncio.create_task(updater.anchors_status())
@@ -1698,7 +1803,14 @@ def doctor() -> None:
             detail = f"{detail} · {preflight.remediation}"
         message = f"launch blocked: {detail}"
     launch_check = CheckResult(name="launch-preflight", ok=bool(preflight.ok), message=message)
-    raise SystemExit(run_standalone(anchors_status=anchors, additional_checks=(launch_check,)))
+    raise SystemExit(
+        run_standalone(
+            anchors_status=anchors,
+            additional_checks=(launch_check,),
+            executable=_active_command_name(),
+            width=get_terminal_size((100, 24)).columns if _is_interactive_terminal() else None,
+        )
+    )
 
 
 def _package_version(dist_name: str) -> str:
@@ -1730,7 +1842,7 @@ def version() -> None:
     from .kernel import updater
 
     identity = updater.app_identity()
-    click.echo(f"amplifier-tui {identity.label()}")
+    click.echo(f"{_active_command_name()} {identity.label()}")
     click.echo(f"  core        {_package_version('amplifier-core')}")
     click.echo(f"  foundation  {_package_version('amplifier-foundation')}")
 
@@ -1772,9 +1884,9 @@ def stats(days: int | None, models: str | None, project: str | None, as_json: bo
     events (the same source the live cost footer uses), rolled up by day / model / project.
 
     \b
-      amplifier-tui stats                     current project, all time
-      amplifier-tui stats --days 7 --models   last 7 days + per-model breakdown
-      amplifier-tui stats --project all       every project (adds a by-project rollup)
+      stats                     current project, all time
+      stats --days 7 --models   last 7 days + per-model breakdown
+      stats --project all       every project (adds a by-project rollup)
     """
     from .kernel import stats as stats_kernel
 
@@ -1814,6 +1926,7 @@ def stats(days: int | None, models: str | None, project: str | None, as_json: bo
 @click.option(
     "--reinstall",
     is_flag=True,
+    hidden=True,
     help="Compatibility no-op: reset repairs/reinstalls by default.",
 )
 @click.option(
@@ -1837,12 +1950,11 @@ def reset(
     no_reinstall: bool,
     install_source: str | None,
 ) -> None:
-    """Data-safe reset: clear selected categories, preserve the rest.
+    """Safely repair the app while preserving your data.
 
-    Re-expresses amplifier-app-cli's ``reset`` recovery command as a guarded,
-    category-scoped cleaner scoped to tui's app home. ``--category`` names
-    what to CLEAR; everything else is preserved. The default clears only the
-    auto-regenerating categories (cache, registry).
+    The default clears only auto-regenerating cache and registry data, then
+    repairs the app installation. Sessions, settings, local bundles, and API
+    keys stay untouched unless you explicitly name their category.
 
     \b
     Guards:
@@ -1851,34 +1963,42 @@ def reset(
       - secrets (keys) are cleared ONLY when named explicitly
       - never deletes outside the confirmed app home
 
-    By default reset also repairs a wedged install through the canonical source
-    installer after clearing — the tui analogue of app-cli's reset-and-reinstall.
-    Use ``--no-reinstall`` for cleanup-only behavior; ``--reinstall`` remains as
-    a compatibility alias.
-
     \b
     Examples:
-      amplifier-tui reset --list                 Show the taxonomy
-      amplifier-tui reset --dry-run              Preview the safe default
-      amplifier-tui reset --category cache -y    Clear only the cache
-      amplifier-tui reset -c sessions,config     Clear sessions + config
-      amplifier-tui reset -y                     Safe repair: clear + reinstall
-      amplifier-tui reset --no-reinstall -y      Cleanup only
+      reset --list                 Show the taxonomy
+      reset --dry-run              Preview the safe default
+      reset --category cache -y    Clear only the cache
+      reset -c sessions,config     Clear sessions + config
+      reset --category sessions    Clear sessions after confirmation
+      reset --no-reinstall -y      Cleanup only
     """
+    from rich.console import Console
+    from rich.table import Table
+
     from .kernel import reset as reset_kernel
 
+    console = Console(highlight=False)
+
     if list_only:
+        console.print("[bold]Amplifier reset categories[/bold]")
+        table = Table(header_style="bold cyan", box=None, pad_edge=False)
+        table.add_column("Category", style="cyan", no_wrap=True)
+        table.add_column("Contains")
+        table.add_column("Safety", style="dim")
         for name in reset_kernel.CATEGORY_ORDER:
             category = reset_kernel.CATEGORIES[name]
             tags = []
             if name in reset_kernel.DEFAULT_CATEGORIES:
                 tags.append("default")
             if category.auto_regenerates:
-                tags.append("auto-regenerates")
+                tags.append("regenerates")
             if category.secret:
                 tags.append("secret")
-            suffix = f"  [{', '.join(tags)}]" if tags else ""
-            click.echo(f"{name:9} {category.description}{suffix}")
+            table.add_row(name, category.description, " · ".join(tags) or "preserved by default")
+        console.print(table)
+        console.print(
+            "\n[dim]Default: clear cache + registry, preserve everything else, repair the app.[/dim]"
+        )
         return
 
     home = reset_kernel.resolve_app_home(Path(home_override) if home_override else None)
@@ -1896,30 +2016,45 @@ def reset(
         click.echo(f"refusing to reset: {error}", err=True)
         raise SystemExit(2) from None
 
-    click.echo(f"app home: {plan.home}")
-    click.echo(f"clear:    {', '.join(plan.clear)}")
-    click.echo(f"preserve: {', '.join(plan.keep) or '(nothing else on disk)'}")
-    if plan.secret_cleared:
-        click.echo(f"WARNING: this clears secrets: {', '.join(plan.secret_cleared)}")
-
     source = install_source or reset_kernel.DEFAULT_INSTALL_SOURCE
     do_reinstall = not no_reinstall
     del reinstall  # compatibility flag; reset repairs by default now
 
+    console.print("[bold]Amplifier reset[/bold]")
+    console.print(f"[dim]App home[/dim]  {plan.home}", soft_wrap=True)
+    plan_table = Table(show_header=False, box=None, pad_edge=False)
+    plan_table.add_column("", style="dim", no_wrap=True)
+    plan_table.add_column("", overflow="fold")
+    plan_table.add_row("Clear", ", ".join(plan.clear))
+    plan_table.add_row("Preserve", ", ".join(plan.keep) or "(nothing else on disk)")
+    plan_table.add_row("Repair app", "yes" if do_reinstall else "no")
+    console.print(plan_table)
+    if plan.secret_cleared:
+        console.print(
+            f"[bold red]WARNING: this clears secrets: {', '.join(plan.secret_cleared)}[/bold red]"
+        )
+
     if plan.removed:
-        click.echo("would remove:" if dry_run else "to remove:")
+        console.print("\n[bold]Would remove[/bold]" if dry_run else "\n[bold]To remove[/bold]")
         for path in plan.removed:
-            click.echo(f"  - {path}")
+            console.print(f"  [red]−[/red] {path}", soft_wrap=True)
     else:
-        click.echo("nothing to remove -- selected categories have no files on disk")
+        console.print("\n[dim]Nothing to remove — those categories are already clean.[/dim]")
 
     if dry_run:
         if do_reinstall:
-            click.echo(f"would reinstall: {' '.join(reset_kernel.reinstall_command(source))}")
-        click.echo("DRY RUN -- nothing was changed")
+            console.print(
+                f"Would reinstall: {' '.join(reset_kernel.reinstall_command(source))}",
+                soft_wrap=True,
+            )
+        console.print("\n[green]✓ DRY RUN complete[/green] · nothing was changed")
+        console.print(
+            "[dim]Remove --dry-run to apply this exact plan; confirmation still defaults to No.[/dim]"
+        )
         return
 
     if not plan.removed and not do_reinstall:
+        console.print("[green]✓ Nothing to do[/green] · your data is unchanged")
         return
 
     if not yes:
@@ -1932,21 +2067,25 @@ def reset(
         if do_reinstall:
             actions.append("reinstall the tui tool")
         if not click.confirm("permanently " + " and ".join(actions) + "?", default=False):
-            click.echo("cancelled")
+            console.print("[dim]cancelled · nothing was changed[/dim]")
             return
 
     if plan.removed:
         final = reset_kernel.run_reset(home, selected, dry_run=False)
-        click.echo(f"removed {len(final.removed)} item(s); preserved {len(final.preserved)}")
-        for path in final.preserved:
-            click.echo(f"  preserved: {path}")
+        console.print(
+            f"[green]✓[/green] removed {len(final.removed)} item(s); "
+            f"preserved {len(final.preserved)}"
+        )
 
     if do_reinstall:
-        click.echo(f"reinstalling tui from {source} ...")
+        console.print(f"reinstalling tui from {source} ...")
         ok, message = reset_kernel.reinstall_tool(source)
-        click.echo(message if ok else f"reinstall failed: {message}", err=not ok)
+        console.print(
+            message if ok else f"reinstall failed: {message}", style="green" if ok else "red"
+        )
         if not ok:
             raise SystemExit(1)
+    console.print("[green]✓ Reset complete[/green]")
 
 
 # --------------------------------------------------------------------------
@@ -1958,7 +2097,9 @@ def _scope(
     is_global: bool, is_project: bool, is_local: bool
 ) -> Literal["global", "project", "local"]:
     """Resolve the scope flags to one scope (default: global, app-cli parity)."""
-    del is_global
+    selected = sum((is_global, is_project, is_local))
+    if selected > 1:
+        raise click.UsageError("choose exactly one write scope: --global, --project, or --local")
     if is_project:
         return "project"
     if is_local:
@@ -1981,7 +2122,7 @@ def _scope_options(fn):  # noqa: ANN001 — click decorator stack
 
 @main.group()
 def bundle() -> None:
-    """Manage bundles: list, show, use, add, remove, update, warm."""
+    """Manage bundles: list, show, use, add, remove, update, refresh, warm."""
 
 
 @bundle.command("list")
@@ -2005,19 +2146,21 @@ def bundle_list(all_bundles: bool) -> None:
     table.add_column("Name", style="green", no_wrap=True)
     table.add_column("Location", style="dim", overflow="fold")
     table.add_column("Status", no_wrap=True)
+    active_name = bundle_admin.current_bundle()
+    has_explicit_active = active_name is not None
     for entry in entries:
-        marker = "●" if entry.active else ""
-        status = "app" if entry.source == "app" else ""
+        is_default_active = not has_explicit_active and entry.name == DEFAULT_BUNDLE
+        is_active = entry.active or is_default_active
+        marker = "●" if is_active else ""
+        status = "default" if is_default_active else ("app" if entry.source == "app" else "")
         location = entry.uri or ("(on disk)" if entry.source == "local" else "")
-        name = f"[bold]{entry.name}[/bold]" if entry.active else entry.name
+        name = f"[bold]{entry.name}[/bold]" if is_active else entry.name
         table.add_row(marker, name, location, status)
     console.print(table)
-
-    active = bundle_admin.current_bundle()
     console.print(
-        f"Active: [green]{active}[/green]"
-        if active
-        else f"No bundle active ({DEFAULT_BUNDLE} default)",
+        f"Active: [green]{active_name}[/green]"
+        if active_name
+        else f"Active: [green]{DEFAULT_BUNDLE}[/green] (default)",
         style="dim",
     )
     if not all_bundles:
@@ -2043,7 +2186,7 @@ def bundle_use(name: str, is_global: bool, is_project: bool, is_local: bool) -> 
 
     known = {e.name for e in bundle_admin.list_bundles()}
     if name not in known and not bundle_admin.is_bundle_uri(name):
-        click.echo(f"unknown bundle: {name} · run `amplifier-tui bundle list`", err=True)
+        click.echo(f"unknown bundle: {name} · run `{_command('bundle', 'list')}`", err=True)
         raise SystemExit(1)
     scope = _scope(is_global, is_project, is_local)
     path = bundle_admin.set_active_bundle(bundle_admin.settings_paths(None, None), name, scope)
@@ -2154,14 +2297,32 @@ def bundle_warm(name: str) -> None:
 
 @bundle.command("remove")
 @click.argument("name")
+@click.option("--yes", "-y", is_flag=True, help="Remove without the confirmation prompt.")
 @_scope_options
-def bundle_remove(name: str, is_global: bool, is_project: bool, is_local: bool) -> None:
-    """Remove a bundle from the discovery registry."""
+def bundle_remove(
+    name: str,
+    yes: bool,
+    is_global: bool,
+    is_project: bool,
+    is_local: bool,
+) -> None:
+    """Remove a bundle from the selected scope's discovery registry."""
     from .kernel import bundle_admin
 
     scope = _scope(is_global, is_project, is_local)
-    removed = bundle_admin.remove_bundle(bundle_admin.settings_paths(None, None), name, scope)
-    click.echo(f"removed {name} ({scope})" if removed else f"not registered: {name} ({scope})")
+    paths = bundle_admin.settings_paths(None, None)
+    settings_path = bundle_admin.scope_file(paths, scope)
+    registered = bundle_admin.added_bundles(bundle_admin.read_scope(settings_path))
+    uri = registered.get(name)
+    if uri is None:
+        click.echo(f"not registered: {name} ({scope}: {settings_path})")
+        return
+    click.echo(f"bundle: {name} → {uri}\nscope: {scope} · {settings_path}")
+    if not yes and not click.confirm(f"Remove {name} from this registry?", default=False):
+        click.echo("Cancelled · nothing changed")
+        return
+    bundle_admin.remove_bundle(paths, name, scope)
+    click.echo(f"removed {name} ({scope}: {settings_path})")
 
 
 @bundle.command("update")
@@ -2231,9 +2392,12 @@ def _directory_scope_filter(fn):  # noqa: ANN001 — click decorator stack
     return fn
 
 
-@main.group("allowed-dirs")
-def allowed_dirs() -> None:
+@main.group("allowed-dirs", invoke_without_command=True)
+@click.pass_context
+def allowed_dirs(ctx: click.Context) -> None:
     """Manage directories the AI can write to."""
+    if ctx.invoked_subcommand is None:
+        _list_directories("allowed", None)
 
 
 @allowed_dirs.command("list")
@@ -2273,9 +2437,12 @@ def allowed_dirs_remove(path: str, is_global: bool, is_project: bool, is_local: 
     )
 
 
-@main.group("denied-dirs")
-def denied_dirs() -> None:
+@main.group("denied-dirs", invoke_without_command=True)
+@click.pass_context
+def denied_dirs(ctx: click.Context) -> None:
     """Manage directories the AI is blocked from writing to."""
+    if ctx.invoked_subcommand is None:
+        _list_directories("denied", None)
 
 
 @denied_dirs.command("list")
@@ -2376,14 +2543,16 @@ async def _resolve_provider_schema(choice):  # noqa: ANN001, ANN202
     return schema
 
 
-def _prompt_config_field(field, *, collected, existing, env_var, keys_path, written):  # noqa: ANN001, ANN202
+def _prompt_config_field(  # noqa: ANN001, ANN202
+    field, *, collected, existing, env_var, keys_path, staged_keys
+):
     """Prompt for one ``config_fields`` entry; return ``(field_id, value)``.
 
     Any field carrying an ``env_var`` — text as much as secret — is stored in
     keys.env and referenced from settings as ``${VAR}``, which is how the
     endpoint and tuning values end up as ``${VLLM_BASE_URL}`` /
-    ``${VLLM_CONTEXT_WINDOW}`` rather than literals. Writing the key also
-    exports it, so the model probe two steps later can actually connect.
+    ``${VLLM_CONTEXT_WINDOW}`` rather than literals. Values stay staged until
+    the whole wizard succeeds, so cancelling a later prompt changes nothing.
 
     Returns ``None`` when the user aborts, and omits a field they left blank.
     On edit (*existing* given) stored values are the defaults: ``${VAR}``
@@ -2450,10 +2619,8 @@ def _prompt_config_field(field, *, collected, existing, env_var, keys_path, writ
             return None
         return (field.id, None)
     if env_var:
-        setup.write_key(keys_path, env_var, str(value))
-        if env_var not in written:
-            written.append(env_var)
-        click.echo("  ✓ Saved")
+        staged_keys[env_var] = str(value)
+        click.echo("  ✓ Ready to save")
         return (field.id, f"${{{env_var}}}")
     return (field.id, value)
 
@@ -2544,7 +2711,7 @@ async def _configure_provider_interactive(
     from .kernel import setup
 
     collected: dict[str, object] = {}
-    written: list[str] = []
+    staged_keys: dict[str, str] = {}
     overrides: dict[str, str] = {}
     if cli_api_key:
         overrides[schema.key_field_id] = cli_api_key
@@ -2585,8 +2752,7 @@ async def _configure_provider_interactive(
                 collected[field.id] = overrides[field.id]
                 env_var = _env_for(field)
                 if env_var:
-                    setup.write_key(keys_path, env_var, str(overrides[field.id]))
-                    written.append(env_var)
+                    staged_keys[env_var] = str(overrides[field.id])
                     collected[field.id] = f"${{{env_var}}}"
                 continue
             outcome = _prompt_config_field(
@@ -2595,7 +2761,7 @@ async def _configure_provider_interactive(
                 existing=existing_config,
                 env_var=_env_for(field),
                 keys_path=keys_path,
-                written=written,
+                staged_keys=staged_keys,
             )
             if outcome is None:
                 return False
@@ -2615,14 +2781,22 @@ async def _configure_provider_interactive(
     else:
         current_model = (existing_config or {}).get("default_model")
         click.echo("\n  fetching available models …")
-        catalog = await setup.list_provider_models(choice.module_id, collected)
+        probe_config = {
+            key: (
+                staged_keys.get(value[2:-1], value)
+                if isinstance(value, str) and value.startswith("${") and value.endswith("}")
+                else value
+            )
+            for key, value in collected.items()
+        }
+        catalog = await setup.list_provider_models(choice.module_id, probe_config)
         model = _prompt_model_selection(catalog, str(current_model) if current_model else None)
         if model:
             collected["default_model"] = model
 
     if not _run_fields(post_model):
         return None
-    return collected, written
+    return collected, staged_keys
 
 
 async def _init(
@@ -2678,6 +2852,7 @@ async def _init(
             "\nset up which provider? (number, or blank to skip)", default="", show_default=False
         )
         if not raw.strip():
+            click.echo("No provider selected · nothing changed.")
             return 0
         try:
             target = choices[int(raw) - 1]
@@ -2777,15 +2952,17 @@ async def _interactive_provider_setup(
         keys_path=path,
     )
     if outcome is None:
-        click.echo("cancelled · nothing written to settings")
+        click.echo("cancelled · nothing changed")
         return 0
-    collected, written = outcome
+    collected, staged_keys = outcome
     entry = setup.provider_config_entry(
         target.module_id,
         config=collected,
         instance_id=instance_id,
         source=None if target.installed else target.source_uri,
     )
+    for name, value in staged_keys.items():
+        setup.write_key(path, name, value)
     cfg_path = setup.write_provider_config(paths, scope, entry)
     matrix = _persist_selected_model_matrix(
         paths,
@@ -2794,12 +2971,12 @@ async def _interactive_provider_setup(
         module_id=target.module_id,
         model=collected.get("default_model"),
     )
-    if written:
-        click.echo(f"\nwrote {', '.join(written)} → {path}")
+    if staged_keys:
+        click.echo(f"\nwrote {', '.join(staged_keys)} → {path}")
     click.echo(f"configured provider {instance_id or target.module_id} → {cfg_path}")
     if matrix is not None:
         click.echo(f"routing matrix → {matrix[0]}  ({scope}: {matrix[1]})")
-    click.echo("run `amplifier-tui` to start a session.")
+    click.echo(f"run `{_command()}` to start a session.")
     return 0
 
 
@@ -2961,7 +3138,7 @@ def _init_basic_interactive(
     click.echo(f"configured provider {instance_id or target.module_id} → {cfg_path}")
     if matrix is not None:
         click.echo(f"routing matrix → {matrix[0]}  ({scope}: {matrix[1]})")
-    click.echo("run `amplifier-tui` to start a session.")
+    click.echo(f"run `{_command()}` to start a session.")
     return 0
 
 
@@ -2971,22 +3148,30 @@ def _init_basic_interactive(
 
 _WriteScope = Literal["global", "project", "local"]
 
-_SCOPE_HINTS: dict[str, tuple[str, str]] = {
-    "global": ("~/.amplifier/settings.yaml", ""),
-    "project": (".amplifier/settings.yaml", "(team-shared, committed)"),
-    "local": (".amplifier/settings.local.yaml", "(this machine only, gitignored)"),
+_SCOPE_NOTES: dict[_WriteScope, str] = {
+    "global": "default for this user",
+    "project": "team-shared, committed",
+    "local": "this machine only, gitignored",
 }
 
 
-def _print_scope_indicator(console: Any, scope: str) -> None:
-    """One-line "Saving to:" banner (app-cli's ``print_scope_indicator``)."""
-    file_hint, parenthetical = _SCOPE_HINTS[scope]
+def _scope_path(scope: _WriteScope) -> Path:
+    """Resolve the real write target, including AMPLIFIER_HOME overrides."""
+
+    from .kernel import bundle_admin
+
+    return bundle_admin.scope_file(bundle_admin.settings_paths(None, None), scope)
+
+
+def _print_scope_indicator(console: Any, scope: _WriteScope) -> None:
+    """One-line "Saving to:" banner with the exact file that will change."""
+    file_hint = _scope_path(scope)
     if scope == "global":
         console.print(f"  [dim]Saving to:[/dim] [bold]{scope}[/bold]  [dim]{file_hint}[/dim]")
     else:
         console.print(
             f"  [yellow]Saving to:[/yellow] [bold yellow]{scope}[/bold yellow]"
-            f"  [dim]{file_hint}[/dim]  [yellow]{parenthetical}[/yellow]"
+            f"  [dim]{file_hint}[/dim]  [yellow]({_SCOPE_NOTES[scope]})[/yellow]"
         )
 
 
@@ -2995,10 +3180,14 @@ def _prompt_scope_change(console: Any, current: _WriteScope) -> _WriteScope:
     order: tuple[_WriteScope, ...] = ("global", "project", "local")
     console.print("\n  Write scope:")
     for index, name in enumerate(order, start=1):
-        file_hint, _paren = _SCOPE_HINTS[name]
+        file_hint = _scope_path(name)
         marker = "▸" if name == current else " "
         default_tag = " (default)" if name == "global" else ""
-        console.print(f"  {marker} \\[{index}] {name:<8} {file_hint:<40}{default_tag}")
+        console.print(
+            f"  {marker} \\[{index}] [bold]{name}[/bold]  "
+            f"[dim]{_SCOPE_NOTES[name]}{default_tag}[/dim]"
+        )
+        console.print(f"        {file_hint}", style="dim", soft_wrap=True)
     console.print()
     try:
         raw = click.prompt(
@@ -3012,7 +3201,7 @@ def _prompt_scope_change(console: Any, current: _WriteScope) -> _WriteScope:
         console.print(f"  invalid selection: {raw}", style="yellow")
         return current
     if chosen != current:
-        file_hint, _paren = _SCOPE_HINTS[chosen]
+        file_hint = _scope_path(chosen)
         console.print(
             f"  [green]✓ Switched to {chosen} scope. Changes save to {file_hint}.[/green]"
         )
@@ -3027,7 +3216,8 @@ def _render_provider_table(console: Any, *, numbered: bool = False):  # noqa: AN
 
     providers = setup.configured_providers()
     if not providers:
-        console.print("\n  [yellow]No providers configured.[/yellow]\n")
+        console.print("\n  [yellow]No providers configured.[/yellow]")
+        console.print("  [dim]Add one to start real sessions. Demo mode works without one.[/dim]\n")
         return providers
     table = Table(title="Configured Providers" if numbered else "Providers")
     if numbered:
@@ -3096,14 +3286,14 @@ def _init_console() -> int:
     scope: _WriteScope = "global"
 
     if not setup.configured_providers():
-        console.print("\n  [yellow]No providers configured. Let's set one up:[/yellow]\n")
+        console.rule("[bold]Amplifier Setup[/bold]")
+        console.print("  Connect a provider, choose a model, and start a real session.\n")
         scope = _provider_console(scope)
 
     while True:
         paths = bundle_admin.settings_paths(None, None)
-        console.print("\n  [bold]══════════════════════════════════════════════════════[/bold]")
-        console.print("  [bold]Amplifier Setup[/bold]")
-        console.print("  [bold]══════════════════════════════════════════════════════[/bold]\n")
+        console.rule("[bold]Amplifier Setup[/bold]")
+        console.print("  Providers and routing for your next session.\n")
         _print_scope_indicator(console, scope)
         console.print()
         _render_provider_table(console)
@@ -3127,6 +3317,8 @@ def _init_console() -> int:
             scope = _routing_console(scope)
         elif choice == "w":
             scope = _prompt_scope_change(console, scope)
+        else:
+            console.print("  [yellow]Choose p, r, w, or d.[/yellow]")
 
 
 def _provider_console(scope: _WriteScope) -> _WriteScope:
@@ -3139,14 +3331,20 @@ def _provider_console(scope: _WriteScope) -> _WriteScope:
 
     console = Console()
     while True:
+        console.rule("[bold]Amplifier providers[/bold]")
         providers = _render_provider_table(console, numbered=True)
         _print_scope_indicator(console, scope)
+        console.print(
+            "  [dim]Scope applies to new providers. Edits keep their original scope; "
+            "remove/reorder can touch every scope.[/dim]"
+        )
         console.print("  Actions:")
         console.print("    \\[a] Add a provider")
-        console.print("    \\[e] Edit a provider (enter number)")
-        console.print("    \\[r] Remove a provider (enter number)")
-        console.print("    \\[p] Reorder priorities")
-        console.print("    \\[t] Test connections")
+        if providers:
+            console.print("    \\[e] Edit a provider (enter number)")
+            console.print("    \\[r] Remove a provider (enter number)")
+            console.print("    \\[p] Reorder priorities")
+            console.print("    \\[t] Test connections")
         console.print("    \\[w] Change write scope")
         console.print("    \\[d] Done")
         console.print()
@@ -3168,6 +3366,9 @@ def _provider_console(scope: _WriteScope) -> _WriteScope:
             _console_test_providers(console, providers)
         elif choice == "w":
             scope = _prompt_scope_change(console, scope)
+        else:
+            valid = "a, e, r, p, t, w, or d" if providers else "a, w, or d"
+            console.print(f"  [yellow]Choose {valid}.[/yellow]")
 
 
 def _parse_choice_number(choice: str, prefix: str, count: int, console: Any) -> int | None:
@@ -3206,17 +3407,26 @@ def _console_add_provider(console: Any, scope: _WriteScope) -> None:
     ordered = sorted(choices, key=lambda c: _choice_label(c).lower())
     console.print("\n  [bold]Available providers:[/bold]")
     for index, entry in enumerate(ordered, start=1):
-        console.print(f"    \\[{index}] {_choice_label(entry)}")
+        suffix = f"  [dim]{entry.availability}[/dim]" if entry.availability else ""
+        console.print(f"    \\[{index}] {_choice_label(entry)}{suffix}")
+    console.print("  [dim]Enter a number or provider name. Press Enter to go back.[/dim]")
     try:
-        raw = click.prompt("  Which provider?", default="", show_default=False).strip()
+        raw = click.prompt("  Provider", default="", show_default=False).strip()
     except (click.Abort, EOFError):
         return
     if not raw:
         return
     try:
         target = ordered[int(raw) - 1]
-    except (ValueError, IndexError):
-        console.print(f"  [red]invalid selection: {raw}[/red]")
+    except ValueError:
+        target = _match_provider(ordered, raw)
+        if target is None:
+            console.print(
+                f"  [red]Unknown provider '{raw}'. Enter 1-{len(ordered)} or a listed name.[/red]"
+            )
+            return
+    except IndexError:
+        console.print(f"  [red]Invalid selection. Enter 1-{len(ordered)}.[/red]")
         return
     asyncio.run(_interactive_provider_setup(target, scope=scope))
 
@@ -3251,6 +3461,14 @@ def _console_edit_provider(console: Any, choice: str, providers) -> None:  # noq
         return
     target_entry = providers[idx]
     target = _console_choice_for(target_entry)
+    paths = bundle_admin.settings_paths(None, None)
+    settings_path = bundle_admin.scope_file(paths, target_entry.scope)  # type: ignore[arg-type]
+    keys_path = setup.keys_file()
+    console.print(
+        f"\n  Editing {target_entry.name}\n"
+        f"  [dim]Settings: {target_entry.scope} · {settings_path}\n"
+        f"  Credentials: {keys_path}[/dim]"
+    )
     schema = asyncio.run(_resolve_provider_schema(target)) or setup.fallback_provider_fields(
         target_entry.module_id
     )
@@ -3268,14 +3486,14 @@ def _console_edit_provider(console: Any, choice: str, providers) -> None:  # noq
             cli_base_url=None,
             cli_model=None,
             instance_id=target_entry.instance_id,
-            keys_path=setup.keys_file(),
+            keys_path=keys_path,
             existing_config=target_entry.config,
         )
     )
     if outcome is None:
-        console.print("  [dim]Cancelled.[/dim]")
+        console.print("  [dim]Cancelled · nothing changed.[/dim]")
         return
-    collected, _written = outcome
+    collected, staged_keys = outcome
     entry = setup.provider_config_entry(
         target_entry.module_id,
         config=collected,
@@ -3283,7 +3501,8 @@ def _console_edit_provider(console: Any, choice: str, providers) -> None:  # noq
         instance_id=target_entry.instance_id,
         source=target_entry.source,
     )
-    paths = bundle_admin.settings_paths(None, None)
+    for name, value in staged_keys.items():
+        setup.write_key(keys_path, name, value)
     setup.replace_provider_config(paths, target_entry.scope, entry)  # type: ignore[arg-type]
     model = collected.get("default_model", "")
     matrix = None
@@ -3296,7 +3515,12 @@ def _console_edit_provider(console: Any, choice: str, providers) -> None:  # noq
             model=model,
         )
     model_display = f" ({model})" if model else ""
-    console.print(f"\n  [green]✓ Provider updated: {target_entry.name}{model_display}[/green]")
+    console.print(
+        f"\n  [green]✓ Provider updated: {target_entry.name}{model_display}[/green]"
+        f" [dim]({target_entry.scope}: {settings_path})[/dim]"
+    )
+    if staged_keys:
+        console.print(f"  [green]✓ Credentials saved[/green] [dim]({keys_path})[/dim]")
     if matrix is not None:
         console.print(f"  [green]✓ Routing matrix updated: {matrix[0]}[/green]")
 
@@ -3312,17 +3536,32 @@ def _console_remove_provider(console: Any, choice: str, providers) -> None:  # n
     if idx is None:
         return
     target_entry = providers[idx]
+    paths = bundle_admin.settings_paths(None, None)
+    console.print(f"\n  Provider: {target_entry.name} · {target_entry.module_id}")
+    console.print("  Settings entries with this identity will be removed from every scope:")
+    for label, path in (
+        ("global", paths.global_settings),
+        ("project", paths.project_settings),
+        ("local", paths.local_settings),
+    ):
+        console.print(f"    {label:<7} {path}", style="dim")
+    console.print(f"  Credentials stay in {setup.keys_file()}", style="dim")
     try:
-        if not click.confirm(f"  Remove {target_entry.name}?", default=False):
+        if not click.confirm(
+            f"  Remove {target_entry.name} from every settings scope?", default=False
+        ):
             console.print("  [dim]Cancelled.[/dim]")
             return
     except (click.Abort, EOFError):
         return
-    removed = setup.remove_provider(bundle_admin.settings_paths(None, None), target_entry.name)
+    removed = setup.remove_provider(paths, target_entry.name)
     if removed is None:
         console.print(f"  [red]could not remove {target_entry.name}[/red]")
         return
-    console.print(f"\n  [green]✓ Removed provider: {removed.name}[/green]")
+    console.print(
+        f"\n  [green]✓ Removed provider: {removed.name}[/green] "
+        "[dim]· stored credentials kept[/dim]"
+    )
 
 
 def _console_reorder_providers(console: Any, providers) -> None:  # noqa: ANN001
@@ -3335,6 +3574,10 @@ def _console_reorder_providers(console: Any, providers) -> None:  # noqa: ANN001
     console.print("\n  Current order:")
     for index, entry in enumerate(providers, start=1):
         console.print(f"    \\[{index}] {entry.name}")
+    console.print(
+        "  [dim]Priorities are rewritten across every scope; the selected primary's "
+        "routing hint stays in its own scope.[/dim]"
+    )
     try:
         order_str = click.prompt(
             "  Enter new order (e.g., 2 1 3)", default="", show_default=False
@@ -3410,19 +3653,365 @@ def init(
     from_env: bool,
     yes: bool,
 ) -> None:
-    """Set up Amplifier: provider credentials plus a routing matrix.
+    """Configure providers and model routing.
 
-    With no flags this opens the setup console — the configured-providers and
-    routing tables plus \\[p]/\\[r]/\\[w]/\\[d] actions, the same dashboard as
-    app-cli's ``amplifier init``. Passing any flag
-    (``--provider``/``--api-key``/``--from-env``/``-y``/…) bypasses the console
-    and takes the non-interactive path: the key is written to
-    ~/.amplifier/keys.env and the provider entry to settings (config.providers).
+    Run with no options for guided setup. Pass options for automation or to
+    configure one provider directly. Credentials are stored in Amplifier's
+    private keys file; provider settings stay separate from secrets.
     """
     flags_given = any([provider, api_key, base_url, model, from_env, yes])
     if flags_given:
+        if not _is_interactive_terminal() and not (yes or from_env):
+            raise click.UsageError(
+                f"non-interactive init requires `--yes` or `--from-env`; see "
+                f"`{_command('init', '--help')}`"
+            )
         raise SystemExit(asyncio.run(_init(provider, api_key, base_url, model, yes, from_env)))
-    raise SystemExit(_init_console())
+    if not _is_interactive_terminal():
+        raise click.UsageError(
+            f"guided init needs a terminal; use `{_command('init', '--provider', '<type>', '--help')}` "
+            f"for automation or `{_command('config', 'show', '--json')}` to inspect setup"
+        )
+    raise SystemExit(_run_config_control_center(scope="global", start="providers"))
+
+
+# --------------------------------------------------------------------------
+# config — one durable-settings control center (interactive + scriptable reads)
+# --------------------------------------------------------------------------
+
+
+def _bundle_console(scope: Literal["global", "project", "local"]):  # noqa: ANN202
+    """Friendly active-bundle picker used by the configuration control center."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from .kernel import bundle_admin
+    from .kernel.config import DEFAULT_BUNDLE
+
+    console = Console(highlight=False)
+    while True:
+        entries = bundle_admin.list_bundles()
+        active = bundle_admin.current_bundle() or DEFAULT_BUNDLE
+        table = Table(title="Bundles", title_justify="center", header_style="bold cyan")
+        table.add_column("#", justify="right", width=3)
+        table.add_column("", width=1)
+        table.add_column("Name", style="green")
+        table.add_column("Location", style="dim", overflow="fold")
+        for index, entry in enumerate(entries, start=1):
+            table.add_row(
+                str(index),
+                "●" if entry.name == active else "",
+                entry.name,
+                entry.uri or "(built in)",
+            )
+        console.print(table)
+        console.print(f"[dim]Active: {active} · write scope: {scope}[/dim]")
+        console.print(
+            "  Enter a bundle number/name · [c] use default · [s] scope · [q] back",
+            markup=False,
+        )
+        try:
+            raw = click.prompt("Bundle", default="q", show_default=False).strip()
+        except (click.Abort, EOFError):
+            return scope
+        folded = raw.casefold()
+        if folded in ("", "q", "quit", "back", "done"):
+            return scope
+        if folded in ("s", "scope"):
+            scope = _prompt_scope_change(console, scope)
+            continue
+        if folded in ("c", "clear", "default"):
+            changed = bundle_admin.clear_active_bundle(
+                bundle_admin.settings_paths(None, None), scope
+            )
+            message = "reverted to the built-in default" if changed else "already using the default"
+            console.print(f"[green]✓ {message}[/green] [dim]({scope})[/dim]")
+            continue
+        try:
+            selected = entries[int(raw) - 1].name
+        except ValueError:
+            matches = [entry.name for entry in entries if entry.name.casefold() == folded]
+            if len(matches) != 1:
+                console.print(
+                    f"[yellow]Enter 1-{len(entries)}, a listed name, c, s, or q.[/yellow]"
+                )
+                continue
+            selected = matches[0]
+        except IndexError:
+            console.print(f"[yellow]Enter a number from 1-{len(entries)}.[/yellow]")
+            continue
+        path = bundle_admin.set_active_bundle(
+            bundle_admin.settings_paths(None, None), selected, scope
+        )
+        console.print(f"[green]✓ Active bundle → {selected}[/green] [dim]({scope}: {path})[/dim]")
+
+
+def _directory_console(scope: Literal["global", "project", "local"]):  # noqa: ANN202
+    """Allowed/denied directory editor; it changes policy, never filesystem data."""
+    from rich.console import Console
+
+    from .kernel import bundle_admin, directory_permissions
+
+    console = Console(highlight=False)
+    paths = bundle_admin.settings_paths(None, None)
+    actions: dict[
+        str,
+        tuple[Literal["allowed", "denied"], Literal["add", "remove"]],
+    ] = {
+        "1": ("allowed", "add"),
+        "allow": ("allowed", "add"),
+        "2": ("denied", "add"),
+        "deny": ("denied", "add"),
+        "3": ("allowed", "remove"),
+        "remove allowed": ("allowed", "remove"),
+        "4": ("denied", "remove"),
+        "remove denied": ("denied", "remove"),
+    }
+    while True:
+        allowed = directory_permissions.configured_entries(paths, "allowed")
+        denied = directory_permissions.configured_entries(paths, "denied")
+        console.print("\n[bold]Directory access[/bold]")
+        console.print(f"  Project default  {Path.cwd().resolve()}")
+        console.print(
+            "  Allowed          "
+            + (", ".join(f"{entry.path} ({entry.scope})" for entry in allowed) or "none added")
+        )
+        console.print(
+            "  Denied           "
+            + (", ".join(f"{entry.path} ({entry.scope})" for entry in denied) or "none added")
+        )
+        console.print(f"  [dim]Write scope: {scope}[/dim]")
+        console.print(
+            "\n  [1] Allow directory     [2] Deny directory\n"
+            "  [3] Remove allowed      [4] Remove denied\n"
+            "  [s] Change scope        [q] Back",
+            markup=False,
+        )
+        try:
+            raw = click.prompt("Action", default="q", show_default=False).strip().casefold()
+        except (click.Abort, EOFError):
+            return scope
+        if raw in ("", "q", "quit", "back", "done"):
+            return scope
+        if raw in ("s", "scope"):
+            scope = _prompt_scope_change(console, scope)
+            continue
+        operation = actions.get(raw)
+        if operation is None:
+            console.print("[yellow]Choose 1-4, s, or q.[/yellow]")
+            continue
+        try:
+            path_text = click.prompt("Directory path", default="", show_default=False).strip()
+        except (click.Abort, EOFError):
+            continue
+        if not path_text:
+            console.print("[dim]Cancelled · no policy changed.[/dim]")
+            continue
+        kind, verb = operation
+        changed, resolved, settings_path = directory_permissions.update_configured_path(
+            paths, kind, verb, path_text, scope
+        )
+        if not changed:
+            console.print(f"[yellow]No matching policy entry: {resolved}[/yellow]")
+            continue
+        label = "allowed" if kind == "allowed" else "denied"
+        if verb == "remove":
+            label = f"removed from {label}"
+        console.print(f"[green]✓ {label}: {resolved}[/green] [dim]({scope}: {settings_path})[/dim]")
+
+
+def _notification_console(scope: Literal["global", "project", "local"]):  # noqa: ANN202
+    """Notification controls with secret-safe topic handling."""
+    from rich.console import Console
+
+    from .kernel import bundle_admin, notify_admin, setup
+
+    console = Console(highlight=False)
+    while True:
+        status = notify_admin.load_status()
+        console.print("\n[bold]Notifications[/bold]")
+        console.print(
+            f"  Ceiling {status.ceiling} · desktop {status.desktop_gate} · "
+            f"push {status.push_enabled if status.push_enabled is not None else 'default'} · "
+            f"topic {'configured' if status.topic else 'not set'}"
+        )
+        console.print(
+            f"  [dim]Write scope: {scope} for switches · private topic: {setup.keys_file()}[/dim]"
+        )
+        console.print(
+            "\n  [1] Enable desktop  [2] Disable desktop  "
+            "[3] Enable push  [4] Disable push\n"
+            "  [5] Set private push topic  [6] Test locally  [s] Scope  [q] Back",
+            markup=False,
+        )
+        try:
+            raw = click.prompt("Action", default="q", show_default=False).strip().casefold()
+        except (click.Abort, EOFError):
+            return scope
+        if raw in ("", "q", "quit", "back", "done"):
+            return scope
+        if raw in ("s", "scope"):
+            scope = _prompt_scope_change(console, scope)
+            continue
+        channel_actions: dict[str, tuple[Literal["desktop", "push"], bool]] = {
+            "1": ("desktop", True),
+            "enable desktop": ("desktop", True),
+            "2": ("desktop", False),
+            "disable desktop": ("desktop", False),
+            "3": ("push", True),
+            "enable push": ("push", True),
+            "4": ("push", False),
+            "disable push": ("push", False),
+        }
+        channel = channel_actions.get(raw)
+        if channel is not None:
+            target, enabled = channel
+            result = notify_admin.set_enabled(
+                bundle_admin.settings_paths(None, None),
+                target,
+                enabled,
+                scope,  # type: ignore[arg-type]
+            )
+            label = "enabled" if enabled else "disabled"
+            console.print(
+                f"[green]✓ {target} notifications {label}[/green] "
+                f"[dim]({scope}: {result.path})[/dim]"
+            )
+            continue
+        if raw in ("5", "topic", "set topic"):
+            try:
+                topic = click.prompt(
+                    "Private ntfy topic", hide_input=True, default="", show_default=False
+                ).strip()
+            except (click.Abort, EOFError):
+                continue
+            if not topic:
+                console.print("[dim]Cancelled · topic unchanged.[/dim]")
+                continue
+            result = notify_admin.set_key(
+                bundle_admin.settings_paths(None, None), "topic", topic, scope
+            )
+            console.print(f"[green]✓ Push topic saved privately[/green] [dim]({result.path})[/dim]")
+            continue
+        if raw in ("6", "test"):
+            _notify_test()
+            continue
+        console.print("[yellow]Choose 1-6, s, or q.[/yellow]")
+
+
+def _maintenance_console() -> None:
+    """Read-only first maintenance hub; every action is an explicit preview."""
+    from rich.console import Console
+
+    console = Console(highlight=False)
+    while True:
+        console.print("\n[bold]Maintenance previews[/bold]")
+        console.print(
+            "  [1] Diagnose readiness (may contact your configured provider)\n"
+            "  [2] Check for an app update\n"
+            "  [3] Check bundle/module sources\n"
+            "  [4] Preview safe reset and repair\n"
+            "  [q] Back",
+            markup=False,
+        )
+        try:
+            raw = click.prompt("Preview", default="q", show_default=False).strip().casefold()
+        except (click.Abort, EOFError):
+            return
+        if raw in ("", "q", "quit", "back", "done"):
+            return
+        if raw in ("1", "doctor", "diagnose"):
+            try:
+                click.get_current_context().invoke(doctor)
+            except SystemExit as error:
+                console.print(f"[dim]Doctor exit: {error.code}[/dim]")
+        elif raw in ("2", "update", "app update"):
+            _app_update(check_only=True, yes=False, force=False, verbose=False)
+        elif raw in ("3", "bundle", "sources"):
+            asyncio.run(_bundle_refresh(check_only=True, yes=False, force=False, verbose=False))
+        elif raw in ("4", "reset", "repair"):
+            click.get_current_context().invoke(
+                reset,
+                categories=(),
+                dry_run=True,
+                yes=False,
+                home_override=None,
+                list_only=False,
+                reinstall=False,
+                no_reinstall=False,
+                install_source=None,
+            )
+        else:
+            console.print("[yellow]Choose 1-4 or q.[/yellow]")
+
+
+def _run_config_control_center(
+    *,
+    scope: Literal["global", "project", "local"],
+    start: Literal["dashboard", "providers"] = "dashboard",
+) -> int:
+    from .cli.config_console import ConfigActions, run_control_center
+
+    return run_control_center(
+        ConfigActions(
+            providers=_provider_console,
+            routing=_routing_console,
+            bundles=_bundle_console,
+            directories=_directory_console,
+            notifications=_notification_console,
+            maintenance=_maintenance_console,
+            change_scope=_prompt_scope_change,
+        ),
+        scope=scope,
+        start=start,
+    )
+
+
+@main.group("config", invoke_without_command=True)
+@click.option(
+    "--scope",
+    type=click.Choice(["global", "project", "local"]),
+    default="global",
+    show_default=True,
+    help="Initial write scope for interactive changes.",
+)
+@click.pass_context
+def config(ctx: click.Context, scope: str) -> None:
+    """Open the settings control center, or inspect config for scripts.
+
+    The interactive menu manages durable app setup. The in-session /config
+    command is different: it edits the currently mounted session.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    if not _is_interactive_terminal():
+        raise click.UsageError(
+            f"interactive config needs a terminal; use `{_command('config', 'show', '--json')}` "
+            f"or direct commands such as `{_command('provider', 'add', '--help')}`"
+        )
+    raise SystemExit(
+        _run_config_control_center(
+            scope=cast(Literal["global", "project", "local"], scope), start="dashboard"
+        )
+    )
+
+
+@config.command("show")
+@click.option("--json", "as_json", is_flag=True, help="Emit one redacted JSON document.")
+def config_show(as_json: bool) -> None:
+    """Show effective provider, routing, bundle, access, and notifications."""
+    from .cli.config_console import render_snapshot
+
+    render_snapshot(as_json=as_json)
+
+
+@config.command("paths")
+@click.option("--json", "as_json", is_flag=True, help="Emit one JSON document.")
+def config_paths(as_json: bool) -> None:
+    """Show every settings path without reading or printing secret values."""
+    from .cli.config_console import render_paths
+
+    render_paths(as_json=as_json)
 
 
 # --------------------------------------------------------------------------
@@ -3442,7 +4031,9 @@ def provider_list() -> None:
 
     providers = setup.configured_providers()
     if not providers:
-        click.echo("no providers configured · run `amplifier-tui provider add`")
+        click.echo("No providers configured.")
+        click.echo(f"Add one:       {_command('provider', 'add')}")
+        click.echo(f"Guided setup:  {_command('config')}")
         return
     for entry in providers:
         marker = "★" if entry.primary else " "
@@ -3487,10 +4078,15 @@ def provider_add(
     actually serves, so you pick a default rather than typing one blind.
 
     Adding a second provider keeps the first: the newest becomes primary and
-    the others stay switchable via `amplifier-tui provider use`. Use
+    the others stay switchable via `provider use`. Use
     `--instance-id` for a second instance of the SAME provider type; it gets
     its own credential variable instead of overwriting the first's.
     """
+    if not yes and not _is_interactive_terminal():
+        raise click.UsageError(
+            f"interactive provider setup needs a terminal; add `--yes` with all required "
+            f"values or see `{_command('provider', 'add', '--help')}`"
+        )
     raise SystemExit(
         asyncio.run(
             _init(
@@ -3510,13 +4106,13 @@ def provider_add(
 @provider.command("use")
 @click.argument("name")
 def provider_use(name: str) -> None:
-    """Make NAME the primary provider (sets it to priority 1)."""
+    """Make NAME primary and align its provider-default routing hint."""
     from .kernel import bundle_admin, setup
 
     paths = bundle_admin.settings_paths(None, None)
     target = setup.use_provider(paths, name)
     if target is None:
-        click.echo(f"unknown provider: {name} · run `amplifier-tui provider list`", err=True)
+        click.echo(f"unknown provider: {name} · run `{_command('provider', 'list')}`", err=True)
         raise SystemExit(1)
     click.echo(f"primary provider → {target.name}")
     matrix = _persist_selected_model_matrix(
@@ -3532,15 +4128,38 @@ def provider_use(name: str) -> None:
 
 @provider.command("remove")
 @click.argument("name")
-def provider_remove(name: str) -> None:
-    """Remove NAME from the provider configuration (every scope)."""
+@click.option("--yes", "-y", is_flag=True, help="Remove without the confirmation prompt.")
+def provider_remove(name: str, yes: bool) -> None:
+    """Remove NAME from every settings scope; keep stored credentials."""
     from .kernel import bundle_admin, setup
 
+    target = setup.find_configured_provider(name)
+    if target is None:
+        if name.strip().lower() in {"anthropic", "provider-anthropic"}:
+            click.echo(
+                "provider-anthropic is the built-in credential fallback, not a saved "
+                "provider. It is skipped automatically when another provider is "
+                "configured and Anthropic has no key.",
+                err=True,
+            )
+            click.echo(f"Saved providers: `{_command('provider', 'list')}`", err=True)
+            raise SystemExit(1)
+        click.echo(f"unknown provider: {name} · run `{_command('provider', 'list')}`", err=True)
+        raise SystemExit(1)
+    click.echo(
+        f"provider: {target.name} · {target.module_id} · effective scope {target.scope}\n"
+        "stored credentials will be kept"
+    )
+    if not yes and not click.confirm(
+        f"Remove {target.name} from every settings scope?", default=False
+    ):
+        click.echo("Cancelled · nothing changed")
+        return
     removed = setup.remove_provider(bundle_admin.settings_paths(None, None), name)
     if removed is None:
-        click.echo(f"unknown provider: {name} · run `amplifier-tui provider list`", err=True)
+        click.echo(f"unknown provider: {name} · run `{_command('provider', 'list')}`", err=True)
         raise SystemExit(1)
-    click.echo(f"removed provider: {removed.name}")
+    click.echo(f"removed provider: {removed.name} · stored credentials kept")
 
 
 @provider.command("dashboard")
@@ -3554,7 +4173,7 @@ def provider_dashboard() -> None:
     click.echo("stored keys: " + (", ".join(status.stored_keys) if status.stored_keys else "none"))
     click.echo("")
     if not providers:
-        click.echo("no providers configured · run `amplifier-tui provider add`")
+        click.echo(f"no providers configured · run `{_command('provider', 'add')}`")
         return
     click.echo("providers (★ = primary):")
     for entry in providers:
@@ -3565,7 +4184,7 @@ def provider_dashboard() -> None:
             f"pri {entry.priority} · {entry.scope}{model}"
         )
     click.echo("")
-    click.echo("switch with `amplifier-tui provider use <name>`")
+    click.echo(f"switch with `{_command('provider', 'use', '<name>')}`")
 
 
 # --------------------------------------------------------------------------
@@ -3627,7 +4246,8 @@ def _notify_test() -> int:
         if not notifications.desktop_notifications_supported(env):
             click.echo(
                 "desktop skipped — terminal not on the OSC render allowlist; enable with "
-                "`amplifier-tui notify enable desktop` or AMPLIFIER_TERMINAL_NOTIFICATIONS=force",
+                f"`{_command('notify', 'enable', 'desktop')}` or "
+                "AMPLIFIER_TERMINAL_NOTIFICATIONS=force",
                 err=True,
             )
     return 0
@@ -3692,7 +4312,7 @@ def _set_channel_enabled(
         and not notify_admin.topic_configured(paths.global_settings.parent)
     ):
         click.echo(
-            "  note: no ntfy topic set — run `amplifier-tui notify set topic <topic>`",
+            f"  note: no ntfy topic set — run `{_command('notify', 'set', 'topic', '<topic>')}`",
             err=True,
         )
 
@@ -3734,14 +4354,14 @@ def _sha_text(sha: str | None):  # noqa: ANN202 — rich Text
 def _status_glyph(has_update: bool | None):  # noqa: ANN202 — rich Text
     """Map foundation's tri-state to the shared legend glyph.
 
-    ``●`` update available · ``✓`` up to date · ``◦`` no comparison (unknown)."""
+    ``●`` update available · ``✓`` up to date · ``?`` no comparison."""
     from rich.text import Text
 
     if has_update is True:
         return Text("●", style="yellow")
     if has_update is False:
         return Text("✓", style="green")
-    return Text("◦", style="cyan")
+    return Text("?", style="dim")
 
 
 def _print_packages_table(console, packages) -> None:  # noqa: ANN001 — rich Console
@@ -3812,7 +4432,7 @@ def _print_update_table(console, statuses, packages=()) -> None:  # noqa: ANN001
         _render("Bundles", bundles)
     console.print(
         "[dim]Legend: [green]✓[/green] up to date  "
-        "[yellow]●[/yellow] update available  [cyan]◦[/cyan] local changes[/dim]"
+        "[yellow]●[/yellow] update available  ? could not compare[/dim]"
     )
 
 
@@ -3823,33 +4443,41 @@ async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: boo
 
     console = Console()
 
-    # AC3: prove what's installed -- every invocation, regardless of mode --
-    # and confirm it when it changed since the last invocation (typically
-    # because the user followed this same command's own guidance below:
-    # canonical source installer / `git pull && uv sync`, both out of
-    # this command's own scope). Never blocks: identity/state I/O degrades
-    # to "unknown"/silently-skipped rather than raising.
+    # Prove what's installed on every invocation. Persist the comparison
+    # baseline only after a non-check-only run crosses its action/no-op gate;
+    # a command promising "nothing changed" must not write even this
+    # auto-regenerating cache file.
     current_identity = updater.app_identity()
     previous_identity = updater.read_last_identity()
-    console.print(f"amplifier-tui {current_identity.label()}", style="dim")
+    console.print("[bold]Amplifier bundle refresh[/bold]")
+    console.print(
+        f"Installed app  {_active_command_name()} {current_identity.label()}", style="dim"
+    )
     identity_change = updater.describe_identity_change(previous_identity, current_identity)
     if identity_change is not None:
         console.print(f"[green]✓[/green] {identity_change}")
-    updater.record_identity(current_identity)
 
+    console.print("Checking for updates...")
+    console.print("  Checking modules...", style="dim")
+    console.print("  Checking bundles...", style="dim")
     if force:
-        console.print("Force update mode...")
-        console.print("  Clearing uv cache...", style="dim")
-        updater.uv_cache_clean()
-    else:
-        console.print("Checking for updates...")
-        console.print("  Checking modules...", style="dim")
-        console.print("  Checking bundles...", style="dim")
+        console.print(
+            "  Force refresh requested; cache clearing waits for confirmation.", style="dim"
+        )
 
-    statuses = await updater.check_bundles()
+    statuses = await updater.check_cached_sources() if check_only else await updater.check_bundles()
     if not statuses:
-        console.print("no bundles to check")
+        if check_only:
+            console.print("No cached bundle/module sources to compare yet.")
+            console.print(
+                f"Run [cyan]{_command('bundle', 'refresh')}[/cyan] to populate or refresh caches."
+            )
+            console.print("\n[dim]Check complete · nothing changed.[/dim]")
+        else:
+            console.print("no bundles to check")
         console.print(updater.self_update_hint(), style="dim")
+        if not check_only:
+            updater.record_identity(current_identity)
         return 0
 
     # Amplifier packages (app + core + foundation) — advisory rows; offline
@@ -3911,13 +4539,15 @@ async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: boo
             verb = "has" if len(package_updates) == 1 else "have"
             console.print(f"  • Update Amplifier packages manually ({names} {verb} updates):")
         console.print(updater.self_update_hint(), style="dim")
+        if not check_only:
+            updater.record_identity(current_identity)
         return 1 if errored else 0
 
     # Action summary (app-cli style bullets), shown before the prompt and in
     # --check-only mode.
     console.print()
     if check_only:
-        console.print("Run [cyan]amplifier-tui bundle refresh[/cyan] to install")
+        console.print(f"Run [cyan]{_command('bundle', 'refresh')}[/cyan] to install")
     if force:
         console.print(f"  • Re-fetch {len(statuses)} bundle(s) (--force)")
     elif stale_sources:
@@ -3935,12 +4565,18 @@ async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: boo
             console.print(f"    {line}", style="dim")
 
     if check_only:
+        console.print("\n[dim]Check complete · nothing changed.[/dim]")
         return 0
 
     console.print()
-    if not yes and not click.confirm("Proceed with update?", default=True):
-        console.print("Update cancelled", style="dim")
+    if not yes and not click.confirm("Proceed with update?", default=False):
+        console.print("Update cancelled · nothing changed", style="dim")
         return 0
+
+    updater.record_identity(current_identity)
+    if force:
+        console.print("Clearing uv cache...", style="dim")
+        updater.uv_cache_clean()
 
     targets = statuses if force else stale
     updated, failed = await updater.update_bundles([s.target for s in targets])
@@ -3981,26 +4617,36 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
 
     from .kernel import updater
 
-    console = Console()
+    console = Console(highlight=False)
     identity = updater.app_identity()
     status = updater.check_app_update(identity)
-    console.print(f"amplifier-tui {identity.label()}", style="dim")
-    console.print(status.describe())
+    console.print("[bold]Amplifier update[/bold]")
+    console.print(f"{_active_command_name()} {identity.label()}", style="dim")
 
     if identity.source == "editable":
-        console.print("Dev checkout: not running the global source installer.", style="yellow")
-        console.print(f"Run: [cyan]{updater.DEV_UPDATE_COMMAND}[/cyan]")
+        console.print("[green]✓ Development checkout detected[/green]")
+        console.print("  not running the global source installer", style="dim")
+        console.print(f"\nUpdate this checkout:\n  [cyan]{updater.DEV_UPDATE_COMMAND}[/cyan]")
+        console.print("\n[dim]Nothing changed.[/dim]")
         return 0
+
+    if status.has_update is True:
+        console.print(f"[yellow]●[/yellow] {status.describe()}")
+    elif status.has_update is False:
+        console.print(f"[green]✓[/green] {status.describe()}")
+    else:
+        console.print(f"[yellow]?[/yellow] {status.describe()}")
 
     cmd = updater.app_self_update_command(identity)
     command_text = " ".join(cmd or [])
     if check_only:
         if status.has_update is True:
-            console.print(f"Run [cyan]amplifier-tui update[/cyan] to install ({command_text})")
+            console.print(f"Run [cyan]{_command('update')}[/cyan] to install ({command_text})")
         elif status.has_update is None:
             console.print(
-                f"Run [cyan]amplifier-tui update --force[/cyan] to repair ({command_text})"
+                f"Run [cyan]{_command('update', '--force')}[/cyan] to repair ({command_text})"
             )
+        console.print("[dim]Check complete · nothing changed.[/dim]")
         return 0
 
     if status.has_update is False and not force:
@@ -4011,9 +4657,9 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
         console.print(f"installer: {command_text}", style="dim")
 
     if not yes and not click.confirm(
-        "Run the source installer to update amplifier-tui?", default=True
+        f"Run the source installer to update {_active_command_name()}?", default=False
     ):
-        console.print("Update cancelled", style="dim")
+        console.print("Update cancelled · nothing changed", style="dim")
         return 0
 
     ok, message = updater.run_app_self_update(identity)
@@ -4031,7 +4677,12 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
     "--verbose", "-v", is_flag=True, help="Print the installer command before running it."
 )
 def update(check_only: bool, yes: bool, force: bool, verbose: bool) -> None:
-    """Update the amplifier-tui app itself."""
+    """Update this app itself.
+
+    This updates the installed app, not bundle/module caches. Use
+    bundle refresh only when repairing or refreshing those advanced
+    runtime sources.
+    """
     raise SystemExit(_app_update(check_only, yes, force, verbose))
 
 
@@ -4150,7 +4801,10 @@ def source_list() -> None:
     console = Console()
     if not entries:
         console.print("no source overrides configured")
-        console.print("Add one with: amplifier-tui source add <identifier> <uri>", style="dim")
+        console.print(
+            f"Add one with: {_command('source', 'add', '<identifier>', '<uri>')}",
+            style="dim",
+        )
         return
     # One table (consistent with `bundle list`); a Type column carries the
     # module/bundle distinction so narrow per-kind tables never wrap titles.
@@ -4218,7 +4872,8 @@ def routing_list() -> None:
     if not entries:
         console.print("no routing matrices found")
         console.print(
-            "Run `amplifier-tui bundle refresh` to fetch the routing-matrix bundle.", style="dim"
+            f"Run `{_command('bundle', 'refresh')}` to fetch the routing-matrix bundle.",
+            style="dim",
         )
         return
     table = Table(title="Routing Matrices", title_justify="center", header_style="bold cyan")
@@ -4262,13 +4917,20 @@ def routing_use(matrix_name: str, is_global: bool, is_project: bool, is_local: b
         available = ", ".join(sorted(matrices)) or "none"
         click.echo(f"unknown matrix: {matrix_name} \u00b7 available: {available}", err=True)
         raise SystemExit(1)
+    settings = load_merged_settings(paths)
+    provider_types = routing_admin.configured_provider_types(settings)
+    rows = routing_admin.resolve_matrix(matrices[matrix_name], provider_types)
+    uncovered = [row for row in rows if not (row.model and row.provider)]
+    if uncovered:
+        click.echo(
+            f"warning: {len(uncovered)}/{len(rows)} routing role(s) have no compatible "
+            "configured provider; the matrix will still be saved",
+            err=True,
+        )
     scope = _scope(is_global, is_project, is_local)
     path = routing_admin.set_active_matrix(paths, matrix_name, scope)
     click.echo(f"active routing matrix \u2192 {matrix_name}  ({scope}: {path})")
 
-    settings = load_merged_settings(paths)
-    provider_types = routing_admin.configured_provider_types(settings)
-    rows = routing_admin.resolve_matrix(matrices[matrix_name], provider_types)
     if not rows:
         return
     console = Console()
@@ -4313,7 +4975,7 @@ def _render_matrix_resolution(
         display = [f"{pt} (\u2605)" if pt == primary else pt for pt in sorted(provider_types)]
         console.print(f"Providers: {', '.join(display)}", style="dim")
     else:
-        console.print("No providers configured. Run `amplifier-tui init`.", style="yellow")
+        console.print(f"No providers configured. Run `{_command('config')}`.", style="yellow")
 
 
 def _render_matrix_waterfall(
@@ -4378,7 +5040,8 @@ def routing_show(matrix_name: str | None, detailed: bool) -> None:
     if not matrices:
         console.print("no routing matrices found")
         console.print(
-            "Run `amplifier-tui bundle refresh` to fetch the routing-matrix bundle.", style="dim"
+            f"Run `{_command('bundle', 'refresh')}` to fetch the routing-matrix bundle.",
+            style="dim",
         )
         return
     settings = load_merged_settings(paths)
@@ -4448,7 +5111,7 @@ def routing_create() -> None:
     settings = load_merged_settings(paths)
     selectors = routing_admin.provider_selectors(settings)
     if not selectors:
-        click.echo("no providers configured \u2014 run `amplifier-tui init` first", err=True)
+        click.echo(f"no providers configured \u2014 run `{_command('config')}` first", err=True)
         raise SystemExit(1)
 
     roles = routing_admin.discover_roles(routing_admin.discover_matrix_files(home, fetch=True))
@@ -4688,7 +5351,7 @@ def _routing_console(scope: Literal["global", "project", "local"]) -> Any:
         if not matrices:
             console.print("no routing matrices found", style="yellow")
             console.print(
-                "Run `amplifier-tui bundle refresh` to fetch the routing-matrix bundle.",
+                f"Run `{_command('bundle', 'refresh')}` to fetch the routing-matrix bundle.",
                 style="dim",
             )
             return scope
@@ -4770,6 +5433,12 @@ def _routing_console(scope: Literal["global", "project", "local"]) -> Any:
 @_scope_options
 def routing_manage(is_global: bool, is_project: bool, is_local: bool) -> None:
     """Interactive routing-matrix management: select, view details, or create."""
+    if not _is_interactive_terminal():
+        raise click.UsageError(
+            f"interactive routing management needs a terminal; use "
+            f"`{_command('routing', 'list')}`, `{_command('routing', 'show')}`, or "
+            f"`{_command('routing', 'use', '<name>')}`"
+        )
     _routing_console(_scope(is_global, is_project, is_local))
 
 

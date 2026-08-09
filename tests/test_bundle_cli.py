@@ -90,3 +90,31 @@ def test_bundle_use_rejects_unknown_name(tmp_path: Path, monkeypatch) -> None:
     result = CliRunner().invoke(main, ["bundle", "use", "does-not-exist"])
     assert result.exit_code == 1
     assert "unknown bundle" in result.output
+
+
+def test_bundle_remove_previews_scope_and_defaults_to_cancel(tmp_path: Path, monkeypatch) -> None:
+    paths = bundle_admin.settings_paths(tmp_path / "proj", tmp_path / "home")
+    monkeypatch.setattr(bundle_admin, "settings_paths", lambda *a, **k: paths)
+    bundle_admin.add_bundle(paths, "custom", "git+https://x/custom.git", "global")
+
+    result = CliRunner().invoke(main, ["bundle", "remove", "custom"], input="\n")
+
+    assert result.exit_code == 0, result.output
+    assert f"scope: global · {paths.global_settings}" in result.output
+    assert "Remove custom from this registry? [y/N]" in result.output
+    assert "Cancelled · nothing changed" in result.output
+    assert "custom" in bundle_admin.added_bundles(bundle_admin.read_scope(paths.global_settings))
+
+
+def test_bundle_remove_yes_is_scriptable(tmp_path: Path, monkeypatch) -> None:
+    paths = bundle_admin.settings_paths(tmp_path / "proj", tmp_path / "home")
+    monkeypatch.setattr(bundle_admin, "settings_paths", lambda *a, **k: paths)
+    bundle_admin.add_bundle(paths, "custom", "git+https://x/custom.git", "global")
+
+    result = CliRunner().invoke(main, ["bundle", "remove", "custom", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert f"removed custom (global: {paths.global_settings})" in result.output
+    assert "custom" not in bundle_admin.added_bundles(
+        bundle_admin.read_scope(paths.global_settings)
+    )

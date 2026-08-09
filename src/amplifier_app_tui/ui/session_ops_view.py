@@ -11,6 +11,8 @@ Textual-free so they unit-test as span tuples.
 
 from __future__ import annotations
 
+from ..product import EXECUTABLE_NAME
+
 from decimal import Decimal
 
 from ..kernel.compaction import CompactionConfig
@@ -143,7 +145,7 @@ def sessions_spans(
     spans = list(
         _header(
             "Sessions",
-            f"{len(summaries)} stored · resume: amplifier-tui resume SESSION_ID",
+            f"{len(summaries)} stored · resume: {EXECUTABLE_NAME} resume SESSION_ID",
         )
     )
     for summary in summaries:
@@ -269,7 +271,7 @@ def resume_command_for(summary: SessionSummary) -> str:
     the app's clipboard copy both call this rather than hand-formatting
     ``f"amplifier-tui resume {short_id}"`` a second time.
     """
-    return f"amplifier-tui resume {summary.short_id}"
+    return f"{EXECUTABLE_NAME} resume {summary.short_id}"
 
 
 def session_resume_spans(summary: SessionSummary) -> tuple[Segment, ...]:

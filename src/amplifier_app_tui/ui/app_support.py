@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from textual.binding import Binding, BindingType
 
 from ..commands.permissions import PermissionSurface
+from ..product import EXECUTABLE_NAME
 from ..model.blocks import (
     Answer,
     BlockIdAllocator,
@@ -382,7 +383,7 @@ def announce_boot_failure(app: TuiApp, error: Exception) -> None:
         )
     )
     hint = (
-        "Check provider setup with `amplifier-tui doctor`, or run "
+        f"Check provider setup with `{EXECUTABLE_NAME} doctor`, or run "
         "`--demo` for a credential-free UI. Press ctrl+d to quit."
     )
     app.append_block(

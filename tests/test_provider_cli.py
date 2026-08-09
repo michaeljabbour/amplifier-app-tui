@@ -59,7 +59,9 @@ def _add(provider_type: str, key: str) -> None:
 def test_provider_list_empty(isolated_home: Path) -> None:
     result = CliRunner().invoke(main, ["provider", "list"])
     assert result.exit_code == 0
-    assert "no providers configured" in result.output
+    assert "No providers configured" in result.output
+    assert "amplifier-tui provider add" in result.output
+    assert "amplifier-tui config" in result.output
 
 
 def test_provider_add_then_list_marks_primary(isolated_home: Path) -> None:
@@ -95,11 +97,27 @@ def test_provider_use_unknown_errors(isolated_home: Path) -> None:
 def test_provider_remove(isolated_home: Path) -> None:
     _add("anthropic", "sk-a")
     _add("openai", "sk-o")
-    result = CliRunner().invoke(main, ["provider", "remove", "openai"])
+    result = CliRunner().invoke(main, ["provider", "remove", "openai", "--yes"])
     assert result.exit_code == 0
     assert "removed provider: openai" in result.output
     listing = CliRunner().invoke(main, ["provider", "list"]).output
     assert "openai" not in listing and "anthropic" in listing
+
+
+def test_provider_remove_defaults_to_cancel_and_keeps_config(isolated_home: Path) -> None:
+    _add("anthropic", "sk-a")
+    result = CliRunner().invoke(main, ["provider", "remove", "anthropic"], input="\n")
+    assert result.exit_code == 0
+    assert "from every settings scope? [y/N]" in result.output
+    assert "Cancelled · nothing changed" in result.output
+    assert "anthropic" in CliRunner().invoke(main, ["provider", "list"]).output
+
+
+def test_provider_remove_explains_unsaved_bundle_fallback(isolated_home: Path) -> None:
+    result = CliRunner().invoke(main, ["provider", "remove", "provider-anthropic"])
+    assert result.exit_code == 1
+    assert "built-in credential fallback, not a saved provider" in result.output
+    assert "skipped automatically" in result.output
 
 
 def test_provider_dashboard(isolated_home: Path) -> None:

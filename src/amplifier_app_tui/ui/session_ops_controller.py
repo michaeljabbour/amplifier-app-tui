@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ..kernel.goal import goal_action, parse_goal_max_turns
 from ..kernel.session_ops import EFFORT_LEVELS
 from ..model.blocks import Answer, Segment, TranscriptBlock
+from ..product import EXECUTABLE_NAME
 from .session_ops_view import (
     diff_spans,
     mcp_spans,
@@ -651,7 +652,7 @@ class SessionOpsController:
                 spans=names_spans(
                     "Live-loadable bundles",
                     names,
-                    "none discovered · use amplifier-tui bundle add or pass a local URI",
+                    f"none discovered · use {EXECUTABLE_NAME} bundle add or pass a local URI",
                 ),
             )
         )

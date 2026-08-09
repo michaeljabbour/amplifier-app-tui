@@ -95,8 +95,10 @@ These are the rules the whole design hangs on. Every one is enforced by tests an
 
 ```
 src/amplifier_app_tui/
-├── main.py            click entry point: TUI launch, --demo, run/sessions/resume/doctor,
-│                       init, update, and the bundle group (list/show/use/…)
+├── main.py            click entry point: TUI launch, --demo, grouped public commands,
+│                       and thin wiring for config/init/update/reset/bundle administration
+├── product.py         explicit product/command/package/repository identity constants
+├── cli/               plain-terminal control-center presentation and orchestration
 ├── kernel/            amplifier adapter layer (no Textual)
 │   ├── config.py          resolve_config(): keys.env → settings merge → bundle lifecycle
 │   │                       (+ mode search-path & routing-config injection)
@@ -109,8 +111,8 @@ src/amplifier_app_tui/
 │   ├── bundle_content.py  prepared bundle instruction/context → next-turn context
 │   ├── live_mcp.py        ownership-aware current-session MCP reconciliation
 │   ├── bundle_admin.py    bundle CLI logic (list/show/use/… over the shared registry)
-│   ├── setup.py           init: provider discovery + keys.env writer
-│   ├── updater.py         update: foundation-backed bundle/module refresh (backs `update`)
+│   ├── setup.py           provider discovery + keys.env writer (config/init)
+│   ├── updater.py         app update checks + advanced bundle/module cache refresh
 │   ├── mcp_config.py      effective MCP scopes + atomic user-config persistence
 │   ├── events.py          UIEvent union + normalize() — THE normalization boundary
 │   ├── queue_bridge.py    hooks → asyncio.Queue[UIEvent]
@@ -178,8 +180,9 @@ src/amplifier_app_tui/
 `main()` is a click group. With no subcommand it runs `asyncio.run(_launch_tui(...))` — one
 `asyncio.run` for the whole app. Flags: `--demo` (scripted offline runtime), `--bundle`
 (name or URI). Subcommands: `run [PROMPT]` (headless one-shot; stdin plus
-`text|json|json-trace|jsonl` output), `sessions`, `resume SESSION_ID`, `doctor`, `init` (provider setup),
-`update` (bundle/module refresh), `allowed-dirs`, `denied-dirs`, and the `bundle` group
+`text|json|json-trace|jsonl` output), `sessions`, `resume SESSION_ID`, `doctor`,
+`config`/`init` (durable setup), `update` (the app itself), `allowed-dirs`,
+`denied-dirs`, and the `bundle` group
 (`list/show/use/clear/current/add/remove/update`). JSON modes redirect all runtime chatter
 to stderr. Document modes keep stdout to one parseable object; JSONL adds a versioned,
 sequenced envelope around the normalized queue the TUI consumes and flushes each event
@@ -522,9 +525,9 @@ Two policies share Amplifier's hook/approval mechanism:
   hard write-path enforcement point, with deny taking precedence. The resolved project
   root is always injected into `allowed_write_paths`; configured lists union rather than
   replacing it.
-- The bundle-native stack arrives FROM the composed `anchors` bundle (the packaged tui
-  bundle is a thin wrapper that tracks the only fetchable anchors source, Foundation
-  `@main`; every other app-owned dependency is pinned and the exception is guarded):
+- The bundle-native stack arrives FROM the composed `anchors` bundle. The packaged tui
+  bundle is a thin wrapper that pins the outer Anchors include to a reviewed full commit;
+  its recursive source graph is locked by `data/anchors-source-lock.json`:
 
 - **`hooks-mode`** (`tool:pre`, pri −20) reads `session_state["active_mode"]` and, per the
   mode's YAML, allows / warns / confirms / blocks a tool (and sets

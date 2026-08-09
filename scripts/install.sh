@@ -10,6 +10,8 @@ set -eu
 
 REPO_URL_DEFAULT="https://github.com/michaeljabbour/amplifier-app-tui.git"
 UV_INSTALLER_URL="https://astral.sh/uv/install.sh"
+APP_COMMAND="amplifier-tui"
+APP_DISPLAY_NAME="Amplifier TUI"
 
 repo_url=${AMPLIFIER_TUI_REPO_URL:-$REPO_URL_DEFAULT}
 requested_ref=${AMPLIFIER_TUI_REF:-main}
@@ -53,7 +55,7 @@ cleanup() {
 
 ensure_temp_dir() {
     if [ -z "$temp_dir" ]; then
-        temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/amplifier-tui-install.XXXXXX") ||
+        temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/${APP_COMMAND}-install.XXXXXX") ||
             fail "could not create a temporary directory"
     fi
 }
@@ -183,7 +185,7 @@ find_uv() {
 }
 
 resolved_sha=$(resolve_ref "$requested_ref")
-say "Installing Amplifier TUI source commit $resolved_sha"
+say "Installing $APP_DISPLAY_NAME source commit $resolved_sha"
 
 if uv_bin=$(find_uv); then
     :
@@ -234,7 +236,7 @@ fi
 
 package_url="git+$repo_url@$resolved_sha"
 install_log="$temp_dir/uv-tool-install.log"
-say "Creating the isolated Amplifier TUI tool environment from the locked dependency set"
+say "Creating the isolated $APP_DISPLAY_NAME tool environment from the locked dependency set"
 if "$uv_bin" tool install --reinstall --no-config \
     --constraints "$constraints_file" "$package_url" >"$install_log" 2>&1; then
     :
@@ -252,7 +254,7 @@ else
             fail "the Git source fetch failed; check network/proxy access to GitHub, then rerun this installer"
             ;;
         *)
-            fail "uv could not install Amplifier TUI; the full uv error is printed above"
+            fail "uv could not install $APP_DISPLAY_NAME; the full uv error is printed above"
             ;;
     esac
 fi
@@ -260,13 +262,13 @@ fi
 tool_bin_dir=$("$uv_bin" tool dir --bin 2>/dev/null) ||
     fail "uv did not report its tool executable directory"
 [ -n "$tool_bin_dir" ] || fail "uv reported an empty tool executable directory"
-app_bin="$tool_bin_dir/amplifier-tui"
-[ -x "$app_bin" ] || fail "installation finished without an amplifier-tui executable"
+app_bin="$tool_bin_dir/$APP_COMMAND"
+[ -x "$app_bin" ] || fail "installation finished without an $APP_COMMAND executable"
 
 installed_version=$("$app_bin" version 2>&1) ||
-    fail "the installed amplifier-tui could not report its version"
+    fail "the installed $APP_COMMAND could not report its version"
 "$app_bin" --help >/dev/null 2>&1 ||
-    fail "the installed amplifier-tui command could not load its help surface"
+    fail "the installed $APP_COMMAND command could not load its help surface"
 say "Verified $app_bin · $installed_version"
 say "Dependencies locked by uv.lock from $resolved_sha"
 
@@ -289,7 +291,7 @@ if [ "$launch" -eq 1 ]; then
     launch_input=${AMPLIFIER_TUI_TTY_PATH:-/dev/tty}
     [ -r "$launch_input" ] ||
         fail "--launch needs an interactive terminal; run $app_bin after installation"
-    say "Opening Amplifier TUI; first launch will guide provider setup"
+    say "Opening $APP_DISPLAY_NAME; first launch will guide provider setup"
     cleanup
     temp_dir=""
     trap - 0
@@ -297,5 +299,5 @@ if [ "$launch" -eq 1 ]; then
 fi
 
 say "Installed. Run: $app_bin"
-say "If your current shell cannot find amplifier-tui, run the absolute path above or restart after uv tool update-shell."
+say "If your current shell cannot find $APP_COMMAND, run the absolute path above or restart after uv tool update-shell."
 say "First launch will guide provider setup; use --demo for an offline tour."

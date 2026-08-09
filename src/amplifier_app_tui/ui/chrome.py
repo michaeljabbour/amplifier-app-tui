@@ -33,6 +33,7 @@ from textual.timer import Timer
 from textual.widgets import Static
 
 from ..model.blocks import GLYPH_SPINNER_FRAMES
+from ..product import TERMINAL_TITLE
 
 TITLE_SEPARATOR = " — "
 SPINNER_INTERVAL = 0.26
@@ -44,7 +45,7 @@ TERMINAL_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧
 TERMINAL_TITLE_MAX_CHARS = 180
 """Keep macOS terminal tabs useful when a plan step has a long title."""
 
-APP_TITLE_NAME = "amplifier"
+APP_TITLE_NAME = TERMINAL_TITLE
 
 TITLE_BUNDLE_MAX_CELLS = 40
 """Fallback bundle-fragment budget (cells) used only before the real

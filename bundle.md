@@ -39,6 +39,10 @@ providers:
     source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@94a435482a879a1c506b2ea9076a951875e89c9d
     config:
       priority: 100
+      # App-private marker: kernel.config removes this fallback from a
+      # multi-provider mount plan when no Anthropic credential is available.
+      # Priority alone affects selection, not mounting.
+      _tui_optional_fallback: true
 
 tools:
   # MCP servers: tool-mcp reads ~/.amplifier/mcp.json (+ ./.amplifier/mcp.json)
@@ -60,6 +64,15 @@ tools:
     config:
       url: ""
       key: ""
+  # Anchors advertises delegate session resumption, but the TUI's in-process
+  # child sessions are intentionally ephemeral and cleaned up after each
+  # call. Disable the unsupported surface instead of offering a recovery path
+  # that cannot work after a builder stops early.
+  - module: tool-delegate
+    config:
+      features:
+        session_resume:
+          enabled: false
   # Skills: anchors pins tool-skills to the foundation skill set, which
   # REPLACES tool-skills' default scan of ~/.amplifier/skills (its source-
   # resolution priority 1 wins). Re-mount here (later bundles override
@@ -136,6 +149,17 @@ tools over speculating. This surface renders a supported Markdown subset:
   the UI already displays.
 - Close implementation work with what changed, verification, and any blocker
   or required next action.
+- A final answer ends the turn. Never use it to announce future execution.
+  If you say you are starting, writing, implementing, or executing, make the
+  next tool call in this same turn before replying.
+- A plan is not implementation. For an action request, do not stop after a
+  plan or after saying what you will do. Run the tools now, or name the exact
+  blocker that prevents them from running.
+- Delegated output is not proof of completion. Verify the resulting files and
+  tests yourself. If a builder returns without executing, retry once with an
+  execute-only brief; never present its plan as completed work.
+- The delegate tool's old example names may not exist. Choose only an agent
+  listed in its live **Available agents** section.
 - Do not emit Markdown images. Keep tables to four columns or fewer and lists
   shallow.
 - Put layout-sensitive or copyable structured content in language-tagged fenced

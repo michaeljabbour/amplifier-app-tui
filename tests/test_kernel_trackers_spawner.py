@@ -6,6 +6,8 @@ Fake sessions/coordinators throughout — no real amplifier-core session.
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,10 +24,21 @@ class FakeHooks:
     def __init__(self) -> None:
         self.registered: list[str] = []
         self.unregistered: list[str] = []
+        self.handlers: dict[str, list[Any]] = {}
 
     def register(self, event: str, handler: Any, *, priority: int = 0, name: str = "") -> Any:
         self.registered.append(event)
-        return lambda: self.unregistered.append(event)
+        self.handlers.setdefault(event, []).append(handler)
+
+        def unregister() -> None:
+            self.unregistered.append(event)
+            self.handlers[event].remove(handler)
+
+        return unregister
+
+    async def emit(self, event: str, data: dict[str, Any]) -> None:
+        for handler in list(self.handlers.get(event, ())):
+            await handler(event, data)
 
 
 class FakeCancellation:
@@ -391,7 +404,26 @@ async def test_spawn_seeds_agent_instruction_and_parent_messages() -> None:
     )
     messages = created[0].coordinator.context.messages
     assert {"role": "user", "content": "earlier context"} in messages
-    assert {"role": "system", "content": "You are scout."} in messages
+    system = next(message["content"] for message in messages if message["role"] == "system")
+    assert system == "You are scout."
+
+
+@pytest.mark.asyncio
+async def test_implementer_system_prompt_gets_execution_contract() -> None:
+    spawner, created = make_spawner()
+    await spawner.spawn(
+        "superpowers:implementer",
+        "go",
+        make_parent(),
+        agent_configs={"superpowers:implementer": {"instruction": "You implement."}},
+    )
+    system = next(
+        message["content"]
+        for message in created[0].coordinator.context.messages
+        if message["role"] == "system"
+    )
+    assert system.startswith("You implement.")
+    assert "A plan or a promise to execute is not completion" in system
 
 
 @pytest.mark.asyncio
@@ -412,6 +444,129 @@ async def test_spawn_records_failure_output_as_result() -> None:
     spawner, _created = make_spawner(fail_execute=True)
     result = await spawner.spawn("scout", "explode", make_parent())
     assert "boom" in spawner.result_for(result["session_id"])
+
+
+@pytest.mark.asyncio
+async def test_builder_gets_one_execution_only_retry_when_it_only_plans() -> None:
+    created: list[FakeSession] = []
+
+    class RecoveringBuilder(FakeSession):
+        async def execute(self, instruction: str) -> str:
+            self.executed.append(instruction)
+            if len(self.executed) == 1:
+                return "I have a plan and will implement it next."
+            await self.coordinator.hooks.emit(
+                "tool:post",
+                {"tool_name": "write_file", "result": {"ok": True}},
+            )
+            return "Implemented and verified."
+
+    def factory(**kwargs: Any) -> FakeSession:
+        child = RecoveringBuilder(**kwargs)
+        created.append(child)
+        return child
+
+    spawner = SessionSpawner(session_factory=factory)
+    result = await spawner.spawn("anchors:builder", "implement the spec", make_parent())
+
+    assert result["status"] == "success"
+    assert result["output"] == "Implemented and verified."
+    assert len(created[0].executed) == 2
+    assert "did not run an execution tool" in created[0].executed[1]
+
+
+@pytest.mark.asyncio
+async def test_builder_that_still_only_plans_fails_loudly() -> None:
+    spawner, created = make_spawner()
+    result = await spawner.spawn("builder", "implement the spec", make_parent())
+
+    assert result["status"] == "incomplete"
+    assert "no implementation was observed" in result["output"]
+    assert len(created[0].executed) == 2
+
+
+@pytest.mark.asyncio
+async def test_read_only_bash_does_not_count_as_builder_execution() -> None:
+    created: list[FakeSession] = []
+
+    class ReadOnlyShellBuilder(FakeSession):
+        async def execute(self, instruction: str) -> str:
+            self.executed.append(instruction)
+            await self.coordinator.hooks.emit(
+                "tool:post", {"tool_name": "bash", "result": {"output": "inspected"}}
+            )
+            return "I inspected it."
+
+    def factory(**kwargs: Any) -> FakeSession:
+        child = ReadOnlyShellBuilder(**kwargs)
+        created.append(child)
+        return child
+
+    result = await SessionSpawner(session_factory=factory).spawn(
+        "builder", "implement", make_parent()
+    )
+    assert result["status"] == "incomplete"
+    assert len(created[0].executed) == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_write_does_not_count_as_builder_execution() -> None:
+    created: list[FakeSession] = []
+
+    class FailedWriteBuilder(FakeSession):
+        async def execute(self, instruction: str) -> str:
+            self.executed.append(instruction)
+            await self.coordinator.hooks.emit(
+                "tool:error", {"tool_name": "write_file", "error": "denied"}
+            )
+            return "The write failed."
+
+    def factory(**kwargs: Any) -> FakeSession:
+        child = FailedWriteBuilder(**kwargs)
+        created.append(child)
+        return child
+
+    result = await SessionSpawner(session_factory=factory).spawn(
+        "builder", "implement", make_parent()
+    )
+    assert result["status"] == "incomplete"
+    assert len(created[0].executed) == 2
+
+
+@pytest.mark.asyncio
+async def test_shell_created_git_diff_counts_as_builder_execution(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "Amplifier test"], check=True
+    )
+    (tmp_path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "seed"], check=True)
+    created: list[FakeSession] = []
+
+    class ShellEditingBuilder(FakeSession):
+        async def execute(self, instruction: str) -> str:
+            self.executed.append(instruction)
+            (tmp_path / "generated.txt").write_text("implemented\n", encoding="utf-8")
+            await self.coordinator.hooks.emit(
+                "tool:post", {"tool_name": "bash", "result": {"output": "wrote file"}}
+            )
+            return "Implemented."
+
+    def factory(**kwargs: Any) -> FakeSession:
+        child = ShellEditingBuilder(**kwargs)
+        created.append(child)
+        return child
+
+    parent = make_parent()
+    parent.coordinator.capabilities["session.working_dir"] = str(tmp_path)
+    result = await SessionSpawner(session_factory=factory).spawn("builder", "implement", parent)
+    assert result["status"] == "success"
+    assert len(created[0].executed) == 1
 
 
 def test_register_installs_spawn_capability() -> None:

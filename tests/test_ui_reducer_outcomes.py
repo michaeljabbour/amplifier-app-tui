@@ -580,6 +580,27 @@ def test_real_interrupted_recap_comes_from_orchestrator_cancelled_too() -> None:
     assert recap.spans[1].text.startswith("Interrupted. Goal: build the thing.")
 
 
+def test_incomplete_turn_is_not_presented_as_final_or_done() -> None:
+    reducer, host = make_reducer()
+    reducer.handle(ev.PromptSubmit(prompt="build the thing", ts=1.0))
+    reducer.handle(
+        ev.ContentBlockEnd(
+            block_type="text",
+            block={"type": "text", "text": "Progress so far; implementation remains."},
+            ts=4.0,
+        )
+    )
+    reducer.handle(ev.OrchestratorComplete(status="incomplete", ts=5.0))
+    reducer.handle(ev.PromptComplete(response="Progress so far; implementation remains.", ts=5.5))
+
+    answer = next(block for block in host.blocks if isinstance(block, Answer))
+    assert answer.final is False
+    assert last_rule(host).label.endswith(" · incomplete")
+    assert reducer.ledger.turns[-1].outcome.kind == "incomplete"
+    assert host.notices[-1].startswith("turn incomplete ·")
+    assert "agents" not in host.notices[-1]
+
+
 def test_demo_spec_interrupted_close_out_adds_no_extra_recap() -> None:
     """The demo scripts its own recap event; the spec path must not add one."""
 

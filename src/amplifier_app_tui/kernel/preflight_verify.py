@@ -99,6 +99,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from ..product import EXECUTABLE_NAME
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_LIVE_TIMEOUT = 15.0
@@ -130,7 +132,7 @@ class ProviderVerification:
     remediation: str | None = None
 
 
-_DIAGNOSE_REMEDIATION = "run `amplifier-tui doctor` for a full diagnosis"
+_DIAGNOSE_REMEDIATION = f"run `{EXECUTABLE_NAME} doctor` for a full diagnosis"
 
 
 def _secret_values(config: dict[str, Any]) -> tuple[str, ...]:
@@ -142,7 +144,12 @@ def _secret_values(config: dict[str, Any]) -> tuple[str, ...]:
             and value.strip()
             and any(hint in key.lower() for hint in _SECRET_KEY_HINTS)
         ):
-            values.append(value)
+            if value.startswith("${") and value.endswith("}"):
+                resolved = os.environ.get(value[2:-1], "")
+                if resolved:
+                    values.append(resolved)
+            else:
+                values.append(value)
     return tuple(values)
 
 
@@ -151,6 +158,14 @@ def _scrub(text: str, secrets: tuple[str, ...]) -> str:
     for secret in secrets:
         text = text.replace(secret, "***")
     return text
+
+
+def scrub_provider_error(text: str, config: dict[str, Any]) -> str:
+    """Scrub known config secrets and secret-shaped values from provider errors."""
+
+    from ..model.redaction import scrub_text
+
+    return scrub_text(_scrub(text, _secret_values(config)))
 
 
 def _implements_provider_protocol(obj: Any) -> bool:
@@ -272,7 +287,10 @@ def _check_credentials(module_id: str, instance: Any) -> ProviderVerification:
     return ProviderVerification(
         ok=False,
         error=f"provider '{module_id}' is missing credentials: {', '.join(missing)} not set",
-        remediation="run `amplifier-tui init` to configure a provider, or set the variable(s) named above",
+        remediation=(
+            f"run `{EXECUTABLE_NAME} config` to configure a provider, "
+            "or set the variable(s) named above"
+        ),
     )
 
 
@@ -325,7 +343,9 @@ async def _check_model(
         return ProviderVerification(
             ok=False,
             error=f"model '{model}' is not available for provider '{module_id}' (known: {preview})",
-            remediation="run `amplifier-tui provider list`, or pick one of the models named above",
+            remediation=(
+                f"run `{EXECUTABLE_NAME} provider list`, or pick one of the models named above"
+            ),
         )
     return ProviderVerification(ok=True)
 
@@ -366,8 +386,9 @@ async def verify_provider(
                 ok=False,
                 error=f"provider '{module_id}' cannot import dependency '{missing}'",
                 remediation=(
-                    "run `amplifier-tui` once without --model so normal startup can install "
-                    "provider dependencies; if it persists, run `amplifier-tui bundle refresh --force`"
+                    f"run `{EXECUTABLE_NAME}` once without --model so normal startup can install "
+                    "provider dependencies; if it persists, run "
+                    f"`{EXECUTABLE_NAME} bundle refresh --force`"
                 ),
             )
         return ProviderVerification(
@@ -425,5 +446,6 @@ async def verify_provider(
 __all__ = [
     "DEFAULT_LIVE_TIMEOUT",
     "ProviderVerification",
+    "scrub_provider_error",
     "verify_provider",
 ]

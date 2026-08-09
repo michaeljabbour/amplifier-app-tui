@@ -73,7 +73,7 @@ class TurnTelemetry(_FrozenModel):
         return " · ".join((_format_elapsed(self.secs), token_part, f"{marker}${self.cost:.2f}"))
 
 
-OutcomeKind = Literal["answer", "shipped", "interrupted", "plan_ready"]
+OutcomeKind = Literal["answer", "shipped", "interrupted", "incomplete", "plan_ready"]
 
 
 class TurnOutcome(_FrozenModel):
@@ -84,6 +84,7 @@ class TurnOutcome(_FrozenModel):
     - ``answer``      → ``answer`` (dimmer label)
     - ``shipped``     → ``3 files · +142/−38 · tests ✔`` (dim label)
     - ``interrupted`` → ``· interrupted``
+    - ``incomplete``  → ``· incomplete``
     - ``plan_ready``  → ``· plan ready``
     """
 
@@ -104,6 +105,8 @@ class TurnOutcome(_FrozenModel):
             return "answer"
         if self.kind == "interrupted":
             return "· interrupted"
+        if self.kind == "incomplete":
+            return "· incomplete"
         if self.kind == "plan_ready":
             return "· plan ready"
         parts = [f"{self.files_changed} file{'s' if self.files_changed != 1 else ''}"]

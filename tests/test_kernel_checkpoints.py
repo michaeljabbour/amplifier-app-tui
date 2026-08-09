@@ -797,6 +797,28 @@ def test_workspace_lock_excludes_other_session_store_until_finish(tmp_path: Path
     store_b.finish("b-after-release")
 
 
+def test_distinct_session_can_initialize_while_another_turn_holds_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    sessions = tmp_path / "sessions"
+    workspace.mkdir()
+    store_a = WorkspaceCheckpointStore(sessions / "a", workspace, "session-a")
+    store_a.begin("a-active", "hold the workspace lease")
+
+    # Boot is session-private. Workspace recovery is deferred until this
+    # second session can safely acquire the shared mutation lease.
+    store_b = WorkspaceCheckpointStore(sessions / "b", workspace, "session-b")
+    assert store_b._initial_recovery_deferred is True
+
+    with pytest.raises(WorkspaceCheckpointUnavailableError, match="in use by another TUI"):
+        store_b.begin("b-blocked", "write-capable turns still serialize")
+    store_a.finish("a-active")
+    store_b.begin("b-after-release", "now admitted")
+    assert store_b._initial_recovery_deferred is False
+    store_b.finish("b-after-release")
+
+
 def test_workspace_lock_releases_when_begin_and_finish_use_different_threads(
     tmp_path: Path,
 ) -> None:

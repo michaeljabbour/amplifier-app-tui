@@ -54,7 +54,10 @@ import asyncio
 import logging
 import secrets
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, Protocol
+
+from .git_yield import GitDiffSnapshot, capture_git_diff
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,33 @@ _MEMO_MAX = 64
 
 _BRIEF_MAX_CHARS = 80
 _RESULT_MAX_CHARS = 240
+
+_EXECUTION_AGENT_CONTRACT = """
+
+## Execution integrity
+
+Use tools during this turn. A plan or a promise to execute is not completion.
+For implementation work, inspect as needed, then run a write, patch, edit, or
+shell action and verify the result. Do not return "I will implement" or
+"executing now" as your final response. If execution is impossible, name the
+exact technical blocker and what evidence established it.
+"""
+
+_EXECUTION_RECOVERY_PROMPT = """Your previous response did not run an execution tool.
+That was planning, not completion. Execute the requested implementation now using the
+available write, patch, edit, or shell tools, then verify it. Do not restate the plan.
+If a concrete technical blocker makes execution impossible, report that blocker now."""
+
+_MUTATION_TOOL_NAMES = frozenset(
+    {
+        "apply_patch",
+        "create_file",
+        "delete_file",
+        "edit_file",
+        "multi_edit",
+        "write_file",
+    }
+)
 
 
 class Tracker(Protocol):
@@ -126,6 +156,8 @@ class SessionSpawner:
         """Child final output per sub-session id — the source for the
         synthesized ``AgentCompleted.result`` (tool-delegate's completion
         payload has no result field)."""
+        self._statuses: dict[str, str] = {}
+        """Child result status per sub-session id for bridge enrichment."""
 
     def register(self, coordinator: Any) -> None:
         """Install this spawner as the coordinator's ``session.spawn``
@@ -153,6 +185,10 @@ class SessionSpawner:
     def result_for(self, sub_session_id: str) -> str:
         """The recorded final output summary for a child ("" unknown)."""
         return self._results.get(sub_session_id, "")
+
+    def status_for(self, sub_session_id: str) -> str:
+        """The recorded child status ("" unknown)."""
+        return self._statuses.get(sub_session_id, "")
 
     async def spawn(
         self,
@@ -232,7 +268,9 @@ class SessionSpawner:
 
         unregisters: list[Callable[[], None]] = []
         hooks = child_coordinator.get("hooks")
+        activity = _ChildToolActivity()
         if hooks is not None:
+            unregisters.append(activity.register_hooks(hooks))
             # Governance first, high precedence: the child lane inherits the
             # root's live trust posture so a gated mode (plan/careful) blocks
             # the SAME actions in the lane as in the root (issue #38). Native
@@ -257,7 +295,13 @@ class SessionSpawner:
         # capability; copy the list onto the child so a delegated agent sees
         # the same runtime-loaded skills (reference: session_spawn_inprocess).
         _inherit_skill_overlays(parent_coordinator, child_coordinator)
-        await _seed_child_context(child_coordinator, overlay, parent_messages)
+        implementation_agent = _is_implementation_agent(agent_name)
+        await _seed_child_context(
+            child_coordinator,
+            overlay,
+            parent_messages,
+            execution_agent=implementation_agent,
+        )
 
         parent_cancellation = getattr(parent_coordinator, "cancellation", None)
         child_cancellation = getattr(child_coordinator, "cancellation", None)
@@ -270,8 +314,24 @@ class SessionSpawner:
             display_system.push_nesting()
 
         try:
+            before = await _git_snapshot(parent_coordinator) if implementation_agent else None
             output = await child.execute(instruction)
             status = "success"
+            after = await _git_snapshot(parent_coordinator) if implementation_agent else None
+            mutated = activity.mutation_calls > 0 or _snapshot_changed(before, after)
+            if implementation_agent and not mutated and not activity.incomplete:
+                output = await child.execute(_EXECUTION_RECOVERY_PROMPT)
+                retry_after = await _git_snapshot(parent_coordinator)
+                mutated = activity.mutation_calls > 0 or _snapshot_changed(before, retry_after)
+                if not mutated:
+                    status = "incomplete"
+                    output = (
+                        "builder returned without running an execution tool after one "
+                        "automatic retry; no implementation was observed.\n\n"
+                        f"Last builder response:\n{output}"
+                    )
+            if activity.incomplete:
+                status = "incomplete"
         except Exception as error:  # noqa: BLE001 — crash-isolate a delegated lane: any child failure becomes a structured error result
             logger.debug("Child session %s failed", child_id, exc_info=True)
             output = f"agent failed: {error}"
@@ -297,6 +357,7 @@ class SessionSpawner:
         summary = _result_summary(output)
         if summary:
             _remember(self._results, child_id, summary)
+        _remember(self._statuses, child_id, status)
         return {
             "output": output,
             "session_id": child_id,
@@ -314,6 +375,75 @@ def _current_depth(coordinator: Any) -> int:
     except Exception:  # noqa: BLE001 — best-effort probe of a duck-typed coordinator: any read failure falls back to depth 0
         return 0
     return depth if isinstance(depth, int) and depth >= 0 else 0
+
+
+class _ChildToolActivity:
+    """Track successful child mutations and incomplete orchestrator stops."""
+
+    def __init__(self) -> None:
+        self.mutation_calls = 0
+        self.incomplete = False
+
+    async def handle_event(self, event: str, data: dict[str, Any]) -> Any:
+        payload = data or {}
+        tool_name = str(payload.get("tool_name") or "").rsplit("__", 1)[-1]
+        if event == "tool:post" and tool_name in _MUTATION_TOOL_NAMES:
+            self.mutation_calls += 1
+        elif event == "provider:request" and bool(payload.get("max_reached")):
+            self.incomplete = True
+        elif event == "orchestrator:complete" and payload.get("status") == "incomplete":
+            self.incomplete = True
+        from amplifier_core import HookResult
+
+        return HookResult(action="continue")
+
+    def register_hooks(self, hooks: Any) -> Callable[[], None]:
+        unregisters = [
+            hooks.register(
+                event,
+                self.handle_event,
+                priority=100,
+                name=f"tui-child-execution-activity-{event.replace(':', '-')}",
+            )
+            for event in ("tool:post", "provider:request", "orchestrator:complete")
+        ]
+
+        def unregister_activity() -> None:
+            for unregister in reversed(unregisters):
+                if callable(unregister):
+                    unregister()
+
+        return unregister_activity
+
+
+def _is_implementation_agent(agent_name: str) -> bool:
+    """Whether a delegate name denotes a builder/implementer role."""
+    leaf = str(agent_name or "").rsplit(":", 1)[-1].lower()
+    return leaf in {"builder", "implementer"} or leaf.endswith(("-builder", "-implementer"))
+
+
+async def _git_snapshot(coordinator: Any) -> GitDiffSnapshot | None:
+    """Capture the child's shared workspace diff when one is available."""
+    get_capability = getattr(coordinator, "get_capability", None)
+    if not callable(get_capability):
+        return None
+    try:
+        working_dir = get_capability("session.working_dir")
+    except Exception:  # noqa: BLE001 — a missing duck-typed capability disables diff evidence
+        return None
+    if not working_dir:
+        return None
+    try:
+        return await capture_git_diff(Path(str(working_dir)))
+    except (OSError, ValueError):
+        return None
+
+
+def _snapshot_changed(before: GitDiffSnapshot | None, after: GitDiffSnapshot | None) -> bool:
+    if before is None or after is None:
+        return False
+    delta = after.delta_from(before)
+    return delta is not None and delta.files > 0
 
 
 def _agent_overlay(
@@ -511,6 +641,8 @@ async def _seed_child_context(
     child_coordinator: Any,
     overlay: dict[str, Any],
     parent_messages: list[dict[str, Any]] | None,
+    *,
+    execution_agent: bool = False,
 ) -> None:
     """Inherited context + the agent's persona as its system prompt.
 
@@ -535,7 +667,15 @@ async def _seed_child_context(
         await context.set_messages([dict(m) for m in parent_messages])
     instruction = overlay.get("instruction")
     if instruction and hasattr(context, "add_message"):
-        await context.add_message({"role": "system", "content": str(instruction)})
+        content = str(instruction)
+        if execution_agent:
+            content += _EXECUTION_AGENT_CONTRACT
+        await context.add_message(
+            {
+                "role": "system",
+                "content": content,
+            }
+        )
 
 
 def _brief(instruction: str) -> str:

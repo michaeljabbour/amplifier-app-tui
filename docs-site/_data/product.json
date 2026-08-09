@@ -1,0 +1,7 @@
+{
+  "display_name": "Amplifier TUI",
+  "brand_name": "Amplifier",
+  "command": "amplifier-tui",
+  "package": "amplifier-app-tui",
+  "repository": "michaeljabbour/amplifier-app-tui"
+}

@@ -54,6 +54,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from ..product import EXECUTABLE_NAME
 from .file_lock import locked as _file_lock
 from .session_authz import (
     CONTROL,
@@ -284,7 +285,7 @@ def parse_attach_ref(ref: str) -> tuple[str, str | None]:
 
 def attach_command(session_id: str, handoff_id: str | None = None) -> str:
     """A runnable command a human can be handed verbatim to take over."""
-    return f"amplifier-tui serve --attach {attach_ref(session_id, handoff_id)}"
+    return f"{EXECUTABLE_NAME} serve --attach {attach_ref(session_id, handoff_id)}"
 
 
 @dataclass(frozen=True)

@@ -32,6 +32,7 @@ from typing import Any
 
 import yaml
 
+from ..product import EXECUTABLE_NAME
 from .compaction import apply_compaction_settings
 from .source_lock import pin_git_uri, pin_mount_plan_sources
 
@@ -142,6 +143,36 @@ def _merge_tool_lists(base: list[Any], overlay: list[Any]) -> list[Any]:
     return result
 
 
+def _merge_provider_lists(base: list[Any], overlay: list[Any]) -> list[Any]:
+    """Merge settings ``config.providers`` by ``id | module`` identity.
+
+    Provider configuration is an additive roster across global, project, and
+    local scopes. A more-specific entry replaces the same identity, while a
+    different provider remains available. This is the same view exposed by
+    ``setup.configured_providers``; keeping the merge here prevents the CLI
+    from listing providers that the runtime silently discarded.
+    """
+    result = [dict(item) if isinstance(item, dict) else item for item in base]
+    index = {
+        str(item.get("id") or item.get("instance_id") or item.get("module")): offset
+        for offset, item in enumerate(result)
+        if isinstance(item, dict)
+        and (item.get("id") or item.get("instance_id") or item.get("module"))
+    }
+    for raw in overlay:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        key = str(item.get("id") or item.get("instance_id") or item.get("module") or "")
+        if key and key in index:
+            result[index[key]] = item
+        else:
+            result.append(item)
+            if key:
+                index[key] = len(result) - 1
+    return result
+
+
 def merge_settings(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     """Settings merge with Amplifier-native module/path semantics."""
     merged = deep_merge(base, overlay)
@@ -151,6 +182,12 @@ def merge_settings(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, A
         modules = merged.setdefault("modules", {})
         if isinstance(modules, dict):
             modules["tools"] = _merge_tool_lists(base_tools, overlay_tools)
+    base_providers = (base.get("config") or {}).get("providers")
+    overlay_providers = (overlay.get("config") or {}).get("providers")
+    if isinstance(base_providers, list) and isinstance(overlay_providers, list):
+        config = merged.setdefault("config", {})
+        if isinstance(config, dict):
+            config["providers"] = _merge_provider_lists(base_providers, overlay_providers)
     return merged
 
 
@@ -666,6 +703,73 @@ def apply_module_overrides(mount_plan: dict[str, Any], settings: dict[str, Any])
     return mount_plan
 
 
+_TUI_FALLBACK_MARKER = "_tui_optional_fallback"
+"""Private bundle-config marker for a provider that mounts conditionally."""
+
+
+def prune_unavailable_provider_fallbacks(mount_plan: dict[str, Any]) -> dict[str, Any]:
+    """Omit credential-less optional fallbacks from the real mount plan.
+
+    Provider priority controls turn selection, not mounting. Keeping the
+    packaged Anthropic fallback therefore made core validate it on boot,
+    producing a traceback and ``degraded start`` notice even when vLLM/Runpod
+    was healthy. Retain it only when its credential is available; the
+    first-run/provider gate owns the no-provider remediation. The private
+    marker is always stripped before provider mounting.
+    """
+    providers = mount_plan.get("providers")
+    if not isinstance(providers, list):
+        return mount_plan
+
+    retained: list[Any] = []
+    for entry in providers:
+        if not isinstance(entry, dict):
+            retained.append(entry)
+            continue
+        config = entry.get("config")
+        config = config if isinstance(config, dict) else {}
+        optional = bool(config.pop(_TUI_FALLBACK_MARKER, False))
+        module_id = str(entry.get("module") or "")
+        credential_available = bool(config.get("api_key"))
+        if module_id == "provider-anthropic":
+            credential_available = credential_available or bool(os.environ.get("ANTHROPIC_API_KEY"))
+        if optional and not credential_available:
+            continue
+        retained.append(entry)
+
+    providers[:] = retained
+    return mount_plan
+
+
+def enforce_runtime_capability_contracts(mount_plan: dict[str, Any]) -> dict[str, Any]:
+    """Remove module features the app runtime cannot actually provide.
+
+    Foundation overlays and persisted ``overrides`` are composed after the
+    packaged wrapper, so either can accidentally re-enable delegate session
+    resumption. The TUI intentionally registers only ``session.spawn`` and
+    child sessions are ephemeral; advertising ``session.resume`` produces a
+    recovery action that must fail. Enforce this invariant on the final mount
+    plan, after all composition and settings overrides.
+    """
+    for tool in mount_plan.get("tools") or []:
+        if not isinstance(tool, dict) or tool.get("module") != "tool-delegate":
+            continue
+        config = tool.setdefault("config", {})
+        if not isinstance(config, dict):
+            config = {}
+            tool["config"] = config
+        features = config.setdefault("features", {})
+        if not isinstance(features, dict):
+            features = {}
+            config["features"] = features
+        session_resume = features.setdefault("session_resume", {})
+        if not isinstance(session_resume, dict):
+            session_resume = {}
+            features["session_resume"] = session_resume
+        session_resume["enabled"] = False
+    return mount_plan
+
+
 class ProviderNotConfiguredError(ValueError):
     """A ``--provider`` override named a provider no configured entry matches.
 
@@ -738,7 +842,7 @@ def apply_run_overrides(
     providers = mount_plan.get("providers")
     if not isinstance(providers, list) or not providers:
         raise ProviderNotConfiguredError(
-            "no providers are configured — run `amplifier-tui init` before "
+            f"no providers are configured — run `{EXECUTABLE_NAME} config` before "
             "overriding --provider/--model"
         )
     if provider is not None:
@@ -832,6 +936,41 @@ def expand_env_placeholders(config: dict[str, Any]) -> dict[str, Any]:
         return value
 
     return _walk(config)
+
+
+def dedupe_local_skill_sources(mount_plan: dict[str, Any], project_dir: Path) -> None:
+    """Deduplicate equivalent local paths in ``tool-skills`` configuration.
+
+    From a home-directory launch, ``.amplifier/skills`` and
+    ``~/.amplifier/skills`` resolve to the same directory. Upstream discovery
+    deduplicates remote caches but not these local spellings, so every malformed
+    skill warning appeared twice per mount. Preserve source order and remote
+    URIs while collapsing only canonical local-path duplicates.
+    """
+    for entry in mount_plan.get("tools") or []:
+        if not isinstance(entry, dict) or entry.get("module") != "tool-skills":
+            continue
+        config = entry.get("config")
+        if not isinstance(config, dict):
+            continue
+        sources = config.get("skills")
+        if not isinstance(sources, list):
+            continue
+        seen_local: set[Path] = set()
+        retained: list[Any] = []
+        for source in sources:
+            if not isinstance(source, str) or "://" in source or source.startswith("git+"):
+                retained.append(source)
+                continue
+            path = Path(source).expanduser()
+            if not path.is_absolute():
+                path = project_dir / path
+            canonical = path.resolve(strict=False)
+            if canonical in seen_local:
+                continue
+            seen_local.add(canonical)
+            retained.append(source)
+        sources[:] = retained
 
 
 def _entry_key(entry: dict[str, Any]) -> str:
@@ -1337,7 +1476,7 @@ def resolve_bundle_source(
     if uri is None and bundle is None and name != DEFAULT_BUNDLE:
         notice = (
             f"bundle '{name}' not found — started '{DEFAULT_BUNDLE}' instead "
-            f"(amplifier-tui bundle list shows options)"
+            f"({EXECUTABLE_NAME} bundle list shows options)"
         )
         name = DEFAULT_BUNDLE
         uri = resolve_bundle_name(name, settings, search_paths)
@@ -1512,6 +1651,8 @@ async def resolve_config(
     #    expands the effective bundle config before session creation).
     mount_plan = apply_module_overrides(prepared.mount_plan, settings)
     pin_mount_plan_sources(mount_plan, source_resolver)
+    prune_unavailable_provider_fallbacks(mount_plan)
+    enforce_runtime_capability_contracts(mount_plan)
     # Per-invocation ``run --provider/--model`` overrides — ephemeral to THIS
     # boot (they mutate the in-memory plan, never a settings scope file).
     apply_run_overrides(mount_plan, provider=provider_override, model=model_override)
@@ -1537,6 +1678,7 @@ async def resolve_config(
     inject_notifications_config(mount_plan, settings)
     apply_notification_ladder_env(settings)
     expand_env_placeholders(mount_plan)
+    dedupe_local_skill_sources(mount_plan, project_dir)
     # Full commit SHAs are immutable but the current native tool-skills git
     # fetcher treats them as branch names. Resolve only those sources through
     # Foundation's SHA-aware cache first; tool-skills still owns discovery and
@@ -1715,10 +1857,13 @@ __all__ = [
     "boot_overlay_uris",
     "deferred_bundle_entries",
     "deferred_overlay_uris",
+    "dedupe_local_skill_sources",
+    "enforce_runtime_capability_contracts",
     "deferred_overlays_notice",
     "resolve_deferred_bundle",
     "prepare_overlay_bundle",
     "prepare_live_overlay_bundle",
+    "prune_unavailable_provider_fallbacks",
     "routing_enabled",
     "ROUTING_MATRIX_BUNDLE_URI",
     "packaged_bundles_dir",

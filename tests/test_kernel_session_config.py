@@ -23,7 +23,9 @@ from amplifier_app_tui.kernel.config import (
     bundle_search_paths,
     bundle_source_overrides,
     deep_merge,
+    dedupe_local_skill_sources,
     discover_bundle,
+    enforce_runtime_capability_contracts,
     ensure_project_write_path,
     expand_env_placeholders,
     get_project_slug,
@@ -35,6 +37,7 @@ from amplifier_app_tui.kernel.config import (
     overlay_uris,
     packaged_bundles_dir,
     provider_priority,
+    prune_unavailable_provider_fallbacks,
     resolve_config,
 )
 from amplifier_app_tui.kernel.compaction import (
@@ -58,6 +61,82 @@ def test_deep_merge_nested_overlay_wins() -> None:
     assert base == {"a": {"x": 1, "y": 2}, "b": 1}
 
 
+def test_unavailable_optional_provider_fallback_is_not_mounted(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    plan = {
+        "providers": [
+            {
+                "module": "provider-anthropic",
+                "config": {"priority": 100, "_tui_optional_fallback": True},
+            },
+            {"module": "provider-vllm", "config": {"priority": 1}},
+        ]
+    }
+
+    assert prune_unavailable_provider_fallbacks(plan) is plan
+    assert [entry["module"] for entry in plan["providers"]] == ["provider-vllm"]
+
+
+def test_optional_provider_fallback_remains_only_when_usable(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "configured")
+    usable = {
+        "providers": [
+            {"module": "provider-anthropic", "config": {"_tui_optional_fallback": True}},
+            {"module": "provider-vllm"},
+        ]
+    }
+    prune_unavailable_provider_fallbacks(usable)
+    assert [entry["module"] for entry in usable["providers"]] == [
+        "provider-anthropic",
+        "provider-vllm",
+    ]
+    assert "_tui_optional_fallback" not in usable["providers"][0]["config"]
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    only = {
+        "providers": [{"module": "provider-anthropic", "config": {"_tui_optional_fallback": True}}]
+    }
+    prune_unavailable_provider_fallbacks(only)
+    assert only["providers"] == []
+
+
+def test_home_project_dedupes_equivalent_local_skill_sources(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    plan = {
+        "tools": [
+            {
+                "module": "tool-skills",
+                "config": {
+                    "skills": [
+                        ".amplifier/skills",
+                        str(home / ".amplifier" / "skills"),
+                        "git+https://example.test/skills@v1",
+                    ]
+                },
+            }
+        ]
+    }
+    dedupe_local_skill_sources(plan, home)
+    assert plan["tools"][0]["config"]["skills"] == [
+        ".amplifier/skills",
+        "git+https://example.test/skills@v1",
+    ]
+
+
+def test_runtime_disables_delegate_resume_after_hostile_override() -> None:
+    plan = {
+        "tools": [
+            {
+                "module": "tool-delegate",
+                "config": {"features": {"session_resume": {"enabled": True}}},
+            }
+        ]
+    }
+
+    assert enforce_runtime_capability_contracts(plan) is plan
+    assert plan["tools"][0]["config"]["features"]["session_resume"]["enabled"] is False
+
+
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -75,6 +154,26 @@ def test_settings_three_scope_merge_most_specific_wins(tmp_path: Path) -> None:
     assert settings["bundle"]["active"] == "proj-bundle"  # project beats global
     assert settings["theme"] == "carbon"  # local beats global
     assert active_bundle_name(settings) == "proj-bundle"
+
+
+def test_provider_roster_merges_across_scopes_by_identity(tmp_path: Path) -> None:
+    paths = SettingsPaths.default(tmp_path / "proj", tmp_path / "home")
+    _write(
+        paths.global_settings,
+        "config:\n  providers:\n    - module: provider-vllm\n      id: global\n",
+    )
+    _write(
+        paths.project_settings,
+        "config:\n  providers:\n    - module: provider-vllm\n      id: project\n",
+    )
+    _write(
+        paths.local_settings,
+        "config:\n  providers:\n    - module: provider-vllm\n      id: global\n      config:\n        priority: 7\n",
+    )
+
+    providers = load_merged_settings(paths)["config"]["providers"]
+    assert [entry["id"] for entry in providers] == ["global", "project"]
+    assert providers[0]["config"]["priority"] == 7
 
 
 def test_tui_namespace_wins_over_legacy_value_in_same_scope(tmp_path: Path) -> None:
@@ -1010,24 +1109,11 @@ def test_packaged_bundle_declares_cli_response_contract() -> None:
     from amplifier_app_tui.kernel.config import packaged_bundles_dir
 
     text = (packaged_bundles_dir() / "tui.md").read_text(encoding="utf-8")
-    contract = """## Terminal response contract
-
-You are Amplifier, driven through a full-screen terminal UI. Prefer running
-tools over speculating. This surface renders a supported Markdown subset:
-
-- Lead with the answer, result, or current blocker.
-- Default to short, direct responses with small paragraphs or flat lists.
-- Do not repeat the prompt, tool logs, task state, or internal narration that
-  the UI already displays.
-- Close implementation work with what changed, verification, and any blocker
-  or required next action.
-- Do not emit Markdown images. Keep tables to four columns or fewer and lists
-  shallow.
-- Put layout-sensitive or copyable structured content in language-tagged fenced
-  code blocks.
-- Expand only when the user asks or correctness requires the detail.
-"""
-    assert contract in text
+    assert "## Terminal response contract" in text
+    assert "A final answer ends the turn. Never use it to announce future execution." in text
+    assert "A plan is not implementation." in text
+    assert "Delegated output is not proof of completion." in text
+    assert "Choose only an agent\n  listed in its live **Available agents** section." in text
 
 
 # -- bare-name resolution + graceful fallback (Samuel's feedback, 2026-07-21) --

@@ -21,14 +21,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Stage source-synchronized documentation
+        run: python3 scripts/stage_docs_site.py --output .docs-site-build
+
       - name: Configure Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
       - name: Build with Jekyll
         uses: actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697 # v1
         with:
-          source: docs-site
+          source: .docs-site-build
           destination: _site
+
+      - name: Verify built routes and anchors
+        run: python3 scripts/check_built_docs.py _site --baseurl /amplifier-app-tui
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
