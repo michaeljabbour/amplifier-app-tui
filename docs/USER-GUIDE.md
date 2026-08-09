@@ -36,6 +36,12 @@ uv run amplifier-tui bundle refresh # advanced: refresh mounted bundles/modules
 `bundle --help`. These read/write the same amplifier settings and registry
 the reference CLI uses — nothing app-specific.
 
+The examples above use `uv run` because this is the repository guide: that prefix runs the
+current checkout. An unqualified `amplifier-tui` always resolves the executable on `PATH`, even
+when the shell is sitting inside this repository. If a newly added command is missing, compare
+`amplifier-tui version` with `uv run amplifier-tui version`; update the global tool when they name
+different commits.
+
 ### Configuration control center
 
 Run `amplifier-tui config` in a terminal for one numbered, name-friendly menu:

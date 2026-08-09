@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Iterable
+from collections import deque
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -454,111 +455,83 @@ def check_app_update(identity: AppIdentity | None = None) -> AppUpdateStatus:
     return AppUpdateStatus(identity, note="install source cannot be compared")
 
 
-def app_self_update_command(identity: AppIdentity | None = None) -> list[str] | None:
-    """Command used to update/repair the app, or ``None`` for dev checkouts."""
+def app_self_update_command(
+    identity: AppIdentity | None = None, *, target_commit: str | None = None
+) -> list[str] | None:
+    """Command used to update/repair the app, or ``None`` for dev checkouts.
+
+    When the update check resolved an upstream commit, pass it through to the
+    installer.  The check and install then describe the same immutable target
+    even if ``main`` advances between those two phases.
+    """
     identity = identity or app_identity()
     if identity.source == "editable":
         return None
-    return source_install_argv()
+    return source_install_argv(ref=target_commit)
 
 
-def run_app_self_update(identity: AppIdentity | None = None) -> tuple[bool, str]:
+def run_app_self_update(
+    identity: AppIdentity | None = None,
+    *,
+    target_commit: str | None = None,
+    on_output: Callable[[str], None] | None = None,
+) -> tuple[bool, str]:
     """Run the canonical source installer for non-editable installs.
 
     Editable/dev checkouts are deliberately not mutated: running the global
     source installer from inside ``uv run`` would clobber the developer's tool
-    story instead of repairing it.
+    story instead of repairing it. Installer output is streamed line-by-line
+    when ``on_output`` is supplied so an interactive caller never presents a
+    silent multi-minute subprocess.
     """
     import subprocess
+    import threading
 
     identity = identity or app_identity()
-    cmd = app_self_update_command(identity)
+    cmd = app_self_update_command(identity, target_commit=target_commit)
     if cmd is None:
         return (
             True,
             f"dev checkout detected; skipped source installer. To update/repair: {DEV_UPDATE_COMMAND}",
         )
+    lines: deque[str] = deque(maxlen=20)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        proc = subprocess.Popen(  # noqa: S603 - argv comes from the fixed install contract
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        stdout = proc.stdout
+        assert stdout is not None
+
+        def _read_output() -> None:
+            for raw_line in stdout:
+                line = raw_line.rstrip()
+                lines.append(line)
+                if on_output is not None and line:
+                    on_output(line)
+
+        reader = threading.Thread(target=_read_output, name="app-update-output", daemon=True)
+        reader.start()
+        returncode = proc.wait(timeout=600)
+        reader.join(timeout=5)
     except FileNotFoundError:
         return (False, f"{cmd[0]} not found on PATH — run manually: " + " ".join(cmd))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return (False, "source installer timed out after 10 minutes")
     except Exception as error:  # noqa: BLE001 — lifecycle repair must return an actionable message
         return (False, f"update could not run ({error}); run manually: " + " ".join(cmd))
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
-        return (False, detail[-1] if detail else f"installer exited {proc.returncode}")
+    if returncode != 0:
+        detail = next((line for line in reversed(lines) if line.strip()), "")
+        return (False, detail or f"installer exited {returncode}")
     return (
         True,
         f"{EXECUTABLE_NAME} updated; run `{EXECUTABLE_NAME} version` to verify",
     )
-
-
-_IDENTITY_STATE_NAME = "tui_identity.json"
-# Lives under the `cache` reset category (auto-regenerates, see
-# kernel/reset.py) -- losing this file just means the next upgrade-diff has
-# nothing to compare against, never a crash or data loss.
-
-
-def _identity_state_path(amplifier_home: Path | None = None) -> Path:
-    return _amplifier_home(amplifier_home) / "cache" / _IDENTITY_STATE_NAME
-
-
-def read_last_identity(amplifier_home: Path | None = None) -> AppIdentity | None:
-    """The identity recorded by the previous :func:`record_identity` call.
-
-    ``None`` on first run, or if the state file is missing/corrupt -- the
-    caller then has nothing to diff against, not a crash.
-    """
-    import json
-
-    try:
-        raw = json.loads(_identity_state_path(amplifier_home).read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 -- missing/corrupt state is not fatal
-        return None
-    if not isinstance(raw, dict):
-        return None
-    source = raw.get("source")
-    return AppIdentity(
-        version=raw.get("version"),
-        commit=raw.get("commit"),
-        source=source if source in ("git", "editable", "pypi", "unknown") else "unknown",
-    )
-
-
-def record_identity(identity: AppIdentity, amplifier_home: Path | None = None) -> bool:
-    """Persist *identity* as the baseline the NEXT run diffs against.
-
-    Best-effort: a read-only/missing home degrades to ``False`` (never
-    raises) -- upgrade reporting just skips the before/after line next time.
-    """
-    import json
-
-    path = _identity_state_path(amplifier_home)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {"version": identity.version, "commit": identity.commit, "source": identity.source}
-            ),
-            encoding="utf-8",
-        )
-        return True
-    except OSError:
-        return False
-
-
-def describe_identity_change(previous: AppIdentity | None, current: AppIdentity) -> str | None:
-    """One line confirming a genuine upgrade, or ``None`` if there's nothing to report.
-
-    ``None`` on a first run (no baseline yet) or when nothing changed --
-    callers print this line ONLY when it is not ``None``, so a no-op
-    invocation stays quiet about a version it didn't touch.
-    """
-    if previous is None:
-        return None
-    if previous.version == current.version and previous.commit == current.commit:
-        return None
-    return f"upgraded · {previous.label()} → {current.label()}"
 
 
 # --- anchors include ref (reviewed static pin) ------------------------------
@@ -969,13 +942,10 @@ __all__ = [
     "check_cached_sources",
     "check_packages",
     "count_stale_sources",
-    "describe_identity_change",
     "display_name",
     "installed_commit",
     "pin_files",
     "read_anchors_ref",
-    "read_last_identity",
-    "record_identity",
     "refresh_anchors",
     "run_app_self_update",
     "self_update_hint",

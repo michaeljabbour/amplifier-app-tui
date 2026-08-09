@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import pathlib
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,19 +24,31 @@ from amplifier_app_tui.main import main
 
 
 def test_top_level_update_git_install_runs_source_installer(monkeypatch) -> None:
-    identity = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
+    old_commit = "a" * 40
+    new_commit = "b" * 40
+    identity = updater.AppIdentity(version="0.1.0", commit=old_commit, source="git")
+    updated_identity = updater.AppIdentity(version="0.1.0", commit=new_commit, source="git")
     calls: list[updater.AppIdentity] = []
+    identities = iter((identity, updated_identity))
 
-    def fake_self_update(ident: updater.AppIdentity | None = None) -> tuple[bool, str]:
+    def fake_self_update(
+        ident: updater.AppIdentity | None = None,
+        *,
+        target_commit: str | None = None,
+        on_output=None,
+    ) -> tuple[bool, str]:
         assert ident is not None
+        assert target_commit == new_commit
         calls.append(ident)
+        assert on_output is not None
+        on_output("Installing source revision")
         return True, "updated"
 
-    monkeypatch.setattr(updater, "app_identity", lambda *a, **k: identity)
+    monkeypatch.setattr(updater, "app_identity", lambda *a, **k: next(identities))
     monkeypatch.setattr(
         updater,
         "check_app_update",
-        lambda ident=None: updater.AppUpdateStatus(identity, "bbbbbbb", True),
+        lambda ident=None: updater.AppUpdateStatus(identity, new_commit, True),
     )
     monkeypatch.setattr(updater, "run_app_self_update", fake_self_update)
 
@@ -44,30 +56,36 @@ def test_top_level_update_git_install_runs_source_installer(monkeypatch) -> None
 
     assert result.exit_code == 0
     assert calls == [identity]
-    assert "update available" in result.output
-    assert "updated" in result.output
+    assert "Installed  0.1.0 (aaaaaaa)" in result.output
+    assert "Available  source revision bbbbbbb" in result.output
+    assert "Target     source revision bbbbbbb" in result.output
+    assert "Installing source revision" in result.output
+    assert "Verified   0.1.0 (bbbbbbb)" in result.output
+    assert "✓ Updated" in result.output
+    assert "Package version remained 0.1.0; source revision changed." in result.output
 
 
 def test_top_level_update_confirmation_defaults_to_no(monkeypatch) -> None:
-    identity = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
+    identity = updater.AppIdentity(version="0.1.0", commit="a" * 40, source="git")
+    new_commit = "b" * 40
     calls: list[updater.AppIdentity | None] = []
     monkeypatch.setattr(updater, "app_identity", lambda *a, **k: identity)
     monkeypatch.setattr(
         updater,
         "check_app_update",
-        lambda ident=None: updater.AppUpdateStatus(identity, "bbbbbbb", True),
+        lambda ident=None: updater.AppUpdateStatus(identity, new_commit, True),
     )
     monkeypatch.setattr(
         updater,
         "run_app_self_update",
-        lambda ident=None: calls.append(ident) or (True, "updated"),
+        lambda ident=None, **kwargs: calls.append(ident) or (True, "updated"),
     )
 
     result = CliRunner().invoke(main, ["update"], input="\n")
 
     assert result.exit_code == 0
     assert calls == []
-    assert "update amplifier-tui? [y/N]" in result.output
+    assert "Install this update for amplifier-tui? [y/N]" in result.output
     assert "Update cancelled · nothing changed" in result.output
 
 
@@ -81,7 +99,9 @@ def test_top_level_update_editable_prints_dev_guidance_without_install(monkeypat
         lambda ident=None: updater.AppUpdateStatus(identity, note="dev checkout"),
     )
     monkeypatch.setattr(
-        updater, "run_app_self_update", lambda ident=None: calls.append(ident) or (True, "bad")
+        updater,
+        "run_app_self_update",
+        lambda ident=None, **kwargs: calls.append(ident) or (True, "bad"),
     )
 
     result = CliRunner().invoke(main, ["update", "-y"])
@@ -90,6 +110,68 @@ def test_top_level_update_editable_prints_dev_guidance_without_install(monkeypat
     assert calls == []
     assert "git pull --ff-only && uv sync" in result.output
     assert "not running the global source installer" in result.output
+
+
+def test_top_level_update_verification_mismatch_fails(monkeypatch) -> None:
+    old_commit = "a" * 40
+    target_commit = "b" * 40
+    wrong_commit = "c" * 40
+    before = updater.AppIdentity("0.1.0", old_commit, "git")
+    after = updater.AppIdentity("0.1.0", wrong_commit, "git")
+    identities = iter((before, after))
+    monkeypatch.setattr(updater, "app_identity", lambda *a, **k: next(identities))
+    monkeypatch.setattr(
+        updater,
+        "check_app_update",
+        lambda ident=None: updater.AppUpdateStatus(before, target_commit, True),
+    )
+    monkeypatch.setattr(
+        updater,
+        "run_app_self_update",
+        lambda ident=None, **kwargs: (True, "installed"),
+    )
+
+    result = CliRunner().invoke(main, ["update", "-y"])
+
+    assert result.exit_code == 1
+    assert "Verification failed" in result.output
+    assert "expected bbbbbbb, found ccccccc" in result.output
+
+
+def test_run_app_self_update_streams_output_and_pins_target(monkeypatch) -> None:
+    identity = updater.AppIdentity("0.1.0", "a" * 40, "git")
+    target = "b" * 40
+    seen_commands: list[list[str]] = []
+
+    def fake_command(ident=None, *, target_commit=None):
+        assert ident == identity
+        assert target_commit == target
+        command = [sys.executable, "-c", "print('phase one'); print('phase two')"]
+        seen_commands.append(command)
+        return command
+
+    monkeypatch.setattr(updater, "app_self_update_command", fake_command)
+    output: list[str] = []
+
+    ok, _ = updater.run_app_self_update(
+        identity,
+        target_commit=target,
+        on_output=output.append,
+    )
+
+    assert ok is True
+    assert seen_commands
+    assert output == ["phase one", "phase two"]
+
+
+def test_app_self_update_command_targets_the_resolved_commit() -> None:
+    identity = updater.AppIdentity("0.1.0", "a" * 40, "git")
+    target = "b" * 40
+
+    command = updater.app_self_update_command(identity, target_commit=target)
+
+    assert command is not None
+    assert f"--ref {target}" in command[-1]
 
 
 # -- pure helpers -----------------------------------------------------------
@@ -180,76 +262,7 @@ def test_app_identity_label_pypi_is_bare_version() -> None:
     assert identity.label() == "1.2.3"
 
 
-# -- read/record identity: hermetic persisted-state round trip --------------
-
-
-def test_identity_state_round_trips_through_tmp_home(tmp_path: Path) -> None:
-    assert updater.read_last_identity(tmp_path) is None  # nothing recorded yet
-    identity = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
-    assert updater.record_identity(identity, tmp_path) is True
-    assert updater.read_last_identity(tmp_path) == identity
-
-
-def test_identity_state_lives_under_the_auto_regenerating_cache_dir(tmp_path: Path) -> None:
-    """So `amplifier-tui reset` (which already clears `cache/`) accounts for
-    it with zero extra wiring -- losing it is a no-op, not data loss."""
-    identity = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
-    updater.record_identity(identity, tmp_path)
-    assert (tmp_path / "cache" / "tui_identity.json").exists()
-
-
-def test_read_last_identity_corrupt_state_degrades_to_none(tmp_path: Path) -> None:
-    state = tmp_path / "cache" / "tui_identity.json"
-    state.parent.mkdir(parents=True)
-    state.write_text("{not json", encoding="utf-8")
-    assert updater.read_last_identity(tmp_path) is None
-
-
-def test_read_last_identity_unexpected_shape_degrades_to_none(tmp_path: Path) -> None:
-    state = tmp_path / "cache" / "tui_identity.json"
-    state.parent.mkdir(parents=True)
-    state.write_text("[1, 2, 3]", encoding="utf-8")  # a JSON array, not an object
-    assert updater.read_last_identity(tmp_path) is None
-
-
-def test_record_identity_read_only_home_degrades_to_false(tmp_path: Path, monkeypatch) -> None:
-    def _raise_mkdir(*a, **k):
-        raise OSError("read-only filesystem")
-
-    monkeypatch.setattr(pathlib.Path, "mkdir", _raise_mkdir)
-    identity = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
-    assert updater.record_identity(identity, tmp_path) is False  # degraded, not raised
-
-
-# -- describe_identity_change: the "upgraded from X to Y" line --------------
-
-
-def test_describe_identity_change_none_on_first_run() -> None:
-    current = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
-    assert updater.describe_identity_change(None, current) is None
-
-
-def test_describe_identity_change_none_when_unchanged() -> None:
-    identity = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
-    assert updater.describe_identity_change(identity, identity) is None
-
-
-def test_describe_identity_change_reports_commit_bump() -> None:
-    old = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
-    new = updater.AppIdentity(version="0.1.0", commit="bbbbbbb", source="git")
-    line = updater.describe_identity_change(old, new)
-    assert line == "upgraded \u00b7 0.1.0 (aaaaaaa) \u2192 0.1.0 (bbbbbbb)"
-
-
-def test_describe_identity_change_reports_version_bump() -> None:
-    old = updater.AppIdentity(version="0.1.0", commit=None, source="pypi")
-    new = updater.AppIdentity(version="0.2.0", commit=None, source="pypi")
-    line = updater.describe_identity_change(old, new)
-    assert line is not None
-    assert "0.1.0" in line and "0.2.0" in line
-
-
-# -- CLI wiring: `update` prints + records the installed identity -----------
+# -- CLI wiring: bundle refresh identifies the app without inventing updates -
 
 
 def test_update_prints_installed_identity_line(monkeypatch) -> None:
@@ -259,44 +272,18 @@ def test_update_prints_installed_identity_line(monkeypatch) -> None:
     assert "amplifier-tui 0.1.0 (aaaaaaa)" in result.output  # _DEFAULT_STUB_IDENTITY
 
 
-def test_update_reports_upgrade_when_identity_changed(monkeypatch) -> None:
-    previous = updater.AppIdentity(version="0.1.0", commit="aaa1111", source="git")
+def test_bundle_refresh_never_reports_a_historical_app_upgrade(monkeypatch) -> None:
     current = updater.AppIdentity(version="0.1.0", commit="bbb2222", source="git")
     _stub(
         monkeypatch,
         [updater.BundleUpdate("tui", "tui", "up to date", False)],
         identity=current,
-        previous_identity=previous,
-    )
-    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
-    assert result.exit_code == 0
-    assert "upgraded" in result.output
-    assert "aaa1111" in result.output and "bbb2222" in result.output
-
-
-def test_update_silent_about_upgrade_when_identity_unchanged(monkeypatch) -> None:
-    same = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
-    _stub(
-        monkeypatch,
-        [updater.BundleUpdate("tui", "tui", "up to date", False)],
-        identity=same,
-        previous_identity=same,
     )
     result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert "upgraded" not in result.output
-
-
-def test_update_check_only_does_not_record_identity(monkeypatch) -> None:
-    recorded: list = []
-    _stub(
-        monkeypatch,
-        [updater.BundleUpdate("tui", "tui", "up to date", False)],
-        recorded=recorded,
-    )
-    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
-    assert result.exit_code == 0
-    assert recorded == []
+    assert "aaa1111" not in result.output
+    assert "bbb2222" in result.output
 
 
 # -- uncheckable_sources: deduplicated, plainly labeled (pure) ---------------
@@ -492,8 +479,6 @@ def _stub(
     refreshed=None,
     packages=None,
     identity=None,
-    previous_identity=None,
-    recorded=None,
 ):
     async def _check(*a, **k):
         return statuses
@@ -515,11 +500,6 @@ def _stub(
     async def _packages(*a, **k):
         return packages if packages is not None else _offline_packages()
 
-    def _record(ident, *a, **k):
-        if recorded is not None:
-            recorded.append(ident)
-        return True
-
     monkeypatch.setattr(updater, "check_bundles", _check)
     monkeypatch.setattr(updater, "check_cached_sources", _check)
     monkeypatch.setattr(updater, "update_bundles", _apply)
@@ -533,8 +513,6 @@ def _stub(
     # invocation to a fixed value so no test's `result.output` assertions
     # (or disk state) depend on how THIS checkout happens to be installed.
     monkeypatch.setattr(updater, "app_identity", lambda *a, **k: identity or _DEFAULT_STUB_IDENTITY)
-    monkeypatch.setattr(updater, "read_last_identity", lambda *a, **k: previous_identity)
-    monkeypatch.setattr(updater, "record_identity", _record)
 
 
 def test_update_all_up_to_date(monkeypatch) -> None:
@@ -594,23 +572,20 @@ def test_update_force_cleans_cache_and_updates_all(monkeypatch) -> None:
 def test_update_force_check_only_has_no_side_effects(monkeypatch) -> None:
     cleaned: list = []
     applied: list = []
-    recorded: list = []
     _stub(
         monkeypatch,
         [updater.BundleUpdate("tui", "tui", "up to date", False)],
         cleaned=cleaned,
         applied=applied,
-        recorded=recorded,
     )
     result = CliRunner().invoke(main, ["bundle", "refresh", "--force", "--check-only"])
     assert result.exit_code == 0
     assert cleaned == []
     assert applied == []
-    assert recorded == []
     assert "Check complete · nothing changed" in result.output
 
 
-def test_check_only_on_fresh_home_creates_no_cache_or_identity(tmp_path: Path, monkeypatch) -> None:
+def test_check_only_on_fresh_home_creates_no_cache(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "amplifier-home"
     monkeypatch.setenv("AMPLIFIER_HOME", str(home))
     monkeypatch.setattr(
@@ -664,19 +639,16 @@ def test_updater_home_honors_amplifier_home(tmp_path: Path, monkeypatch) -> None
 def test_update_force_cancel_has_no_side_effects(monkeypatch) -> None:
     cleaned: list = []
     applied: list = []
-    recorded: list = []
     _stub(
         monkeypatch,
         [updater.BundleUpdate("tui", "tui", "up to date", False)],
         cleaned=cleaned,
         applied=applied,
-        recorded=recorded,
     )
     result = CliRunner().invoke(main, ["bundle", "refresh", "--force"], input="\n")
     assert result.exit_code == 0
     assert cleaned == []
     assert applied == []
-    assert recorded == []
     assert "Update cancelled · nothing changed" in result.output
 
 
@@ -687,9 +659,10 @@ def test_update_prints_checking_header_and_substeps(monkeypatch) -> None:
     _stub(monkeypatch, [updater.BundleUpdate("tui", "tui", "up to date", False)])
     result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
-    assert "Checking for updates..." in result.output
-    assert "Checking modules..." in result.output
-    assert "Checking bundles..." in result.output
+    assert "Checking for source-cache updates..." in result.output
+    assert "1/3 Checking modules and bundles..." in result.output
+    assert "2/3 Checking Amplifier packages..." in result.output
+    assert "3/3 Checking the pinned Anchors source..." in result.output
 
 
 # -- packages section (Amplifier table) ---------------------------------------

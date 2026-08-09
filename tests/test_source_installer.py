@@ -176,6 +176,15 @@ def test_install_command_contract_separates_public_and_hardened_commands() -> No
     assert source_install_argv() == ["bash", "-o", "pipefail", "-c", expected_hardened_pipeline]
 
 
+def test_install_contract_argv_can_pin_a_resolved_update_target() -> None:
+    target = "a" * 40
+
+    argv = source_install_argv(ref=target)
+
+    assert argv[:4] == ["bash", "-o", "pipefail", "-c"]
+    assert argv[-1].endswith(f"| bash -s -- --ref {target}")
+
+
 def test_launch_install_contract_keeps_launch_explicitly_hardened() -> None:
     launch_argv = source_install_argv(launch=True)
 

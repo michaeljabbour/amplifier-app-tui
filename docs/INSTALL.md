@@ -97,7 +97,10 @@ Windows requires a separate installer and is not currently supported.
 ## Updating
 
 There is no background app update. Run `amplifier-tui update` to resolve and
-install the then-current `main` commit via the same source-installer contract, including that commit's locked dependencies. To stay
+install the then-current `main` commit via the same source-installer contract, including that
+commit's locked dependencies. The command shows the installed and available revisions first,
+pins the installer to that exact resolved commit, streams its phases, and verifies the installed
+revision before reporting success. It does not scan bundle/module caches. To stay
 on an audited build, keep using its full commit SHA:
 
 ```sh
@@ -106,6 +109,8 @@ sh ./scripts/install.sh --ref 0123456789abcdef0123456789abcdef01234567
 
 `amplifier-tui update` updates the application package. Advanced users can run
 `amplifier-tui bundle refresh` to refresh mounted Amplifier bundle/module caches.
+Running `amplifier-tui` while your shell is inside a source checkout still uses the
+executable found on `PATH`; use `uv run amplifier-tui` when you mean the checkout.
 
 If startup reports `Remote branch <40-character SHA> not found`, the commit may
 still be valid: older Amplifier Foundation builds incorrectly passed full commit
