@@ -33,8 +33,8 @@ from amplifier_app_tui.commands.doctor import (
     run_standalone,
 )
 from amplifier_app_tui.install_contract import (
+    PUBLIC_SOURCE_INSTALL_COMMAND,
     SOURCE_INSTALL_COMMAND,
-    SOURCE_INSTALL_LAUNCH_COMMAND,
 )
 from amplifier_app_tui.commands.improve import ApprovalTally
 from amplifier_app_tui.kernel import updater
@@ -84,6 +84,14 @@ def _ok(name: str, message: str) -> CheckResult:
 
 def _finding(name: str, message: str) -> CheckResult:
     return CheckResult(name=name, ok=False, message=message)
+
+
+def _assert_public_install_guidance(message: str) -> None:
+    assert PUBLIC_SOURCE_INSTALL_COMMAND in message
+    assert SOURCE_INSTALL_COMMAND in message
+    assert "--launch" not in message
+    for token in ("pipefail", "--proto", "--tlsv1.2", "bash -s --"):
+        assert token not in message
 
 
 def test_check_install_healthy_and_broken() -> None:
@@ -177,7 +185,7 @@ def test_check_path_not_found_anywhere_suggests_reinstall_for_real_executable(
         search_dirs=(tmp_path / "nowhere",),
     )
     assert not result.ok
-    assert SOURCE_INSTALL_LAUNCH_COMMAND in result.message
+    _assert_public_install_guidance(result.message)
     assert "uv tool update-shell" in result.message
 
 
@@ -252,7 +260,7 @@ def test_check_python_uv_flags_old_python_with_upgrade_command() -> None:
     assert not result.ok
     assert "3.9.0" in result.message and "3.12" in result.message
     assert "uv python install 3.12" in result.message
-    assert SOURCE_INSTALL_COMMAND in result.message
+    _assert_public_install_guidance(result.message)
 
 
 def test_check_python_uv_flags_missing_uv_with_install_command() -> None:
@@ -260,7 +268,7 @@ def test_check_python_uv_flags_missing_uv_with_install_command() -> None:
     result = check_python_uv(facts)
     assert not result.ok
     assert "uv not found" in result.message
-    assert SOURCE_INSTALL_COMMAND in result.message
+    _assert_public_install_guidance(result.message)
 
 
 def test_check_python_uv_flags_both_independently() -> None:
@@ -421,8 +429,9 @@ def test_detect_permissions_never_raises() -> None:
 def test_app_install_uri_matches_kernel_updater_repo_url() -> None:
     """The pure top-level contract keeps commands and kernel guidance identical."""
     assert APP_INSTALL_URI == f"git+{updater.APP_REPO_URL}"
-    assert SOURCE_INSTALL_COMMAND in updater.self_update_hint(
-        updater.AppIdentity("0.1.0", "abc1234", "git")
+    assert SOURCE_INSTALL_COMMAND == PUBLIC_SOURCE_INSTALL_COMMAND
+    _assert_public_install_guidance(
+        updater.self_update_hint(updater.AppIdentity("0.1.0", "abc1234", "git"))
     )
 
 

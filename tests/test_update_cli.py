@@ -12,6 +12,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+from amplifier_app_tui.install_contract import PUBLIC_SOURCE_INSTALL_COMMAND
 from amplifier_app_tui.kernel import updater
 from amplifier_app_tui.main import main
 
@@ -49,7 +50,12 @@ def test_self_update_hint_git_install_uses_canonical_installer_not_dot() -> None
     """A tool install gets the immutable-resolution bootstrap documented by README."""
     identity = updater.AppIdentity(version="0.1.0", commit="abc1234", source="git")
     hint = updater.self_update_hint(identity)
+    assert updater.SOURCE_INSTALL_COMMAND == PUBLIC_SOURCE_INSTALL_COMMAND
+    assert PUBLIC_SOURCE_INSTALL_COMMAND in hint
     assert updater.SOURCE_INSTALL_COMMAND in hint
+    assert "--launch" not in hint
+    for token in ("pipefail", "--proto", "--tlsv1.2", "bash -s --"):
+        assert token not in hint
     assert "--reinstall .`" not in hint
 
 
