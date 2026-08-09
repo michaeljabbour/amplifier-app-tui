@@ -1,8 +1,8 @@
 # Amplifier TUI docs site and simple setup implementation plan
 
-**Status:** ready for execution. This plan covers the remaining documentation/setup work requested after the install/update/reset simplification branch.
+**Status:** ✅ implemented. This plan covered the remaining documentation/setup work requested after the install/update/reset simplification branch; all tasks landed in the docs-site PR.
 
-**For execution:** use subagent-driven development with the parallel task groups below. Do not start from scratch; this branch already contains the verified install/update/reset/provider-fallback work.
+**How it was executed:** subagent-driven development across the parallel task groups below — a verified facts brief first, then six parallel content lanes, then parallel accuracy and quality reviews with a five-lane fix pass.
 
 ## Goal
 
