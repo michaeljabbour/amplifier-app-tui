@@ -32,6 +32,11 @@ fail() {
     exit 1
 }
 
+validation_fail() {
+    printf 'install validation failed: %s\n' "$*" >&2
+    exit 1
+}
+
 usage() {
     cat <<'EOF'
 Usage: install.sh [--ref REF] [--no-update-shell]
@@ -267,8 +272,29 @@ app_bin="$tool_bin_dir/$APP_COMMAND"
 
 installed_version=$("$app_bin" version 2>&1) ||
     fail "the installed $APP_COMMAND could not report its version"
-"$app_bin" --help >/dev/null 2>&1 ||
-    fail "the installed $APP_COMMAND command could not load its help surface"
+
+# A just-replaced uv tool can return a transient first-launch failure even when
+# the executable and version command are already valid. Retry this smoke check
+# without sleeping; a persistent failure still prints its real diagnostic and
+# exits distinctly as a validation failure.
+help_log="$temp_dir/help-check.log"
+help_attempt=1
+help_ok=0
+while [ "$help_attempt" -le 3 ]; do
+    if "$app_bin" --help >"$help_log" 2>&1; then
+        help_ok=1
+        break
+    fi
+    if [ "$help_attempt" -eq 1 ]; then
+        warn "the new $APP_COMMAND help check failed once; retrying validation"
+    fi
+    help_attempt=$((help_attempt + 1))
+done
+if [ "$help_ok" -ne 1 ]; then
+    [ ! -s "$help_log" ] || cat "$help_log" >&2
+    validation_fail \
+        "source commit $resolved_sha was installed at $app_bin, but --help failed after 3 attempts"
+fi
 say "Verified $app_bin · $installed_version"
 say "Dependencies locked by uv.lock from $resolved_sha"
 
