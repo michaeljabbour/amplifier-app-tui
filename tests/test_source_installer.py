@@ -115,6 +115,18 @@ printf 'app %s\\n' "$*" >> "$INSTALL_TEST_LOG"
 if [ "${1:-}" = "version" ]; then
     printf 'Amplifier TUI 0.1.0\\n'
 fi
+if [ "${1:-}" = "--help" ]; then
+    attempts=0
+    if [ -f "$INSTALL_TEST_HELP_ATTEMPTS" ]; then
+        attempts=$(cat "$INSTALL_TEST_HELP_ATTEMPTS")
+    fi
+    attempts=$((attempts + 1))
+    printf '%s\\n' "$attempts" > "$INSTALL_TEST_HELP_ATTEMPTS"
+    if [ "$attempts" -le "${INSTALL_TEST_HELP_FAILURES:-0}" ]; then
+        printf 'simulated transient help failure %s\\n' "$attempts" >&2
+        exit 17
+    fi
+fi
 APP
         chmod +x "$INSTALL_TEST_TOOL_BIN/amplifier-tui"
         ;;
@@ -138,6 +150,7 @@ esac
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "INSTALL_TEST_LOG": str(log),
             "INSTALL_TEST_TOOL_BIN": str(tool_bin),
+            "INSTALL_TEST_HELP_ATTEMPTS": str(tmp_path / "help-attempts"),
             "AMPLIFIER_TUI_REPO_URL": "https://example.test/amplifier-app-tui.git",
         }
     )
@@ -214,6 +227,34 @@ def test_source_install_resolves_main_to_immutable_sha(tmp_path: Path) -> None:
     assert "app version" in calls
     assert "app --help" in calls
     assert "uv tool update-shell" in calls
+
+
+def test_source_install_retries_one_transient_help_failure(tmp_path: Path) -> None:
+    result, log, tool_bin = _run(
+        tmp_path,
+        env_updates={"INSTALL_TEST_HELP_FAILURES": "1"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "help check failed once; retrying validation" in result.stderr
+    assert f"Verified {tool_bin}/amplifier-tui" in result.stdout
+    assert log.read_text(encoding="utf-8").count("app --help") == 2
+
+
+def test_source_install_reports_persistent_help_failure_as_validation(
+    tmp_path: Path,
+) -> None:
+    result, log, tool_bin = _run(
+        tmp_path,
+        env_updates={"INSTALL_TEST_HELP_FAILURES": "3"},
+    )
+
+    assert result.returncode == 1
+    assert "simulated transient help failure 3" in result.stderr
+    assert "install validation failed" in result.stderr
+    assert f"was installed at {tool_bin}/amplifier-tui" in result.stderr
+    assert "install failed:" not in result.stderr
+    assert log.read_text(encoding="utf-8").count("app --help") == 3
 
 
 def test_full_sha_skips_remote_resolution_and_path_edit(tmp_path: Path) -> None:
