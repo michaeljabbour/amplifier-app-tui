@@ -1,0 +1,15 @@
+# Amplifier App TUI documentation
+
+This static documentation site covers setup, operation, configuration, troubleshooting, and contributor basics for Amplifier App TUI.
+
+## Pages
+
+- /amplifier-app-tui/ — landing page and documentation map.
+- /amplifier-app-tui/setup/ — install the command and run first-time setup.
+- /amplifier-app-tui/quickstart/ — first session walkthrough.
+- /amplifier-app-tui/update-reset/ — update the installed tool or reset local app state.
+- /amplifier-app-tui/using-the-tui/ — everyday TUI usage flow.
+- /amplifier-app-tui/configuration/ — local configuration notes.
+- /amplifier-app-tui/reference/ — command reference.
+- /amplifier-app-tui/troubleshooting/ — common fixes.
+- /amplifier-app-tui/development/ — contributor test loop.
