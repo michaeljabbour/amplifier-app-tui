@@ -1814,13 +1814,18 @@ def stats(days: int | None, models: str | None, project: str | None, as_json: bo
 @click.option(
     "--reinstall",
     is_flag=True,
-    help="After clearing, reinstall the tui tool (repair a wedged install).",
+    help="Compatibility no-op: reset repairs/reinstalls by default.",
+)
+@click.option(
+    "--no-reinstall",
+    is_flag=True,
+    help="Only clear selected categories; do not repair/reinstall the tui tool.",
 )
 @click.option(
     "--install-source",
     default=None,
     metavar="URI",
-    help="Source for --reinstall (default: the tui git repo; use '.' from a clone).",
+    help="Repair/reinstall source (default: the tui git repo; use '.' from a clone).",
 )
 def reset(
     categories: tuple[str, ...],
@@ -1829,6 +1834,7 @@ def reset(
     home_override: str | None,
     list_only: bool,
     reinstall: bool,
+    no_reinstall: bool,
     install_source: str | None,
 ) -> None:
     """Data-safe reset: clear selected categories, preserve the rest.
@@ -1845,9 +1851,10 @@ def reset(
       - secrets (keys) are cleared ONLY when named explicitly
       - never deletes outside the confirmed app home
 
-    ``--reinstall`` additionally repairs a wedged install through the canonical
-    source installer after clearing — the tui analogue of app-cli's
-    reset-and-reinstall.
+    By default reset also repairs a wedged install through the canonical source
+    installer after clearing — the tui analogue of app-cli's reset-and-reinstall.
+    Use ``--no-reinstall`` for cleanup-only behavior; ``--reinstall`` remains as
+    a compatibility alias.
 
     \b
     Examples:
@@ -1855,7 +1862,8 @@ def reset(
       amplifier-tui reset --dry-run              Preview the safe default
       amplifier-tui reset --category cache -y    Clear only the cache
       amplifier-tui reset -c sessions,config     Clear sessions + config
-      amplifier-tui reset --reinstall -y         Clear + reinstall the tool
+      amplifier-tui reset -y                     Safe repair: clear + reinstall
+      amplifier-tui reset --no-reinstall -y      Cleanup only
     """
     from .kernel import reset as reset_kernel
 
@@ -1895,6 +1903,8 @@ def reset(
         click.echo(f"WARNING: this clears secrets: {', '.join(plan.secret_cleared)}")
 
     source = install_source or reset_kernel.DEFAULT_INSTALL_SOURCE
+    do_reinstall = not no_reinstall
+    del reinstall  # compatibility flag; reset repairs by default now
 
     if plan.removed:
         click.echo("would remove:" if dry_run else "to remove:")
@@ -1904,12 +1914,12 @@ def reset(
         click.echo("nothing to remove -- selected categories have no files on disk")
 
     if dry_run:
-        if reinstall:
+        if do_reinstall:
             click.echo(f"would reinstall: {' '.join(reset_kernel.reinstall_command(source))}")
         click.echo("DRY RUN -- nothing was changed")
         return
 
-    if not plan.removed and not reinstall:
+    if not plan.removed and not do_reinstall:
         return
 
     if not yes:
@@ -1919,7 +1929,7 @@ def reset(
             if plan.destructive_cleared:
                 item += f" (incl {', '.join(plan.destructive_cleared)})"
             actions.append(item)
-        if reinstall:
+        if do_reinstall:
             actions.append("reinstall the tui tool")
         if not click.confirm("permanently " + " and ".join(actions) + "?", default=False):
             click.echo("cancelled")
@@ -1931,7 +1941,7 @@ def reset(
         for path in final.preserved:
             click.echo(f"  preserved: {path}")
 
-    if reinstall:
+    if do_reinstall:
         click.echo(f"reinstalling tui from {source} ...")
         ok, message = reset_kernel.reinstall_tool(source)
         click.echo(message if ok else f"reinstall failed: {message}", err=not ok)
@@ -3806,7 +3816,7 @@ def _print_update_table(console, statuses, packages=()) -> None:  # noqa: ANN001
     )
 
 
-async def _update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
+async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
     from rich.console import Console
 
     from .kernel import updater
@@ -3886,9 +3896,9 @@ async def _update(check_only: bool, yes: bool, force: bool, verbose: bool) -> in
     # source referenced by 11 bundles is one update, not "11 item(s)").
     stale_sources = updater.count_stale_sources(statuses)
     package_updates = [p for p in packages if p.has_update]
-    # A stale anchors cache is applicable work: `update` re-fetches the
+    # A stale anchors cache is applicable work: `bundle refresh` re-fetches the
     # tracked include (refresh_anchors) since foundation's per-bundle update
-    # skips it — otherwise the "run `amplifier-tui update`" hint is circular.
+    # skips it — otherwise the "run `amplifier-tui bundle refresh`" hint is circular.
     anchors_work = anchors.is_stale or (force and anchors.ref is not None and not anchors.is_pinned)
     if not stale and not anchors_work and not force:
         if errored:
@@ -3907,7 +3917,7 @@ async def _update(check_only: bool, yes: bool, force: bool, verbose: bool) -> in
     # --check-only mode.
     console.print()
     if check_only:
-        console.print("Run [cyan]amplifier-tui update[/cyan] to install")
+        console.print("Run [cyan]amplifier-tui bundle refresh[/cyan] to install")
     if force:
         console.print(f"  • Re-fetch {len(statuses)} bundle(s) (--force)")
     elif stale_sources:
@@ -3956,14 +3966,73 @@ async def _update(check_only: bool, yes: bool, force: bool, verbose: bool) -> in
     return 1 if failed or errored else 0
 
 
-@main.command()
+@bundle.command("refresh")
 @click.option("--check-only", is_flag=True, help="Report available updates; change nothing.")
 @click.option("--yes", "-y", is_flag=True, help="Apply without the confirmation prompt.")
 @click.option("--force", is_flag=True, help="uv cache clean first, then re-fetch every source.")
 @click.option("--verbose", "-v", is_flag=True, help="List every skipped local/non-git source.")
+def bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: bool) -> None:
+    """Advanced: refresh mounted bundle/module source caches."""
+    raise SystemExit(asyncio.run(_bundle_refresh(check_only, yes, force, verbose)))
+
+
+def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
+    from rich.console import Console
+
+    from .kernel import updater
+
+    console = Console()
+    identity = updater.app_identity()
+    status = updater.check_app_update(identity)
+    console.print(f"amplifier-tui {identity.label()}", style="dim")
+    console.print(status.describe())
+
+    if identity.source == "editable":
+        console.print("Dev checkout: not running the global source installer.", style="yellow")
+        console.print(f"Run: [cyan]{updater.DEV_UPDATE_COMMAND}[/cyan]")
+        return 0
+
+    cmd = updater.app_self_update_command(identity)
+    command_text = " ".join(cmd or [])
+    if check_only:
+        if status.has_update is True:
+            console.print(f"Run [cyan]amplifier-tui update[/cyan] to install ({command_text})")
+        elif status.has_update is None:
+            console.print(
+                f"Run [cyan]amplifier-tui update --force[/cyan] to repair ({command_text})"
+            )
+        return 0
+
+    if status.has_update is False and not force:
+        console.print("Already current. Use --force to reinstall/repair anyway.", style="dim")
+        return 0
+
+    if verbose and command_text:
+        console.print(f"installer: {command_text}", style="dim")
+
+    if not yes and not click.confirm(
+        "Run the source installer to update amplifier-tui?", default=True
+    ):
+        console.print("Update cancelled", style="dim")
+        return 0
+
+    ok, message = updater.run_app_self_update(identity)
+    console.print(message if ok else f"update failed: {message}", style="green" if ok else "red")
+    return 0 if ok else 1
+
+
+@main.command()
+@click.option("--check-only", is_flag=True, help="Report app update availability; change nothing.")
+@click.option("--yes", "-y", is_flag=True, help="Update without the confirmation prompt.")
+@click.option(
+    "--force", is_flag=True, help="Run the source installer even if no update is detected."
+)
+@click.option(
+    "--verbose", "-v", is_flag=True, help="Print the installer command before running it."
+)
 def update(check_only: bool, yes: bool, force: bool, verbose: bool) -> None:
-    """Update the bundles/modules this app mounts (not the app or platform)."""
-    raise SystemExit(asyncio.run(_update(check_only, yes, force, verbose)))
+    """Update the amplifier-tui app itself."""
+    raise SystemExit(_app_update(check_only, yes, force, verbose))
 
 
 # --------------------------------------------------------------------------
@@ -4148,7 +4217,9 @@ def routing_list() -> None:
     console = Console()
     if not entries:
         console.print("no routing matrices found")
-        console.print("Run `amplifier-tui update` to fetch the routing-matrix bundle.", style="dim")
+        console.print(
+            "Run `amplifier-tui bundle refresh` to fetch the routing-matrix bundle.", style="dim"
+        )
         return
     table = Table(title="Routing Matrices", title_justify="center", header_style="bold cyan")
     table.add_column("", width=1, no_wrap=True)  # active marker
@@ -4306,7 +4377,9 @@ def routing_show(matrix_name: str | None, detailed: bool) -> None:
     console = Console()
     if not matrices:
         console.print("no routing matrices found")
-        console.print("Run `amplifier-tui update` to fetch the routing-matrix bundle.", style="dim")
+        console.print(
+            "Run `amplifier-tui bundle refresh` to fetch the routing-matrix bundle.", style="dim"
+        )
         return
     settings = load_merged_settings(paths)
     if matrix_name is None:
@@ -4615,7 +4688,8 @@ def _routing_console(scope: Literal["global", "project", "local"]) -> Any:
         if not matrices:
             console.print("no routing matrices found", style="yellow")
             console.print(
-                "Run `amplifier-tui update` to fetch the routing-matrix bundle.", style="dim"
+                "Run `amplifier-tui bundle refresh` to fetch the routing-matrix bundle.",
+                style="dim",
             )
             return scope
 

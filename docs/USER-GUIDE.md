@@ -25,7 +25,9 @@ uv run amplifier-tui bundle list  # bundles from the shared registry (--all for 
 uv run amplifier-tui bundle use B # set the active bundle (--global/--project/--local)
 uv run amplifier-tui routing manage   # inspect and choose a routing matrix
 uv run amplifier-tui routing use NAME # choose one directly (anthropic, runpod, ...)
-uv run amplifier-tui update       # update the mounted bundles/modules (--check-only/--force)
+uv run amplifier-tui update       # update the app itself (--check-only/--force)
+uv run amplifier-tui reset        # safe repair: clear cache/registry + repair app
+uv run amplifier-tui bundle refresh # advanced: refresh mounted bundles/modules
 ```
 
 `bundle` also has `show · current · clear · add · remove · update`; run

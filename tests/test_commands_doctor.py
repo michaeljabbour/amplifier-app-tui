@@ -714,7 +714,7 @@ def test_check_mounts_names_the_failed_modules() -> None:
     assert not result.ok
     assert "provider(s) unavailable: vllm" in result.message
     assert "tool module(s) failed to mount: tool-team-pulse" in result.message
-    assert "amplifier-tui update --force" in result.message
+    assert "amplifier-tui bundle refresh --force" in result.message
 
 
 def test_run_checks_surfaces_a_degraded_mount_as_a_finding() -> None:

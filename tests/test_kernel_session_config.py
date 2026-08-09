@@ -34,6 +34,7 @@ from amplifier_app_tui.kernel.config import (
     map_provider_ids_to_instance_ids,
     overlay_uris,
     packaged_bundles_dir,
+    provider_priority,
     resolve_config,
 )
 from amplifier_app_tui.kernel.compaction import (
@@ -1183,8 +1184,6 @@ def test_added_bundle_no_match_still_falls_back_to_default(tmp_path: Path) -> No
 
 
 def test_provider_priority_defaults_and_reads_config() -> None:
-    from amplifier_app_tui.kernel.config import provider_priority
-
     assert provider_priority({"module": "provider-anthropic"}) == 100
     assert provider_priority({"config": {}}) == 100
     assert provider_priority({"config": {"priority": 1}}) == 1

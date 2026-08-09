@@ -29,15 +29,16 @@ includes:
 
 providers:
   # anchors is provider-agnostic by design; this app hard-fails boot at zero
-  # providers, so the wrapper keeps a default. Reconfigure or add providers
-  # via settings `config.providers`.
+  # providers, so the wrapper keeps a fallback/default. Keep its priority low
+  # enough not to beat user-configured providers such as vLLM/Kimi at priority 1.
+  # Reconfigure or add providers via settings `config.providers`.
   # Pinned 2026-08-02 (compliance B9): no release tag exists upstream, so this
   # is the repo's current @main HEAD SHA. Re-resolve via `git ls-remote` / `gh`
   # and bump here + tui.md together.
   - module: provider-anthropic
     source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@94a435482a879a1c506b2ea9076a951875e89c9d
     config:
-      priority: 1
+      priority: 100
 
 tools:
   # MCP servers: tool-mcp reads ~/.amplifier/mcp.json (+ ./.amplifier/mcp.json)

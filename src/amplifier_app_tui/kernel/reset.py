@@ -301,7 +301,7 @@ def _remove(path: Path) -> None:
 
 
 DEFAULT_INSTALL_SOURCE = APP_INSTALL_URI
-"""Default source for ``reset --reinstall`` — the tui git repo. Override with
+"""Default source for reset repair/reinstall — the tui git repo. Override with
 ``--install-source .`` from a clone, or a fork URL."""
 
 
@@ -321,6 +321,19 @@ def reinstall_tool(source: str = DEFAULT_INSTALL_SOURCE) -> tuple[bool, str]:
     reinstalling the currently-running tool is safe. Never raises — a failure
     returns a message telling the user the exact command to run by hand."""
     import subprocess
+
+    if source == DEFAULT_INSTALL_SOURCE:
+        try:
+            from . import updater
+
+            if updater.app_identity().source == "editable":
+                return (
+                    True,
+                    "dev checkout detected; skipped global reinstall. "
+                    f"To repair/update this checkout: {updater.DEV_UPDATE_COMMAND}",
+                )
+        except Exception:  # noqa: BLE001 - repair must still fall back to the installer
+            pass
 
     cmd = reinstall_command(source)
     try:

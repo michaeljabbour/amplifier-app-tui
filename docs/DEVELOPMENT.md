@@ -190,7 +190,7 @@ is a **full 40-hex commit SHA**. The old `@main` exception is retired:
   every repository in that graph plus the outer bundle's SHA-256. `kernel/source_lock.py`
   applies it at Foundation's include and module resolver seams and to source strings nested
   in module config (notably skill sources). Explicit user `sources` overrides win.
-- **How updates flow.** `amplifier-tui update` refreshes user-selected floating bundles, but
+- **How updates flow.** `amplifier-tui bundle refresh` refreshes user-selected floating bundles, but
   it does not silently advance the packaged Anchors graph. A new app release deliberately
   reviews and bumps the lock, synchronizes all three outer copies, and runs the cold-cache
   gate.

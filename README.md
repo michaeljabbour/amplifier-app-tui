@@ -73,6 +73,14 @@ amplifier-tui --demo     # launch with the scripted DemoRuntime (no credentials 
 
 Sessions are stored per project directory — `cd` into your project and launch. (Inside a clone without a tool install, prefix commands with `uv run`.)
 
+The public support story is intentionally three commands:
+
+```sh
+amplifier-tui          # launch / first-run provider setup
+amplifier-tui update   # update this app
+amplifier-tui reset    # safe repair (preserves keys, config, sessions, local bundles)
+```
+
 Options and subcommands:
 
 ```sh
@@ -92,7 +100,8 @@ amplifier-tui bundle list            # bundles from the shared registry (--all i
 amplifier-tui bundle use NAME        # set the active bundle (--global/--project/--local)
 amplifier-tui routing manage         # inspect and choose a routing matrix interactively
 amplifier-tui routing use NAME       # choose a matrix directly (e.g. anthropic or runpod)
-amplifier-tui update --check-only    # check the mounted bundles/modules for updates
+amplifier-tui update                 # update the app itself
+amplifier-tui reset                  # safe repair (cache/registry + app repair)
 ```
 
 A *bundle* is a packaged agent configuration — provider + tools + agents + behaviors. The app ships one (`tui`), so you never need `--bundle` to get started. The `bundle` group (`list · show · use · clear · current · add · remove · update`) reads and writes the same registry and settings the reference `amplifier` CLI uses.
@@ -164,17 +173,15 @@ boundary instead of pretending it hot-swapped it.
 ### Updating / uninstalling
 
 ```sh
-bash -o pipefail -c "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash"  # update this app from source
-amplifier-tui update                         # update the mounted bundles/modules (SHA-compare + re-fetch)
+amplifier-tui update                         # update this app from source
 uv tool upgrade amplifier                    # update the Amplifier platform (if installed)
 uv tool uninstall amplifier-app-tui          # remove this app
 uv tool uninstall amplifier                  # remove the Amplifier platform
 git pull && uv sync                          # update a development clone instead
 ```
 
-The app does not update itself in the background; re-running the source installer resolves
-and installs the then-current commit. `amplifier-tui update --check-only` reports available
-bundle/module updates without changing anything; `--force` runs `uv cache clean` first so
+The app does not update itself in the background; `amplifier-tui update` runs the same source-installer contract and installs the then-current commit. `amplifier-tui bundle refresh --check-only` reports available
+bundle/module cache updates without changing anything; `--force` runs `uv cache clean` first so
 `@main` sources genuinely re-fetch.
 Every `update` run also prints the app's VERIFIED installed version (read from the installed
 package's own metadata, not a hardcoded string) and, if it changed since your last run —

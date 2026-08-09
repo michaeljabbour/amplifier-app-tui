@@ -26,6 +26,9 @@ def _populate(home: Path) -> Path:
     sessions = home / "projects" / "slug" / "sessions" / "sess-1"
     sessions.mkdir(parents=True)
     (sessions / "transcript.jsonl").write_text("{}\n", encoding="utf-8")
+    bundles = home / "bundles"
+    bundles.mkdir()
+    (bundles / "local.md").write_text("bundle\n", encoding="utf-8")
     return home
 
 
@@ -57,11 +60,21 @@ def test_reset_unknown_category_errors_nonzero(tmp_path: Path) -> None:
 def test_reset_dry_run_removes_nothing(tmp_path: Path) -> None:
     home = _populate(tmp_path / ".amplifier")
     result = CliRunner().invoke(
-        main, ["reset", "--home", str(home), "-c", "cache,registry,sessions", "--dry-run"]
+        main,
+        [
+            "reset",
+            "--home",
+            str(home),
+            "-c",
+            "cache,registry,sessions",
+            "--dry-run",
+            "--no-reinstall",
+        ],
     )
     assert result.exit_code == 0
     assert "DRY RUN" in result.output
     assert "would remove:" in result.output
+    assert "would reinstall" not in result.output
     # Every file still present.
     assert (home / "cache").exists()
     assert (home / "registry.json").exists()
@@ -70,7 +83,11 @@ def test_reset_dry_run_removes_nothing(tmp_path: Path) -> None:
 
 def test_reset_requires_confirmation_and_cancels(tmp_path: Path) -> None:
     home = _populate(tmp_path / ".amplifier")
-    result = CliRunner().invoke(main, ["reset", "--home", str(home), "-c", "sessions"], input="n\n")
+    result = CliRunner().invoke(
+        main,
+        ["reset", "--home", str(home), "-c", "sessions", "--no-reinstall"],
+        input="n\n",
+    )
     assert result.exit_code == 0
     assert "cancelled" in result.output
     # Declining leaves sessions intact.
@@ -79,7 +96,11 @@ def test_reset_requires_confirmation_and_cancels(tmp_path: Path) -> None:
 
 def test_reset_confirmation_yes_executes(tmp_path: Path) -> None:
     home = _populate(tmp_path / ".amplifier")
-    result = CliRunner().invoke(main, ["reset", "--home", str(home), "-c", "sessions"], input="y\n")
+    result = CliRunner().invoke(
+        main,
+        ["reset", "--home", str(home), "-c", "sessions", "--no-reinstall"],
+        input="y\n",
+    )
     assert result.exit_code == 0
     assert not (home / "projects").exists()
     # Preserved summary mentions kept files.
@@ -88,7 +109,9 @@ def test_reset_confirmation_yes_executes(tmp_path: Path) -> None:
 
 def test_reset_yes_flag_clears_only_named_category(tmp_path: Path) -> None:
     home = _populate(tmp_path / ".amplifier")
-    result = CliRunner().invoke(main, ["reset", "--home", str(home), "-c", "cache", "--yes"])
+    result = CliRunner().invoke(
+        main, ["reset", "--home", str(home), "-c", "cache", "--yes", "--no-reinstall"]
+    )
     assert result.exit_code == 0
     # Only cache gone; secrets, sessions, registry preserved.
     assert not (home / "cache").exists()
@@ -97,20 +120,32 @@ def test_reset_yes_flag_clears_only_named_category(tmp_path: Path) -> None:
     assert (home / "registry.json").exists()
 
 
-def test_reset_default_preserves_secrets_and_sessions(tmp_path: Path) -> None:
+def test_reset_default_repairs_and_preserves_user_data(tmp_path: Path, monkeypatch) -> None:
     home = _populate(tmp_path / ".amplifier")
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "amplifier_app_tui.kernel.reset.reinstall_tool",
+        lambda source: calls.append(source) or (True, "reinstalled tui"),
+    )
     result = CliRunner().invoke(main, ["reset", "--home", str(home), "--yes"])
     assert result.exit_code == 0
-    # Default = cache + registry only.
+    assert calls, "default reset should repair/reinstall the tui tool"
+    # Default clear = cache + registry only; user data stays.
     assert not (home / "cache").exists()
     assert not (home / "registry.json").exists()
+    assert (home / "settings.yaml").exists()
     assert (home / "keys.env").exists()
     assert (home / "projects").exists()
+    assert (home / "bundles" / "local.md").exists()
+    assert "reinstalling tui" in result.output
+    assert "reinstalled tui" in result.output
 
 
 def test_reset_keys_only_cleared_when_named_with_warning(tmp_path: Path) -> None:
     home = _populate(tmp_path / ".amplifier")
-    result = CliRunner().invoke(main, ["reset", "--home", str(home), "-c", "keys", "--yes"])
+    result = CliRunner().invoke(
+        main, ["reset", "--home", str(home), "-c", "keys", "--yes", "--no-reinstall"]
+    )
     assert result.exit_code == 0
     assert "WARNING" in result.output and "secrets" in result.output
     assert not (home / "keys.env").exists()
@@ -129,33 +164,48 @@ def test_reset_reports_when_nothing_to_remove(tmp_path: Path) -> None:
     home = tmp_path / ".amplifier"
     home.mkdir()
     (home / "settings.yaml").write_text("x: 1\n", encoding="utf-8")  # marker, but not cache
-    result = CliRunner().invoke(main, ["reset", "--home", str(home), "-c", "cache", "--yes"])
+    result = CliRunner().invoke(
+        main, ["reset", "--home", str(home), "-c", "cache", "--yes", "--no-reinstall"]
+    )
     assert result.exit_code == 0
     assert "nothing to remove" in result.output
 
 
-# -- --reinstall (repair flow; the installer call is mocked, never run) -------
+# -- repair/reinstall flow (the installer call is mocked, never run) ----------
 
 
 def test_reset_reinstall_dry_run_previews_and_changes_nothing(tmp_path: Path) -> None:
     home = _populate(tmp_path / ".amplifier")
-    result = CliRunner().invoke(main, ["reset", "--home", str(home), "--reinstall", "--dry-run"])
+    result = CliRunner().invoke(main, ["reset", "--home", str(home), "--dry-run"])
     assert result.exit_code == 0
     assert "would reinstall" in result.output
     assert "scripts/install.sh" in result.output
     assert (home / "cache" / "bundle-abc").exists()  # nothing removed in dry-run
 
 
-def test_reset_reinstall_yes_invokes_reinstall(tmp_path: Path, monkeypatch) -> None:
+def test_reset_no_reinstall_yes_skips_repair(tmp_path: Path, monkeypatch) -> None:
+    home = _populate(tmp_path / ".amplifier")
+
+    def fail_reinstall(source: str) -> tuple[bool, str]:
+        raise AssertionError(f"reinstall_tool must not run in cleanup-only mode: {source}")
+
+    monkeypatch.setattr("amplifier_app_tui.kernel.reset.reinstall_tool", fail_reinstall)
+    result = CliRunner().invoke(
+        main, ["reset", "--home", str(home), "-c", "cache", "--no-reinstall", "-y"]
+    )
+    assert result.exit_code == 0
+    assert "reinstalling tui" not in result.output
+    assert not (home / "cache").exists()
+
+
+def test_reset_default_yes_invokes_reinstall(tmp_path: Path, monkeypatch) -> None:
     home = _populate(tmp_path / ".amplifier")
     calls: list[str] = []
     monkeypatch.setattr(
         "amplifier_app_tui.kernel.reset.reinstall_tool",
         lambda source: calls.append(source) or (True, "reinstalled tui"),
     )
-    result = CliRunner().invoke(
-        main, ["reset", "--home", str(home), "-c", "cache", "--reinstall", "-y"]
-    )
+    result = CliRunner().invoke(main, ["reset", "--home", str(home), "-c", "cache", "-y"])
     assert result.exit_code == 0
     assert calls, "reinstall_tool should have been invoked"
     assert "reinstalling tui" in result.output

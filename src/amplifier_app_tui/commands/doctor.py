@@ -34,11 +34,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..install_contract import (
-    APP_INSTALL_URI,
-    SOURCE_INSTALL_COMMAND,
-    SOURCE_INSTALL_LAUNCH_COMMAND,
-)
+from ..install_contract import APP_INSTALL_URI, SOURCE_INSTALL_COMMAND
 from ..model.blocks import DoctorBlock, DoctorFinding
 from ..model.formatting import format_tokens_compact
 from .improve import ApprovalTally
@@ -236,7 +232,7 @@ def check_path(
         looked = ", ".join(str(d) for d in dirs)
         message = (
             f"{executable} not on PATH and not found in the usual install dir(s) ({looked}) · "
-            f"install and open setup: `{SOURCE_INSTALL_LAUNCH_COMMAND}` · if the command was "
+            f"install: `{SOURCE_INSTALL_COMMAND}` then run `amplifier-tui` · if the command was "
             "already installed, run `uv tool update-shell` and restart your terminal"
         )
     else:
@@ -644,7 +640,7 @@ def check_mounts(report: MountHealth | None) -> CheckResult:
         ok=False,
         message=(
             f"{' · '.join(parts)} · refresh mounted bundles/modules with "
-            "`amplifier-tui update --force`; if the app itself is broken, rerun "
+            "`amplifier-tui bundle refresh --force`; if the app itself is broken, rerun "
             f"`{SOURCE_INSTALL_COMMAND}`"
         ),
     )
