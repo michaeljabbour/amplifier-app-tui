@@ -73,8 +73,9 @@ def test_reset_dry_run_removes_nothing(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert "DRY RUN" in result.output
-    assert "would remove:" in result.output
-    assert "would reinstall" not in result.output
+    assert "Would remove" in result.output
+    assert "Would reinstall" not in result.output
+    assert "Remove --dry-run to apply this exact plan" in result.output
     # Every file still present.
     assert (home / "cache").exists()
     assert (home / "registry.json").exists()
@@ -168,7 +169,7 @@ def test_reset_reports_when_nothing_to_remove(tmp_path: Path) -> None:
         main, ["reset", "--home", str(home), "-c", "cache", "--yes", "--no-reinstall"]
     )
     assert result.exit_code == 0
-    assert "nothing to remove" in result.output
+    assert "Nothing to remove" in result.output
 
 
 # -- repair/reinstall flow (the installer call is mocked, never run) ----------
@@ -178,7 +179,7 @@ def test_reset_reinstall_dry_run_previews_and_changes_nothing(tmp_path: Path) ->
     home = _populate(tmp_path / ".amplifier")
     result = CliRunner().invoke(main, ["reset", "--home", str(home), "--dry-run"])
     assert result.exit_code == 0
-    assert "would reinstall" in result.output
+    assert "Would reinstall" in result.output
     assert "scripts/install.sh" in result.output
     assert (home / "cache" / "bundle-abc").exists()  # nothing removed in dry-run
 

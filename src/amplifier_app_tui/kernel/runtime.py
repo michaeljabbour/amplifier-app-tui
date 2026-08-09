@@ -67,6 +67,7 @@ from .clipboard import (
     ImageAttachment,
     image_attachments_from_message,
 )
+from .checkpoints import WorkspaceCheckpointUnavailableError
 from .compaction import CompactionConfig, CompactionRuntimeBinding, compaction_config
 from .cost import CostTracker, restore_session_cost, start_live_pricing
 from .display import DisplaySystem
@@ -85,6 +86,7 @@ from .events import (
     parse_event,
 )
 from .evidence import EvidenceCollector
+from .completion_integrity import CompletionIntegrityTracker
 from .directory_permissions import (
     DirectoryEntry,
     DirectoryKind,
@@ -579,6 +581,7 @@ class RealRuntime:
             # bridge fills AgentCompleted.result from it (lane recap +
             # delegate-summary snippets).
             agent_result_lookup=self._spawn_result,
+            agent_status_lookup=self._spawn_status,
         )
         self.turn_yield = TurnYieldTracker()
         """Per-turn ``tests ✔`` evidence from tool results (bridge tap)."""
@@ -705,6 +708,9 @@ class RealRuntime:
 
     async def start(self) -> None:
         """Resolve config, create the session, register every hook."""
+        from .logging_hygiene import install_runtime_log_filters
+
+        install_runtime_log_filters()
         # Resume loads the stored session BEFORE config resolution: the
         # bundle a session was created under (metadata["bundle"]) is part
         # of its identity, and the boot must resolve THAT bundle through
@@ -946,6 +952,11 @@ class RealRuntime:
             )
         self._sync_directory_tools()
         hooks = initialized.coordinator.hooks
+        # Upstream can force a progress summary after hitting its iteration
+        # cap, then label the non-empty prose a success. This higher-priority
+        # hook preserves the mechanical stop signal before UI normalization.
+        completion_integrity = CompletionIntegrityTracker()
+        initialized.unregister_handles.append(completion_integrity.register_hooks(hooks))
         # B7: off-machine delivery consumes the same durable record/ack
         # events as every other destination.  The app-owned adapter uses
         # ntfy sequence IDs for destination dedupe + exact clear and never
@@ -961,10 +972,7 @@ class RealRuntime:
         # ROOT hook bus (it is deliberately not inherited by SessionSpawner),
         # matching the documented limitation that subagent/bash edits are not
         # code-restorable.
-        from .checkpoints import (
-            WorkspaceCheckpointStore,
-            WorkspaceCheckpointUnavailableError,
-        )
+        from .checkpoints import WorkspaceCheckpointStore
 
         try:
             checkpoint_store = WorkspaceCheckpointStore(
@@ -1223,6 +1231,10 @@ class RealRuntime:
         """Child final-output summary for AgentCompleted.result synthesis."""
         return self._spawner.result_for(sub_session_id) if self._spawner is not None else ""
 
+    def _spawn_status(self, sub_session_id: str) -> str:
+        """Child status for truthful AgentCompleted normalization."""
+        return self._spawner.status_for(sub_session_id) if self._spawner is not None else ""
+
     def agent_brief(self, agent_name: str) -> str:
         """Latest delegate brief for *agent_name* — the real lane seed.
 
@@ -1456,12 +1468,13 @@ class RealRuntime:
         starting_diff = GitDiffSnapshot(False)
         workspace_checkpoint_id = ""
         turn_started = False
+        turn_mode = self._mode()
         try:
             # Cut the durable file checkpoint BEFORE the UI echo and before
             # session.execute can emit a write-tool pre hook. Its opaque id is
             # carried by PromptSubmit into the model ledger; display tN ids can
             # be reused after rewind, filesystem ids never are.
-            if self._checkpoint_store is not None:
+            if self._checkpoint_store is not None and turn_mode not in {"plan", "brainstorm"}:
                 candidate_checkpoint_id = uuid.uuid4().hex
                 try:
                     await asyncio.to_thread(
@@ -1469,12 +1482,16 @@ class RealRuntime:
                         candidate_checkpoint_id,
                         text,
                     )
-                except Exception as exc:  # noqa: BLE001 — reject unsafe untracked turn
-                    from .checkpoints import WorkspaceCheckpointUnavailableError
-
+                except WorkspaceCheckpointUnavailableError as exc:
                     logger.warning("workspace checkpoint begin failed", exc_info=True)
                     raise WorkspaceCheckpointUnavailableError(
-                        "workspace checkpoint could not be created; message was not sent"
+                        f"{exc}; your message was not sent. Retry when the other turn "
+                        "finishes, or launch from another project/worktree"
+                    ) from exc
+                except Exception as exc:  # noqa: BLE001 — reject unsafe untracked turn
+                    logger.warning("workspace checkpoint begin failed", exc_info=True)
+                    raise WorkspaceCheckpointUnavailableError(
+                        "workspace checkpoint could not be created; your message was not sent"
                     ) from exc
                 workspace_checkpoint_id = candidate_checkpoint_id
             # Turn-open first: the user's echo + working line paint NOW, not
@@ -1487,7 +1504,7 @@ class RealRuntime:
                 PromptSubmit(
                     session_id=self._initialized.session_id,
                     prompt=text,
-                    mode=self._mode(),
+                    mode=turn_mode,
                     workspace_checkpoint_id=workspace_checkpoint_id,
                 )
             )

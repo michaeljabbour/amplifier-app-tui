@@ -439,6 +439,26 @@ async def test_list_provider_models_reports_errors_instead_of_raising(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_list_provider_models_scrubs_config_secrets_from_errors(monkeypatch) -> None:
+    secret = "sk-provider-error-must-not-leak"
+
+    class P:
+        def __init__(self, **kw):
+            pass
+
+        async def list_models(self):
+            raise ConnectionError(f"authentication failed for {secret}")
+
+    _fake_provider_module(monkeypatch, P)
+    monkeypatch.setenv("TEST_PROVIDER_API_KEY", secret)
+    catalog = await _REAL_LIST_PROVIDER_MODELS(
+        "provider-vllm", {"api_key": "${TEST_PROVIDER_API_KEY}"}
+    )
+    assert secret not in (catalog.error or "")
+    assert "***" in (catalog.error or "")
+
+
+@pytest.mark.asyncio
 async def test_list_provider_models_times_out(monkeypatch) -> None:
     class P:
         def __init__(self, **kw):

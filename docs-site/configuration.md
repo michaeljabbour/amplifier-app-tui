@@ -4,7 +4,24 @@ title: Configuration
 permalink: /configuration/
 ---
 
-Amplifier TUI keeps all of its configuration on your machine — there is no hosted account or cloud settings store. This page maps every file the app reads or writes, explains exactly how it picks a provider when more than one is configured, and lists the environment variables that matter.
+{{ site.data.product.display_name }} keeps all of its configuration on your machine — there is no hosted account or cloud settings store. This page maps every file the app reads or writes, explains exactly how it picks a provider when more than one is configured, and lists the environment variables that matter.
+
+For a guided control center, run:
+
+```sh
+{{ site.data.product.command }} config
+```
+
+The menu starts with a redacted dashboard, keeps the current write scope visible, and gives
+one numbered path each for providers, models and routing, bundles, directory access,
+notifications, settings paths, and maintenance previews. `{{ site.data.product.command }} config show --json`
+is the scriptable read-only snapshot; `{{ site.data.product.command }} config paths --json` lists settings
+locations without reading or printing secret values.
+
+<figure class="terminal-shot">
+  <img src="{{ '/assets/screenshots/config-control-center.png' | relative_url }}" alt="Forge terminal session showing the Amplifier configuration control center, its redacted status summary, numbered setup areas, and global write target">
+  <figcaption>The real configuration control center, captured during Forge terminal QA.</figcaption>
+</figure>
 
 ## Where configuration lives
 
@@ -34,7 +51,7 @@ Most commands that write configuration — `provider add`, `bundle use`, `routin
 
 `allowed-dirs list` / `denied-dirs list` accept the same three flags too, but as a **filter** on what to display rather than where to write.
 
-None of the files above are touched by an ordinary `amplifier-tui reset` unless you name them explicitly: session history, all three settings files, `mcp.json`, `routing`, locally-added bundles, and `keys.env` are all preserved by default. Only `cache` and the bundle discovery `registry.json` clear automatically. See [Update and reset]({{ '/update-reset/' | relative_url }}) for the full command.
+None of the files above are touched by an ordinary `{{ site.data.product.command }} reset` unless you name them explicitly: session history, all three settings files, `mcp.json`, `routing`, locally-added bundles, and `keys.env` are all preserved by default. Only `cache` and the bundle discovery `registry.json` clear automatically. See [Update and reset]({{ '/update-reset/' | relative_url }}) for the full command.
 
 ## Providers
 
@@ -42,7 +59,11 @@ A provider is what actually talks to a model API — Anthropic, a self-hosted vL
 
 ### Set one up
 
-`amplifier-tui init` opens a small setup console when you run it with no flags: `[p]` manage providers, `[r]` manage routing, `[w]` change the write scope, `[d]` done. The very first time you run the app with zero providers configured, this same console opens automatically before anything else. Passing any flag skips the console entirely and runs a non-interactive path instead:
+`{{ site.data.product.command }} init` opens the same numbered control center as `config`, starting
+with providers so first setup stays focused. The first time you launch with zero providers, the app
+opens a focused provider wizard before the full-screen interface. Passing any `init` flag skips the
+control center and uses the direct setup path; outside a terminal, add `--yes` or use `--from-env`
+so the command can never hang waiting for input:
 
 | Flag | Help text |
 |---|---|
@@ -63,20 +84,20 @@ The rest of provider management is one command each:
 |---|---|---|
 | `provider list` | Lists configured providers. `★` marks the primary (lowest-priority) provider. | Read-only |
 | `provider use NAME` | Sets `NAME` to priority `1`, demoting any other priority-`1` entry to `10`, across every scope holding it. | Every settings scope holding a matching entry |
-| `provider remove NAME` | Removes the entry entirely. | Every settings scope holding a matching entry |
+| `provider remove NAME` | Previews the provider and defaults to **No** before removing its settings entries. Stored credentials are kept. Add `--yes` for automation. | Every settings scope holding a matching entry |
 | `provider dashboard` | Shows configured providers, the current primary, and a hint for switching. | Read-only |
 
 A typical first pass looks like this:
 
 ```sh
-amplifier-tui provider add anthropic
-amplifier-tui provider list
-amplifier-tui provider use anthropic
+{{ site.data.product.command }} provider add anthropic
+{{ site.data.product.command }} provider list
+{{ site.data.product.command }} provider use anthropic
 ```
 
 Whichever command adds a provider, the split is always the same: the API key (or other secret fields) goes into `keys.env` at the app home — written with a file lock and `chmod 600` — while the provider entry itself (module, priority, default model, and so on) goes into `config.providers` in the settings file for the write scope you chose.
 
-If a provider looks configured but the app still won't launch with it, run `amplifier-tui doctor` — it reports the exact problem (no provider configured at all, a provider that mounted but doesn't behave like one, or one that's missing its own declared credential variables) instead of a generic failure. See [Troubleshooting]({{ '/troubleshooting/' | relative_url }}).
+If a provider looks configured but the app still won't launch with it, run `{{ site.data.product.command }} doctor` — it reports the exact problem (no provider configured at all, a provider that mounted but doesn't behave like one, or one that's missing its own declared credential variables) instead of a generic failure. See [Troubleshooting]({{ '/troubleshooting/' | relative_url }}).
 
 ## Provider priority and the bundled fallback
 
@@ -84,9 +105,9 @@ If a provider looks configured but the app still won't launch with it, run `ampl
 Provider selection is <strong>lower-priority-wins</strong>. The bundled Anthropic fallback ships at priority <code>100</code>; any provider you add starts at priority <code>1</code> and beats it automatically.
 </div>
 
-Provider selection is **lower-priority-wins**: at boot, Amplifier TUI sorts every configured provider by its `config.priority` value, ascending, and boots the first one. A provider entry with no `priority` set is treated as priority `100`.
+Provider selection is **lower-priority-wins**: at boot, {{ site.data.product.display_name }} sorts every configured provider by its `config.priority` value, ascending, and boots the first one. A provider entry with no `priority` set is treated as priority `100`.
 
-Every install ships with one provider already configured: a bundled Anthropic fallback, `provider-anthropic`, deliberately parked at fallback priority `100` — low enough that the app is never stuck with zero providers, but high enough that it never outranks anything you add yourself. `amplifier-tui init` and `provider add` both write a freshly added provider at priority `1` by default, and `provider use NAME` sets any existing provider to priority `1` too, demoting whatever previously held that slot to `10`. Because `1` is lower than the fallback's `100`, your own provider wins the boot automatically — you never have to touch, edit, or remove the bundled Anthropic entry to make that happen.
+Every install ships with one provider already configured: a bundled Anthropic fallback, `provider-anthropic`, deliberately parked at fallback priority `100` — low enough that the app is never stuck with zero providers, but high enough that it never outranks anything you add yourself. `{{ site.data.product.command }} init` and `provider add` both write a freshly added provider at priority `1` by default, and `provider use NAME` sets any existing provider to priority `1` too, demoting whatever previously held that slot to `10`. Because `1` is lower than the fallback's `100`, your own provider wins the boot automatically — you never have to touch, edit, or remove the bundled Anthropic entry to make that happen.
 
 ```yaml
 config:
@@ -113,13 +134,13 @@ If two entries ever share the same priority, the tie resolves by **list order** 
 
 ## Bundles
 
-A bundle is the mount plan for a session: which providers, tools, and other modules get composed together when Amplifier TUI starts. `--bundle` (available on the top-level launch, `run`, `serve`, `tool list`, `resume`, and `continue`) points at one for a single invocation; `bundle use` changes the default (scope options apply, the same as providers and routing).
+A bundle is the mount plan for a session: which providers, tools, and other modules get composed together when {{ site.data.product.display_name }} starts. `--bundle` (available on the top-level launch, `run`, `serve`, `tool list`, `resume`, and `continue`) points at one for a single invocation; `bundle use` changes the default (scope options apply, the same as providers and routing).
 
 `bundle list` / `current` / `use` / `clear` / `show` cover discovery and activation; `bundle add URI` registers a new bundle after validating that it loads (`--name`/`-n` for the registry name, `--app` to also compose it onto every session, `--warm` to pre-install its modules immediately). `bundle remove` drops a registered bundle and `bundle update` checks it for a newer version; `bundle warm NAME` pre-installs an already-registered bundle's modules outside the normal boot burst. Full flag-by-flag wording is in [Reference]({{ '/reference/' | relative_url }}).
 
 Bundle names are resolved against the three directories from the table at the top of this page, in order: the project's bundle directory first, then the global one, then the bundles packaged with the install itself. A name registered in a higher-precedence directory wins.
 
-`amplifier-tui bundle refresh` is a separate, advanced command. It refreshes the **source caches** for every mounted bundle and module — what got downloaded, not your configuration — plus advisory update rows for the app itself. It is not the app-update command; that's `amplifier-tui update` (see [Update and reset]({{ '/update-reset/' | relative_url }})).
+`{{ site.data.product.command }} bundle refresh` is a separate, advanced command. It refreshes the **source caches** for every mounted bundle and module — what got downloaded, not your configuration — plus advisory update rows for the app itself. It is not the app-update command; that's `{{ site.data.product.command }} update` (see [Update and reset]({{ '/update-reset/' | relative_url }})).
 
 ## Settings file
 
@@ -140,9 +161,10 @@ config:
 | `config.providers[].module` | Which provider module this entry configures, e.g. `provider-anthropic`. |
 | `config.providers[].config.priority` | Selection priority for this entry. Lower wins; absent means `100`. |
 | `config.providers[].config.default_model` | The default model for this provider entry. |
-| `sources.modules` | Per-module source overrides. `amplifier-tui source show MODULE_ID` prints the full resolution chain for one module: environment variable, then workspace, then this key, then the effective result. |
+| `sources.modules` | Per-module source overrides. `{{ site.data.product.command }} source show MODULE_ID` prints the full resolution chain for one module: environment variable, then workspace, then this key, then the effective result. |
 
-For the complete schema — every key, every provider's own fields, and validation rules — see [SETTINGS.md](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/SETTINGS.md) in the repository.
+For the complete schema — every key, every provider field, merge rule, environment variable,
+and validation quirk — see the [settings reference]({{ '/configuration/settings/' | relative_url }}).
 
 ## Directory permissions
 
@@ -158,7 +180,7 @@ Inside a running session, `/allowed-dirs` and `/denied-dirs` list or edit the sa
 
 ## Environment variables
 
-Amplifier TUI reads very few environment variables directly; almost everything else lives in a file under the app home.
+{{ site.data.product.display_name }} reads very few environment variables directly; almost everything else lives in a file under the app home.
 
 | Variable | Effect |
 |---|---|
@@ -167,10 +189,13 @@ Amplifier TUI reads very few environment variables directly; almost everything e
 
 Each provider declares its own required credential variable(s) — there's no single `<PROVIDER>_API_KEY` naming convention across all of them. And if a provider is already configured and the *wrong* one keeps winning, the fix is its priority (above), not another environment variable.
 
-## What NOT to expect
+## Choose the right configuration surface
 
-- There is no `setup` subcommand. First-run configuration happens automatically: the first time you run bare `amplifier-tui`, it walks an interactive terminal through provider setup before anything else (the *first-run gate*). You can reopen the same console any time with `amplifier-tui init`.
-- There is also no top-level `config` command. Configuration always goes through `init`, `provider`, `bundle`, `routing`, `source`, `allowed-dirs`/`denied-dirs`, `notify`, a direct settings-file edit, or the in-session `/config` slash command — never a single top-level verb.
+- There is no `setup` subcommand. First-run configuration happens automatically: the first time you run bare `{{ site.data.product.command }}`, it walks an interactive terminal through provider setup before anything else (the *first-run gate*). You can reopen the same console any time with `{{ site.data.product.command }} init`.
+- Use top-level `{{ site.data.product.command }} config` for durable setup across providers, routing, bundles,
+  directories, notifications, and maintenance. Use `{{ site.data.product.command }} init` when you only need
+  provider-and-routing onboarding. Use the in-session `/config` command for the currently
+  mounted live session; it is intentionally a different, temporary surface.
 
 ## See also
 

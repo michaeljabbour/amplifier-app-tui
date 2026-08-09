@@ -47,6 +47,7 @@ from ..commands.builtin import build_registry
 from ..commands.context import ContextUsage
 from ..commands.improve import ApprovalJournal
 from ..commands.permissions import PermissionSurface
+from ..product import EXECUTABLE_NAME
 from ..model.blocks import (
     Answer,
     BlockIdAllocator,
@@ -1219,7 +1220,8 @@ class TuiApp(App[ResumeSessionRequest]):
                 ok, detail = await self.adapter.branch_session(name)
             if ok:
                 self.show_notice(
-                    f"branch created · {detail[:12]} · resume: amplifier-tui resume {detail[:8]}"
+                    f"branch created · {detail[:12]} · resume: "
+                    f"{EXECUTABLE_NAME} resume {detail[:8]}"
                 )
             else:
                 self.show_notice(detail)
@@ -1245,7 +1247,7 @@ class TuiApp(App[ResumeSessionRequest]):
             if ok:
                 self.show_notice(
                     f"fork primed · {detail[:12]} · resume runs the directive: "
-                    f"amplifier-tui resume {detail[:8]}"
+                    f"{EXECUTABLE_NAME} resume {detail[:8]}"
                 )
             else:
                 self.show_notice(detail)

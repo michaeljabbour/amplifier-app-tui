@@ -1,0 +1,52 @@
+groups:
+  - label: Start here
+    items:
+      - title: Start here
+        route: /
+        description: Install, launch, and understand the product in a few minutes.
+      - title: Work in the TUI
+        route: /using-the-tui/
+        description: Prompt, steer, approve, rewind, resume, and manage agent work.
+  - label: Getting work done
+    items:
+      - title: Configure
+        route: /configuration/
+        description: Providers, models, routing, bundles, permissions, and settings.
+      - title: Maintain
+        route: /update-reset/
+        description: Update the app, refresh sources, and repair safely.
+      - title: Reference
+        route: /reference/
+        description: Commands, flags, shortcuts, files, and machine-readable output.
+  - label: Understand
+    items:
+      - title: Understand the system
+        route: /engineering/
+        description: Architecture, design decisions, protocols, SDKs, and adoption.
+  - label: Contribute
+    items:
+      - title: Contribute
+        route: /development/
+        description: Set up a checkout, run the gates, and improve the project.
+
+search:
+  - title: Install
+    route: /setup/
+    description: Requirements, verified installation, provider setup, and uninstall.
+  - title: Quickstart
+    route: /quickstart/
+    description: Complete a first session and learn the essential controls.
+  - title: Troubleshoot
+    route: /troubleshooting/
+    description: Symptom-first fixes for setup, credentials, and runtime problems.
+
+library:
+  - title: Architecture
+    route: /development/architecture/
+    icon: cube
+  - title: Design contract
+    route: /development/design-contract/
+    icon: document-text
+  - title: Development guide
+    route: /development/guide/
+    icon: code-bracket

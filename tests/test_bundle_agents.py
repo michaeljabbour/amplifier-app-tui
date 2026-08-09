@@ -82,7 +82,7 @@ def test_wrapper_overlays_only_redaction_hook() -> None:
     assert set(allowlist) == {"sub_session_id", "parent_session_id"}
 
 
-def test_wrapper_overlays_only_tui_specific_tools() -> None:
+def test_wrapper_overlays_only_tui_specific_tools_and_delegate_contract() -> None:
     tools = _frontmatter().get("tools") or []
     modules = {t.get("module") for t in tools if isinstance(t, dict)}
     # tool-task is gone (was inert; superseded by anchors' tool-delegate);
@@ -90,7 +90,9 @@ def test_wrapper_overlays_only_tui_specific_tools() -> None:
     # is re-mounted deliberately: anchors pins it to the foundation skill
     # set, which replaces the ~/.amplifier/skills default scan — the
     # wrapper restores the user dir (later bundles override earlier ones).
-    assert modules == {"tool-mcp", "tool-team-pulse", "tool-skills"}
+    assert modules == {"tool-delegate", "tool-mcp", "tool-team-pulse", "tool-skills"}
+    delegate = next(t for t in tools if t.get("module") == "tool-delegate")
+    assert delegate["config"]["features"]["session_resume"]["enabled"] is False
 
 
 def test_wrapper_tool_skills_keeps_foundation_set_and_adds_user_dir() -> None:

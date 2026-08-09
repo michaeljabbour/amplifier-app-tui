@@ -134,6 +134,7 @@ class WorkspaceCheckpointStore:
         self._pending: dict[str, dict[str, Any]] = {}
         self._recovery_required: set[str] = set()
         self._recovering_journals = False
+        self._initial_recovery_deferred = False
 
         for directory in (
             self._root,
@@ -143,15 +144,27 @@ class WorkspaceCheckpointStore:
             self._restores,
         ):
             _ensure_private_dir(directory)
-        with self._exclusive_storage("initialize"):
+        try:
+            with self._exclusive_storage("initialize"):
+                if not self._index_path.exists():
+                    self._write_index({"schema": _SCHEMA_VERSION, "order": [], "used": []})
+                try:
+                    self._reconcile_staged_visible_locked()
+                except (OSError, RuntimeError, ValueError) as error:
+                    raise WorkspaceCheckpointUnavailableError(
+                        f"workspace branch recovery failed: {error}"
+                    ) from error
+        except WorkspaceCheckpointUnavailableError as error:
+            # Another session may legitimately be mid-turn in this same
+            # workspace. Initialization is session-private; defer only the
+            # workspace recovery pass until this session's first admitted
+            # write-capable turn instead of aborting TUI startup.
+            if not isinstance(error.__cause__, Timeout):
+                raise
             if not self._index_path.exists():
                 self._write_index({"schema": _SCHEMA_VERSION, "order": [], "used": []})
-            try:
-                self._reconcile_staged_visible_locked()
-            except (OSError, RuntimeError, ValueError) as error:
-                raise WorkspaceCheckpointUnavailableError(
-                    f"workspace branch recovery failed: {error}"
-                ) from error
+            self._initial_recovery_deferred = True
+            logger.info("workspace recovery deferred until the shared lease is available")
 
     def begin(self, checkpoint_id: str, prompt: str) -> None:
         """Open an immutable pre-prompt checkpoint before the turn runs."""
@@ -161,6 +174,14 @@ class WorkspaceCheckpointStore:
                 raise RuntimeError(f"checkpoint still active: {self._active_checkpoint}")
             try:
                 self._acquire_storage("begin checkpoint")
+                if self._initial_recovery_deferred:
+                    try:
+                        self._reconcile_staged_visible_locked()
+                    except (OSError, RuntimeError, ValueError) as error:
+                        raise WorkspaceCheckpointUnavailableError(
+                            f"workspace branch recovery failed: {error}"
+                        ) from error
+                    self._initial_recovery_deferred = False
                 if self._recovery_required:
                     pending = ", ".join(sorted(self._recovery_required))
                     raise WorkspaceCheckpointUnavailableError(

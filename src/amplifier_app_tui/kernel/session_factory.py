@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..product import DISPLAY_NAME, EXECUTABLE_NAME
 from .config import ResolvedConfig, get_project_slug
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-APPLICATION_HOST = "Amplifier TUI"
+APPLICATION_HOST = DISPLAY_NAME
 
 SPAWN_CAPABILITY = "session.spawn"
 RESUME_CAPABILITY = "session.resume"
@@ -475,7 +476,7 @@ async def create_initialized_session(request: SessionRequest) -> InitializedSess
         )
         raise ProviderMountError(
             detail + "The session cannot run without a provider — check credentials "
-            "and module install state (run `amplifier-tui doctor`)."
+            f"and module install state (run `{EXECUTABLE_NAME} doctor`)."
         )
     if report.missing_providers or report.tools_degraded:
         logger.warning("%s", report.degraded_notice())

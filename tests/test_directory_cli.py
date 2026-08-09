@@ -38,3 +38,20 @@ def test_denied_dirs_uses_same_settings_shape(tmp_path: Path, monkeypatch) -> No
     result = CliRunner().invoke(main, ["denied-dirs", "add", str(target), "--local"])
     assert result.exit_code == 0
     assert configured_entries(paths, "denied")[0].scope == "local"
+
+
+def test_directory_groups_default_to_the_useful_list_view(tmp_path: Path, monkeypatch) -> None:
+    paths = bundle_admin.settings_paths(tmp_path / "project", tmp_path / "home")
+    monkeypatch.setattr(bundle_admin, "settings_paths", lambda *args, **kwargs: paths)
+    (tmp_path / "project").mkdir(exist_ok=True)
+    monkeypatch.chdir(tmp_path / "project")
+
+    allowed = CliRunner().invoke(main, ["allowed-dirs"])
+    denied = CliRunner().invoke(main, ["denied-dirs"])
+
+    assert allowed.exit_code == 0
+    assert "Allowed write directories" in allowed.output
+    assert "project-default" in allowed.output
+    assert denied.exit_code == 0
+    assert "Denied write directories" in denied.output
+    assert "none configured" in denied.output

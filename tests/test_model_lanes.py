@@ -20,8 +20,8 @@ from amplifier_app_tui.model.lanes import (
 # -- state/glyph table (D5 AC1) -----------------------------------------------
 
 
-def test_terminal_states_are_exactly_done_error_cancelled() -> None:
-    assert TERMINAL_LANE_STATES == frozenset({"done", "error", "cancelled"})
+def test_terminal_states_include_truthful_incomplete_outcome() -> None:
+    assert TERMINAL_LANE_STATES == frozenset({"done", "incomplete", "error", "cancelled"})
 
 
 @pytest.mark.parametrize(
@@ -32,6 +32,7 @@ def test_terminal_states_are_exactly_done_error_cancelled() -> None:
         ("working", "\u25a0", "fg"),
         ("attention", "!", "orange"),
         ("done", "\u2714", "dim"),
+        ("incomplete", "!", "orange"),
         ("error", "\u2716", "red"),
         ("cancelled", "\u2298", "red"),
     ],
@@ -41,14 +42,16 @@ def test_state_glyph_and_color_table(state: str, glyph: str, token: str) -> None
     assert (lane.glyph, lane.color_token) == (glyph, token)
 
 
-def test_error_and_cancelled_glyphs_match_delegate_summary_glyphs() -> None:
+def test_terminal_attention_and_failure_glyphs_match_delegate_summary_glyphs() -> None:
     """Cross-surface consistency (D5 AC1): the lanes panel and the post-turn
     delegate-summary block must use the SAME glyph for the SAME outcome."""
     from amplifier_app_tui.ui.transcript_render import _DELEGATE_GLYPHS
 
     error_lane = LaneState.for_state(name="a", state="error")
+    incomplete_lane = LaneState.for_state(name="a", state="incomplete")
     cancelled_lane = LaneState.for_state(name="a", state="cancelled")
     assert error_lane.glyph == _DELEGATE_GLYPHS["error"][0]
+    assert incomplete_lane.glyph == _DELEGATE_GLYPHS["incomplete"][0]
     assert cancelled_lane.glyph == _DELEGATE_GLYPHS["cancelled"][0]
 
 
@@ -94,10 +97,20 @@ def test_complete_with_cancelled_state() -> None:
     assert record.lane.activity == "cancelled"
 
 
+def test_complete_with_incomplete_state_requests_continuation() -> None:
+    reg = LaneRegistry()
+    reg.register("a", parent_id=None, name="coder", now=1.0)
+    reg.complete("a", result="iteration cap reached", state="incomplete")
+    record = reg.get("a")
+    assert record is not None
+    assert record.lane.state == "incomplete"
+    assert record.lane.activity == "incomplete · iteration cap reached"
+
+
 # -- terminal-state treatment: active/advance/tail/reopen --------------------
 
 
-@pytest.mark.parametrize("state", ["done", "error", "cancelled"])
+@pytest.mark.parametrize("state", ["done", "incomplete", "error", "cancelled"])
 def test_terminal_lanes_are_never_active(state: str) -> None:
     reg = LaneRegistry()
     reg.register("a", parent_id=None, name="coder", now=1.0)
@@ -116,7 +129,7 @@ def test_attention_lane_still_counts_as_active() -> None:
     assert reg.get("a").lane.state == "attention"
 
 
-@pytest.mark.parametrize("state", ["done", "error", "cancelled"])
+@pytest.mark.parametrize("state", ["done", "incomplete", "error", "cancelled"])
 def test_advance_freezes_every_terminal_state(state: str) -> None:
     reg = LaneRegistry()
     reg.register("a", parent_id=None, name="coder", now=100.0)
@@ -125,7 +138,7 @@ def test_advance_freezes_every_terminal_state(state: str) -> None:
     assert reg.get("a").lane.elapsed == 0.0  # frozen, not just "done" specifically
 
 
-@pytest.mark.parametrize("from_state", ["done", "error", "cancelled"])
+@pytest.mark.parametrize("from_state", ["done", "incomplete", "error", "cancelled"])
 def test_reopen_resets_from_any_terminal_state_not_just_done(from_state: str) -> None:
     """A replayed demo turn reusing a sub-session id must reset live
     regardless of WHICH terminal outcome the prior run ended in \u2014 an
@@ -139,7 +152,7 @@ def test_reopen_resets_from_any_terminal_state_not_just_done(from_state: str) ->
     assert reg.get("a").lane.state == "running"
 
 
-@pytest.mark.parametrize("state", ["done", "error", "cancelled"])
+@pytest.mark.parametrize("state", ["done", "incomplete", "error", "cancelled"])
 def test_tail_lane_skips_every_terminal_state(state: str) -> None:
     reg = LaneRegistry()
     reg.register("a", parent_id=None, name="coder", now=1.0)

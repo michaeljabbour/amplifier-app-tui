@@ -704,12 +704,14 @@ COMMIT_PLACEHOLDER = "<tested_commit>"
 ROLLBACK_HEADING = "## Rollback path"
 ADR_PATH = Path("docs") / "decisions" / "ADR-0008-console-script-name.md"
 INSTALL_CONTRACT_PATH = Path("src") / "amplifier_app_tui" / "install_contract.py"
+PRODUCT_IDENTITY_PATH = Path("src") / "amplifier_app_tui" / "product.py"
 
 _CLI_RESTORE_RE = re.compile(r"^uv tool install (git\+\S+?)\s*$", re.MULTILINE)
 _PINNED_RESTORE_RE = re.compile(
     r'^bash -o pipefail -c "curl .*? -fsSL (\S+) \| bash -s -- --ref (\S+)"\s*$',
     re.MULTILINE,
 )
+_REPOSITORY_SLUG_RE = re.compile(r'^REPOSITORY_SLUG\s*=\s*"([^"]+)"', re.MULTILINE)
 _APP_REPO_URL_RE = re.compile(r'^APP_REPO_URL\s*=\s*"([^"]+)"', re.MULTILINE)
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
@@ -754,13 +756,22 @@ def _check_pinned_restore(readme: str, repo: Path) -> Check:
             FAIL, label, "no fail-closed source installer with `--ref <commit>` documented"
         )
     url, pin = matches[0]
-    canonical = _APP_REPO_URL_RE.findall(_read(repo / INSTALL_CONTRACT_PATH))
-    if not canonical:
-        return Check(FAIL, label, f"cannot read APP_REPO_URL from {INSTALL_CONTRACT_PATH}")
-    expected_url = (
-        canonical[0].replace("https://github.com/", "https://raw.githubusercontent.com/")
-        + "/main/scripts/install.sh"
-    )
+    repository = _REPOSITORY_SLUG_RE.findall(_read(repo / PRODUCT_IDENTITY_PATH))
+    legacy_url = _APP_REPO_URL_RE.findall(_read(repo / INSTALL_CONTRACT_PATH))
+    if repository:
+        expected_url = f"https://raw.githubusercontent.com/{repository[0]}/main/scripts/install.sh"
+    elif legacy_url:
+        expected_url = (
+            legacy_url[0].replace("https://github.com/", "https://raw.githubusercontent.com/")
+            + "/main/scripts/install.sh"
+        )
+    else:
+        return Check(
+            FAIL,
+            label,
+            f"cannot read repository identity from {PRODUCT_IDENTITY_PATH} "
+            f"or {INSTALL_CONTRACT_PATH}",
+        )
     if url != expected_url:
         return Check(FAIL, label, f"documented {url} is not this app's installer {expected_url}")
     if pin != COMMIT_PLACEHOLDER:

@@ -647,8 +647,41 @@ def test_render_text_matches_mockup_row_shapes() -> None:
     lines = text.splitlines()
     assert lines[0] == "amplifier-tui doctor"
     assert "Doctor  1 finding · nothing changed yet" in lines
-    assert "  ✔ install healthy · PATH clean · settings parse" in lines
-    assert "  1 2 MCP servers unused in 30 days · cost 4.1k tok/session" in lines
+    assert "Passed  3 checks" in lines
+    assert "  ✔ Install            install healthy" in lines
+    assert "  ✔ Command path       PATH clean" in lines
+    assert "Needs attention" in lines
+    assert "  1. MCP servers" in lines
+    assert "     2 MCP servers unused in 30 days" in lines
+    assert "     → cost 4.1k tok/session" in lines
+    assert lines[-2] == "No settings or user data changed."
+    assert (
+        lines[-1]
+        == "Some checks may contact your configured provider and prepare or inspect source caches."
+    )
+
+
+def test_render_text_wraps_terminal_rows_without_splitting_words() -> None:
+    report = DoctorReport(
+        checks=(
+            _ok(
+                "anchors",
+                "anchors pinned to dea5bd8f · no auto-updates (bump via update tooling)",
+            ),
+            _finding(
+                "launch-preflight",
+                "launch blocked: provider cannot import dependency · "
+                "run `amplifier-tui bundle refresh --force`",
+            ),
+        )
+    )
+
+    lines = render_text(report, width=72).splitlines()
+
+    assert all(len(line) <= 72 for line in lines)
+    assert "tooling" in " ".join(lines)
+    assert "dependencies" not in " ".join(lines)
+    assert "dependency" in " ".join(lines)
 
 
 def test_run_standalone_exit_codes(tmp_path: Path) -> None:
@@ -661,7 +694,7 @@ def test_run_standalone_exit_codes(tmp_path: Path) -> None:
         echo=printed.append,
     )
     assert code == 1
-    assert "amplifier-tui doctor" in printed[0]
+    assert "python3 doctor" in printed[0]
     assert "✔" in printed[0]
 
     printed.clear()

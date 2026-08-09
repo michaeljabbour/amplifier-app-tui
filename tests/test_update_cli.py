@@ -7,8 +7,11 @@ them; the pure helpers are tested directly.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import pathlib
 from pathlib import Path
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 
@@ -43,6 +46,29 @@ def test_top_level_update_git_install_runs_source_installer(monkeypatch) -> None
     assert calls == [identity]
     assert "update available" in result.output
     assert "updated" in result.output
+
+
+def test_top_level_update_confirmation_defaults_to_no(monkeypatch) -> None:
+    identity = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
+    calls: list[updater.AppIdentity | None] = []
+    monkeypatch.setattr(updater, "app_identity", lambda *a, **k: identity)
+    monkeypatch.setattr(
+        updater,
+        "check_app_update",
+        lambda ident=None: updater.AppUpdateStatus(identity, "bbbbbbb", True),
+    )
+    monkeypatch.setattr(
+        updater,
+        "run_app_self_update",
+        lambda ident=None: calls.append(ident) or (True, "updated"),
+    )
+
+    result = CliRunner().invoke(main, ["update"], input="\n")
+
+    assert result.exit_code == 0
+    assert calls == []
+    assert "update amplifier-tui? [y/N]" in result.output
+    assert "Update cancelled · nothing changed" in result.output
 
 
 def test_top_level_update_editable_prints_dev_guidance_without_install(monkeypatch) -> None:
@@ -261,7 +287,7 @@ def test_update_silent_about_upgrade_when_identity_unchanged(monkeypatch) -> Non
     assert "upgraded" not in result.output
 
 
-def test_update_records_identity_even_in_check_only_mode(monkeypatch) -> None:
+def test_update_check_only_does_not_record_identity(monkeypatch) -> None:
     recorded: list = []
     _stub(
         monkeypatch,
@@ -270,11 +296,7 @@ def test_update_records_identity_even_in_check_only_mode(monkeypatch) -> None:
     )
     result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
-    # Even --check-only records the current identity: the NEXT invocation
-    # (of `update` or, after a manual reinstall, whenever the user next
-    # checks) is what diffs against this baseline.
-    assert len(recorded) == 1
-    assert recorded[0] == _DEFAULT_STUB_IDENTITY
+    assert recorded == []
 
 
 # -- uncheckable_sources: deduplicated, plainly labeled (pure) ---------------
@@ -418,6 +440,24 @@ def test_shape_package_status_degrades_when_remote_missing() -> None:
     assert row.note == "could not check"
 
 
+def test_source_status_without_cached_revision_is_not_a_false_update() -> None:
+    row = updater._shape_source_status(
+        SimpleNamespace(
+            source_uri="git+https://github.com/example/amplifier-module-demo@main",
+            cached_commit=None,
+            remote_commit="b" * 40,
+            has_update=True,
+            summary="",
+            error=None,
+        )
+    )
+
+    assert row.cached is None
+    assert row.remote == "bbbbbbb"
+    assert row.has_update is None
+    assert row.reason == "cached revision unavailable"
+
+
 def test_shape_package_status_versions_compare_by_equality() -> None:
     assert updater.shape_package_status("core", "1.6.0", "1.6.0").has_update is False
     assert updater.shape_package_status("core", "1.6.0", "1.7.0").has_update is True
@@ -481,6 +521,7 @@ def _stub(
         return True
 
     monkeypatch.setattr(updater, "check_bundles", _check)
+    monkeypatch.setattr(updater, "check_cached_sources", _check)
     monkeypatch.setattr(updater, "update_bundles", _apply)
     monkeypatch.setattr(updater, "anchors_status", _anchors)
     monkeypatch.setattr(updater, "refresh_anchors", _refresh)
@@ -548,6 +589,95 @@ def test_update_force_cleans_cache_and_updates_all(monkeypatch) -> None:
     assert result.exit_code == 0
     assert cleaned == [True]  # uv cache cleaned
     assert applied == ["tui"]  # --force updates all, not just stale
+
+
+def test_update_force_check_only_has_no_side_effects(monkeypatch) -> None:
+    cleaned: list = []
+    applied: list = []
+    recorded: list = []
+    _stub(
+        monkeypatch,
+        [updater.BundleUpdate("tui", "tui", "up to date", False)],
+        cleaned=cleaned,
+        applied=applied,
+        recorded=recorded,
+    )
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--force", "--check-only"])
+    assert result.exit_code == 0
+    assert cleaned == []
+    assert applied == []
+    assert recorded == []
+    assert "Check complete · nothing changed" in result.output
+
+
+def test_check_only_on_fresh_home_creates_no_cache_or_identity(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "amplifier-home"
+    monkeypatch.setenv("AMPLIFIER_HOME", str(home))
+    monkeypatch.setattr(
+        updater,
+        "app_identity",
+        lambda *a, **k: updater.AppIdentity("0.1.0", None, "editable"),
+    )
+
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
+
+    assert result.exit_code == 0, result.output
+    assert not home.exists()
+    assert "No cached bundle/module sources to compare yet" in result.output
+    assert "Check complete · nothing changed" in result.output
+
+
+def test_check_cached_sources_reads_metadata_without_writing(tmp_path: Path, monkeypatch) -> None:
+    cache = tmp_path / "cache" / "amplifier-module-demo-0123456789abcdef"
+    cache.mkdir(parents=True)
+    metadata = cache / ".amplifier_cache_meta.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "git_url": "https://github.com/example/amplifier-module-demo",
+                "ref": "main",
+                "commit": "a" * 40,
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = metadata.read_bytes()
+    monkeypatch.setattr(updater, "_ls_remote_sha", lambda *a, **k: "b" * 40)
+
+    statuses = asyncio.run(updater.check_cached_sources(tmp_path))
+
+    assert metadata.read_bytes() == before
+    assert len(statuses) == 1
+    assert statuses[0].has_updates is True
+    assert statuses[0].sources == (
+        updater.SourceRow("amplifier-module-demo", "aaaaaaa", "bbbbbbb", True, None),
+    )
+
+
+def test_updater_home_honors_amplifier_home(tmp_path: Path, monkeypatch) -> None:
+    configured = tmp_path / "configured-home"
+    monkeypatch.setenv("AMPLIFIER_HOME", str(configured))
+
+    assert updater._amplifier_home(None) == configured
+
+
+def test_update_force_cancel_has_no_side_effects(monkeypatch) -> None:
+    cleaned: list = []
+    applied: list = []
+    recorded: list = []
+    _stub(
+        monkeypatch,
+        [updater.BundleUpdate("tui", "tui", "up to date", False)],
+        cleaned=cleaned,
+        applied=applied,
+        recorded=recorded,
+    )
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--force"], input="\n")
+    assert result.exit_code == 0
+    assert cleaned == []
+    assert applied == []
+    assert recorded == []
+    assert "Update cancelled · nothing changed" in result.output
 
 
 # -- header + sub-steps -------------------------------------------------------
@@ -716,6 +846,20 @@ def test_unique_sources_collapses_and_splits() -> None:
     assert "tool-apply-patch" not in names  # local/non-git excluded
 
 
+def test_missing_remote_revision_is_not_reported_current() -> None:
+    incomplete = updater.SourceRow(
+        "amplifier-module-tool-mcp",
+        cached=None,
+        remote=None,
+        has_update=False,
+    )
+    status = updater.BundleUpdate("tui", "tui", "", False, sources=(incomplete,))
+    assert updater.unique_sources([status]) == []
+    assert updater.uncheckable_sources([status]) == [
+        ("amplifier-module-tool-mcp", "no remote revision reported")
+    ]
+
+
 # -- uncheckable sources: one summary line; listing only under --verbose -------
 
 
@@ -743,7 +887,7 @@ def test_update_uncheckable_collapses_to_one_summary_line(monkeypatch) -> None:
     result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     # ONE dim summary line, pointing at --verbose — no wall of paths.
-    assert "2 local/non-git sources skipped (no remote to compare)" in result.output
+    assert "2 sources not compared" in result.output
     assert "--verbose" in result.output
     assert "tool-apply-patch" not in result.output
     assert "not supported for this source type" not in result.output
@@ -796,20 +940,21 @@ def test_update_summary_counts_unique_stale_sources_not_bundle_flags(monkeypatch
     result = CliRunner().invoke(main, ["bundle", "refresh"], input="n\n")
     assert result.exit_code == 0
     assert "Update 1 module/bundle source(s)" in result.output
-    assert "Proceed with update? [Y/n]" in result.output
+    assert "Proceed with update? [y/N]" in result.output
     assert "Update cancelled" in result.output
 
 
-def test_update_prompt_defaults_to_yes(monkeypatch) -> None:
+def test_update_prompt_defaults_to_no(monkeypatch) -> None:
     applied: list = []
     _stub(
         monkeypatch,
         [updater.BundleUpdate("tui", "tui", "1 update available", True)],
         applied=applied,
     )
-    result = CliRunner().invoke(main, ["bundle", "refresh"], input="\n")  # bare Enter → Y
+    result = CliRunner().invoke(main, ["bundle", "refresh"], input="\n")  # bare Enter → N
     assert result.exit_code == 0
-    assert applied == ["tui"]
+    assert applied == []
+    assert "Update cancelled" in result.output
 
 
 # -- apply phase: per-item lines + completion ----------------------------------

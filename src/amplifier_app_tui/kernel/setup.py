@@ -863,10 +863,11 @@ async def list_provider_models(
     provider is closed afterwards. Any failure comes back as an empty catalog
     with a one-line ``error`` for the caller to print.
     """
+    config = collected or {}
     cls = _load_provider_class(module_id)
     if cls is None:
         return ModelCatalog(error="provider module is not importable")
-    inst = _instantiate_provider(cls, collected)
+    inst = _instantiate_provider(cls, config)
     if inst is None:
         return ModelCatalog(error="provider could not be constructed from the given settings")
     lister = getattr(inst, "list_models", None)
@@ -891,7 +892,10 @@ async def list_provider_models(
     except asyncio.TimeoutError:
         return ModelCatalog(error=f"timed out after {timeout:g}s")
     except Exception as exc:  # noqa: BLE001 — unreachable host, bad key, anything
-        return ModelCatalog(error=f"{type(exc).__name__}: {exc}")
+        from .preflight_verify import scrub_provider_error
+
+        error = scrub_provider_error(f"{type(exc).__name__}: {exc}", config)
+        return ModelCatalog(error=error)
     finally:
         await _close_provider(inst)
     models: list[ProviderModel] = []
@@ -1516,6 +1520,17 @@ def _match_configured(
     return None
 
 
+def find_configured_provider(
+    name: str,
+    *,
+    project_dir: Path | None = None,
+    amplifier_home: Path | None = None,
+) -> ConfiguredProvider | None:
+    """Resolve a configured provider by instance id, module id, or display name."""
+
+    return _match_configured(configured_providers(project_dir, amplifier_home), name)
+
+
 def use_provider(
     paths: Any,
     name: str,
@@ -1615,6 +1630,7 @@ __all__ = [
     "PROVIDER_FALLBACK_FIELDS",
     "configured_providers",
     "fallback_provider_fields",
+    "find_configured_provider",
     "friendly_provider_name",
     "install_provider_module",
     "replace_provider_config",

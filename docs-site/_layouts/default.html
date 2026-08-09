@@ -3,55 +3,146 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% if page.title %}{{ page.title }} | {% endif %}{{ site.title }}</title>
+    <meta name="theme-color" content="#101a2a">
+    <title>{% if page.title %}{{ page.title }} | {% endif %}{{ site.data.product.display_name }} Docs</title>
     <meta name="description" content="{{ page.description | default: site.description | escape }}">
+    <link rel="icon" href="{{ '/assets/icons/command-line.svg' | relative_url }}" type="image/svg+xml">
     <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+    <script src="{{ '/assets/site.js' | relative_url }}" defer></script>
   </head>
-  <body>
+  <body data-page-url="{{ page.url }}" data-baseurl="{{ site.baseurl }}">
     <a class="skip-link" href="#content">Skip to content</a>
-    <header class="site-header">
-      <div class="site-title"><a href="{{ '/' | relative_url }}">{{ site.title }}</a></div>
-      <p class="site-tagline">Small, practical docs for installing, running, and maintaining the terminal UI.</p>
+
+    <header class="status-bar" aria-label="Product status">
+      <div class="status-identity">
+        <span class="icon icon-command-line" aria-hidden="true"></span>
+        <span class="status-brand">{{ site.data.product.brand_name | downcase }}</span>
+        <span class="status-context">— ready — anchors — docs</span>
+      </div>
+      <div class="status-detail" aria-hidden="true">
+        source-synced&nbsp; · &nbsp;local-first&nbsp; · &nbsp;keyboard-first
+        <span class="status-ready"></span>
+      </div>
+      <button class="mobile-nav-toggle" type="button" aria-controls="site-sidebar" aria-expanded="false">
+        <span class="icon icon-bars-3" aria-hidden="true"></span>
+        <span class="sr-only">Open documentation navigation</span>
+      </button>
     </header>
-    <div class="site-shell">
+
+    <aside class="site-sidebar" id="site-sidebar">
+      <a class="brand-lockup" href="{{ '/' | relative_url }}" aria-label="{{ site.data.product.display_name }} documentation home">
+        <span class="icon icon-code-bracket brand-mark" aria-hidden="true"></span>
+        <span>{{ site.data.product.brand_name }}</span>
+      </a>
+
+      <div class="docs-search">
+        <span class="icon icon-magnifying-glass search-icon" aria-hidden="true"></span>
+        <label class="sr-only" for="docs-search-input">Search documentation</label>
+        <input id="docs-search-input" type="search" placeholder="Search" autocomplete="off" aria-controls="docs-search-results" aria-expanded="false">
+        <kbd aria-hidden="true">⌘K</kbd>
+        <div class="search-results" id="docs-search-results" role="listbox" hidden></div>
+      </div>
+
+      <button class="ask-docs-launch" id="ask-docs-launch" type="button" aria-haspopup="dialog">
+        <span class="icon icon-sparkles" aria-hidden="true"></span>
+        <span>
+          <strong>Ask the docs</strong>
+          <small>Local answers, cited</small>
+        </span>
+        <span class="ask-docs-launch-arrow icon icon-arrow-right" aria-hidden="true"></span>
+      </button>
+
       <nav class="site-nav" aria-label="Documentation navigation">
-        <section class="nav-group">
-          <h2>Getting started</h2>
-          <a href="{{ '/' | relative_url }}">Overview</a>
-          <a href="{{ '/setup/' | relative_url }}">Setup</a>
-          <a href="{{ '/quickstart/' | relative_url }}">Quickstart</a>
-          <a href="{{ '/update-reset/' | relative_url }}">Update and reset</a>
-        </section>
-        <section class="nav-group">
-          <h2>Using the TUI</h2>
-          <a href="{{ '/using-the-tui/' | relative_url }}">Using the TUI</a>
-        </section>
-        <section class="nav-group">
-          <h2>Configuration</h2>
-          <a href="{{ '/configuration/' | relative_url }}">Configuration</a>
-        </section>
-        <section class="nav-group">
-          <h2>Reference</h2>
-          <a href="{{ '/reference/' | relative_url }}">Reference</a>
-        </section>
-        <section class="nav-group">
-          <h2>Troubleshooting</h2>
-          <a href="{{ '/troubleshooting/' | relative_url }}">Troubleshooting</a>
-        </section>
-        <section class="nav-group">
-          <h2>Development</h2>
-          <a href="{{ '/development/' | relative_url }}">Development</a>
-        </section>
+        {% for group in site.data.navigation.groups %}
+          <section class="nav-group">
+            <h2>{{ group.label }}</h2>
+            {% for item in group.items %}
+              <a class="nav-link{% if page.url == item.route %} is-active{% endif %}" href="{{ item.route | relative_url }}"{% if page.url == item.route %} aria-current="page"{% endif %} data-search-entry data-search-title="{{ item.title | escape }}" data-search-description="{{ item.description | escape }}">
+                <span>{{ item.title }}</span>
+                {% if page.url == item.route %}<span class="nav-active-dot" aria-hidden="true"></span>{% endif %}
+              </a>
+            {% endfor %}
+          </section>
+        {% endfor %}
       </nav>
-      <main id="content" class="site-content" tabindex="-1">
-        <article>
-          <h1>{{ page.title }}</h1>
+
+      <div class="sidebar-library" aria-label="Engineering shortcuts">
+        {% for item in site.data.navigation.library %}
+          <a href="{{ item.route | relative_url }}"{% if page.url == item.route %} aria-current="page"{% endif %} data-search-entry data-search-title="{{ item.title | escape }}" data-search-description="Complete source-synchronized {{ item.title | downcase }}.">
+            <span class="icon icon-{{ item.icon }}" aria-hidden="true"></span>
+            <span>{{ item.title }}</span>
+            <span class="icon icon-arrow-top-right-on-square library-arrow" aria-hidden="true"></span>
+          </a>
+        {% endfor %}
+      </div>
+
+      <div class="sidebar-meta">
+        <a href="https://github.com/{{ site.data.product.repository }}">Source</a>
+        <span aria-hidden="true">·</span>
+        <a href="{{ '/llms.txt' | relative_url }}">llms.txt</a>
+      </div>
+
+      <div class="search-source" hidden>
+        {% for item in site.data.navigation.search %}
+          <a href="{{ item.route | relative_url }}" data-search-entry data-search-title="{{ item.title | escape }}" data-search-description="{{ item.description | escape }}">{{ item.title }}</a>
+        {% endfor %}
+        {% assign source_docs = site.data["source-docs"] %}
+        {% for document in source_docs.documents %}
+          <a href="{{ document.route | relative_url }}" data-search-entry data-search-title="{{ document.title | escape }}" data-search-description="{{ document.description | escape }}">{{ document.title }}</a>
+        {% endfor %}
+      </div>
+    </aside>
+    <button class="sidebar-backdrop" type="button" aria-label="Close documentation navigation" tabindex="-1"></button>
+
+    <dialog class="ask-docs-dialog" id="ask-docs-dialog" aria-labelledby="ask-docs-title">
+      <div class="ask-docs-shell">
+        <header class="ask-docs-header">
+          <div>
+            <p class="ask-docs-eyebrow"><span class="status-ready" aria-hidden="true"></span> local-first docs assistant</p>
+            <h2 id="ask-docs-title">Ask Amplifier</h2>
+          </div>
+          <button class="ask-docs-close" id="ask-docs-close" type="button" aria-label="Close Ask Amplifier">
+            <span class="icon icon-x-mark" aria-hidden="true"></span>
+          </button>
+        </header>
+        <div class="ask-docs-messages" id="ask-docs-messages" aria-live="polite" aria-busy="false">
+          <div class="ask-docs-message is-assistant">
+            <span class="ask-docs-answer-mode">Local docs answer</span>
+            <p>Ask about setup, providers, commands, maintenance, or how the TUI behaves. Answers stay grounded in this documentation and link back to their sources.</p>
+          </div>
+        </div>
+        <div class="ask-docs-suggestions" aria-label="Suggested questions">
+          <button type="button" data-ask-suggestion="How do I configure a provider?">Configure a provider</button>
+          <button type="button" data-ask-suggestion="How does safe reset work?">Safe reset</button>
+          <button type="button" data-ask-suggestion="Where are settings stored?">Settings paths</button>
+        </div>
+        <form class="ask-docs-form" id="ask-docs-form">
+          <label class="sr-only" for="ask-docs-input">Ask a question about Amplifier</label>
+          <textarea id="ask-docs-input" rows="2" placeholder="Ask a question about Amplifier…" required></textarea>
+          <button type="submit">Ask</button>
+        </form>
+        <footer class="ask-docs-privacy">
+          <span class="icon icon-check-circle" aria-hidden="true"></span>
+          <span>Search runs in this browser. If an on-device language model is already available, it may polish the answer; no API key is embedded in this site.</span>
+        </footer>
+      </div>
+    </dialog>
+
+    <main class="site-main" id="content" tabindex="-1">
+      <div class="content-grid">
+        <article class="site-content{% if page.url == '/' %} home-content{% endif %}">
+          {% unless page.hide_title %}<h1>{{ page.title }}</h1>{% endunless %}
           {{ content }}
         </article>
-      </main>
-    </div>
-    <footer class="site-footer">
-      <p>Amplifier App TUI documentation.</p>
-    </footer>
+        <aside class="page-toc" aria-label="On this page">
+          <h2>On this page</h2>
+          <nav id="page-toc-links"></nav>
+        </aside>
+      </div>
+      <footer class="site-footer">
+        <span>{{ site.data.product.display_name }} documentation</span>
+        <span>Built from the same source as the product.</span>
+      </footer>
+    </main>
   </body>
 </html>

@@ -1,3 +1,6 @@
+---
+layout: null
+---
 # Amplifier App TUI documentation
 
 This static documentation site covers setup, operation, configuration, troubleshooting, and contributor basics for Amplifier App TUI.
@@ -9,21 +12,34 @@ Read this file first: it lists every published page and the source documents beh
 - /amplifier-app-tui/ — landing page: what the app is, the one-line install, the three-command support story, and the map to every page below.
 - /amplifier-app-tui/setup/ — system requirements, the one-line source install, verifying the install, first run, provider setup, the review-first install, and uninstall.
 - /amplifier-app-tui/quickstart/ — first-session walkthrough: launch inside a project, read the screen, send a prompt, steer a running turn, open the command palette, interrupt, and find the session again.
-- /amplifier-app-tui/update-reset/ — `amplifier-tui update` for the app itself, `amplifier-tui reset` for safe repair, `amplifier-tui bundle refresh` for bundle and module source caches, and the flags for each.
+- /amplifier-app-tui/update-reset/ — `{{ site.data.product.command }} update` for the app itself, `{{ site.data.product.command }} reset` for safe repair, `{{ site.data.product.command }} bundle refresh` for bundle and module source caches, and the flags for each.
 - /amplifier-app-tui/using-the-tui/ — driving the app: the screen layout, sending and steering a turn, modes and trust, approvals, subagent lanes, rewind, the idle timeline scrubber, sessions, the command palette, keys, copying text, and demo mode.
 - /amplifier-app-tui/configuration/ — local configuration: where settings and keys live, provider setup and the priority rule that decides which provider wins, routing, bundles, the settings file schema, directory permissions, environment variables, and what NOT to expect.
 - /amplifier-app-tui/reference/ — full command reference: the three public support commands, the complete CLI command and flag surface, slash commands, keybindings, file locations, and the headless JSONL output contract.
 - /amplifier-app-tui/troubleshooting/ — symptom-first fixes: command not found, failed download, missing or broken `uv`, the Python floor, missing credentials, the wrong provider winning, stale app or bundle sources, and when to reset.
 - /amplifier-app-tui/development/ — contributor quick start: clone and `uv sync`, the offline test suite, the exact CI gate, the demo runtime, and how to edit this documentation site.
+- /amplifier-app-tui/engineering/ — map of the complete engineering, automation, SDK, design, architecture, and adoption references below.
 
-## Source repository references
+## Source-synchronized references
 
-These live in the repository as source markdown, not as pages on this site.
+These routes are built directly from their authoritative repository documents, so a reader
+gets the complete content without leaving the site or relying on a second maintained copy.
 
-- README: https://github.com/michaeljabbour/amplifier-app-tui/blob/main/README.md
-- Install guide: https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/INSTALL.md
-- User guide: https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/USER-GUIDE.md
-- Settings reference: https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/SETTINGS.md
-- Architecture: https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/ARCHITECTURE.md
-- Design spec: https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/DESIGN-SPEC.md
-- Development guide: https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/DEVELOPMENT.md
+- /amplifier-app-tui/setup/install-reference/ — complete install, update, verification, and uninstall reference.
+- /amplifier-app-tui/reference/user-guide/ — complete day-to-day user guide.
+- /amplifier-app-tui/configuration/settings/ — complete settings and environment reference.
+- /amplifier-app-tui/automation/session-control/ — authenticated session-control protocol.
+- /amplifier-app-tui/automation/python/ — Python SDK guide.
+- /amplifier-app-tui/automation/typescript/ — TypeScript SDK guide.
+- /amplifier-app-tui/development/agent-contract/ — agent contributor contract.
+- /amplifier-app-tui/development/guide/ — complete development guide.
+- /amplifier-app-tui/development/architecture/ — implemented architecture.
+- /amplifier-app-tui/development/design-contract/ — normative behavioral and visual contract.
+- /amplifier-app-tui/development/design-background/ — presentation and interaction background.
+- /amplifier-app-tui/development/research/ — architecture research brief.
+- /amplifier-app-tui/development/adoption/ — staged adoption policy.
+- /amplifier-app-tui/development/adoption/runbook/ — staged adoption runbook.
+- /amplifier-app-tui/development/decisions/0005-interaction-modes/ — interaction modes and trust postures decision.
+- /amplifier-app-tui/development/decisions/0006-full-screen-shell/ — full-screen shell decision.
+- /amplifier-app-tui/development/decisions/0007-architecture/ — ground-up architecture decision.
+- /amplifier-app-tui/development/decisions/0008-console-script-name/ — console script naming decision.

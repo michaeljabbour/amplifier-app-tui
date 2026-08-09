@@ -27,6 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from collections.abc import Iterable, Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
@@ -37,10 +38,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..install_contract import APP_INSTALL_URI, SOURCE_INSTALL_COMMAND
 from ..model.blocks import DoctorBlock, DoctorFinding
 from ..model.formatting import format_tokens_compact
+from ..product import DISPLAY_NAME, DISTRIBUTION_NAME, EXECUTABLE_NAME
 from .improve import ApprovalTally
 
-PACKAGE_NAME = "amplifier-app-tui"
-EXECUTABLE_NAME = "amplifier-tui"
+PACKAGE_NAME = DISTRIBUTION_NAME
 DEFAULT_SETTINGS_PATHS = (
     Path.home() / ".amplifier" / "settings.yaml",
     Path.home() / ".amplifier" / "settings.json",
@@ -66,6 +67,20 @@ UNUSED_MCP_THRESHOLD_DAYS = 30
 REPEATED_APPROVAL_THRESHOLD = 10
 """Identical read-only approvals this session/week before /doctor flags
 an allowlist candidate."""
+
+_CHECK_LABELS = {
+    "install": "Install",
+    "path": "Command path",
+    "platform": "Platform",
+    "python_uv": "Python and uv",
+    "permissions": "Permissions",
+    "settings": "Settings",
+    "mounts": "Runtime modules",
+    "mcp": "MCP servers",
+    "approvals": "Approvals",
+    "anchors": "Anchors pin",
+    "launch-preflight": "Launch preflight",
+}
 
 
 class CheckResult(BaseModel):
@@ -232,7 +247,8 @@ def check_path(
         looked = ", ".join(str(d) for d in dirs)
         message = (
             f"{executable} not on PATH and not found in the usual install dir(s) ({looked}) · "
-            f"install: `{SOURCE_INSTALL_COMMAND}` then run `amplifier-tui` · if the command was "
+            f"install: `{SOURCE_INSTALL_COMMAND}` then run `{EXECUTABLE_NAME}` · "
+            "if the command was "
             "already installed, run `uv tool update-shell` and restart your terminal"
         )
     else:
@@ -265,7 +281,7 @@ def check_platform(system: str, machine: str) -> CheckResult:
             name="platform",
             ok=False,
             message=(
-                f"{label} is not a supported platform · amplifier-tui is tested on macOS, "
+                f"{label} is not a supported platform · {EXECUTABLE_NAME} is tested on macOS, "
                 "Linux, and WSL · install WSL2 (`wsl --install` in an admin PowerShell), then "
                 "reinstall from inside the WSL shell"
             ),
@@ -407,7 +423,7 @@ def check_python_uv(facts: PythonUvFacts) -> CheckResult:
 
     if facts.uv_version is None:
         parts.append(
-            f"uv not found · rerun the Amplifier TUI source installer (it installs uv): "
+            f"uv not found · rerun the {DISPLAY_NAME} source installer (it installs uv): "
             f"`{SOURCE_INSTALL_COMMAND}`"
         )
     else:
@@ -640,7 +656,7 @@ def check_mounts(report: MountHealth | None) -> CheckResult:
         ok=False,
         message=(
             f"{' · '.join(parts)} · refresh mounted bundles/modules with "
-            "`amplifier-tui bundle refresh --force`; if the app itself is broken, rerun "
+            f"`{EXECUTABLE_NAME} bundle refresh --force`; if the app itself is broken, rerun "
             f"`{SOURCE_INSTALL_COMMAND}`"
         ),
     )
@@ -697,13 +713,77 @@ def build_doctor_block(block_id: str, report: DoctorReport) -> DoctorBlock:
 # --- standalone CLI surface ---------------------------------------------
 
 
-def render_text(report: DoctorReport) -> str:
-    """Plain-text report for the ``amplifier-tui doctor`` subcommand."""
-    lines = [f"{EXECUTABLE_NAME} doctor", "", f"Doctor  {report.headline()}"]
-    if report.healthy_summary:
-        lines.append(f"  ✔ {report.healthy_summary}")
-    for finding in report.findings:
-        lines.append(f"  {finding.number} {finding.text}")
+def _append_wrapped(
+    lines: list[str],
+    text: str,
+    *,
+    prefix: str = "",
+    continuation: str | None = None,
+    width: int | None = None,
+) -> None:
+    """Append one logical row without letting a terminal split words mid-cell."""
+
+    if width is None:
+        lines.append(prefix + text)
+        return
+    wrapped = textwrap.wrap(
+        text,
+        width=max(width, 24),
+        initial_indent=prefix,
+        subsequent_indent=continuation if continuation is not None else " " * len(prefix),
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    lines.extend(wrapped or [prefix.rstrip()])
+
+
+def render_text(
+    report: DoctorReport,
+    *,
+    executable: str = EXECUTABLE_NAME,
+    width: int | None = None,
+) -> str:
+    """Scannable plain-text report for the standalone doctor command.
+
+    The in-app ``/doctor`` block intentionally collapses healthy checks into
+    one transcript row. A standalone terminal has room to do better: keep
+    each named check on its own line, separate findings from passes, and end
+    with the command's no-write guarantee. The report remains plain text so
+    it is useful in CI logs and safe to pipe.
+    """
+
+    healthy = [check for check in report.checks if check.ok]
+    findings = [check for check in report.checks if not check.ok]
+    lines = [f"{executable} doctor", "", f"Doctor  {report.headline()}"]
+    if healthy:
+        lines.extend(("", f"Passed  {len(healthy)} checks"))
+        for check in healthy:
+            label = _CHECK_LABELS.get(check.name, check.name.replace("-", " ").title())
+            prefix = f"  ✔ {label:<18} "
+            _append_wrapped(lines, check.message, prefix=prefix, width=width)
+    if findings:
+        lines.extend(("", "Needs attention"))
+        for number, check in enumerate(findings, start=1):
+            label = _CHECK_LABELS.get(check.name, check.name.replace("-", " ").title())
+            lines.append(f"  {number}. {label}")
+            summary, *details = check.message.split(" · ")
+            _append_wrapped(lines, summary, prefix="     ", width=width)
+            for detail in details:
+                _append_wrapped(
+                    lines,
+                    detail,
+                    prefix="     → ",
+                    continuation="       ",
+                    width=width,
+                )
+    else:
+        lines.extend(("", "✓ Ready to launch"))
+    lines.extend(("", "No settings or user data changed."))
+    _append_wrapped(
+        lines,
+        "Some checks may contact your configured provider and prepare or inspect source caches.",
+        width=width,
+    )
     return "\n".join(lines)
 
 
@@ -717,6 +797,7 @@ def run_standalone(
     executable: str = EXECUTABLE_NAME,
     anchors_status: AnchorsPinStatus | None = None,
     mount_report: MountHealth | None = None,
+    width: int | None = None,
     echo=print,
 ) -> int:
     """Run checks, print the plain report, return the CI exit code.
@@ -733,7 +814,7 @@ def run_standalone(
         anchors_status=anchors_status,
         mount_report=mount_report,
     )
-    echo(render_text(report))
+    echo(render_text(report, executable=executable, width=width))
     return 0 if report.finding_count == 0 else 1
 
 

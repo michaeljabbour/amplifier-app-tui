@@ -61,11 +61,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..product import EXECUTABLE_NAME
 from .config import (
     BundleNotFoundError,
     ProviderNotConfiguredError,
+    bundle_search_paths,
+    load_merged_settings,
     provider_priority,
     resolve_config,
+    resolve_bundle_source,
     routing_enabled,
 )
 from .preflight_verify import DEFAULT_LIVE_TIMEOUT, verify_provider
@@ -87,7 +91,7 @@ class PreflightReport:
     provider: str = ""
     model: str = ""
     provider_count: int = 0
-    tool_count: int = 0
+    tool_count: int | None = 0
     routing_enabled: bool = False
     error: str | None = None
     remediation: str | None = None
@@ -193,19 +197,19 @@ async def run_preflight(
         return PreflightReport(
             ok=False,
             error=f"bundle not found: {error}",
-            remediation="check --bundle name/path, or run `amplifier-tui bundle list`",
+            remediation=(f"check --bundle name/path, or run `{EXECUTABLE_NAME} bundle list`"),
         )
     except ProviderNotConfiguredError as error:
         return PreflightReport(
             ok=False,
             error=str(error),
-            remediation="run `amplifier-tui provider list` to see configured providers",
+            remediation=(f"run `{EXECUTABLE_NAME} provider list` to see configured providers"),
         )
     except Exception as error:  # noqa: BLE001 -- fail closed, pre-takeover beats a raw traceback after
         return PreflightReport(
             ok=False,
             error=f"failed to resolve mounts: {error}",
-            remediation="run `amplifier-tui doctor` for a full diagnosis",
+            remediation=f"run `{EXECUTABLE_NAME} doctor` for a full diagnosis",
         )
 
     providers = [p for p in (resolved.mount_plan.get("providers") or []) if isinstance(p, dict)]
@@ -216,7 +220,7 @@ async def run_preflight(
             bundle_name=resolved.bundle_name,
             bundle_uri=resolved.bundle_uri,
             error="no provider configured",
-            remediation="run `amplifier-tui init` to configure a provider",
+            remediation=f"run `{EXECUTABLE_NAME} config` to configure a provider",
         )
 
     provider_name, model_name = _priority_provider(resolved.mount_plan)
@@ -260,4 +264,89 @@ async def run_preflight(
     )
 
 
-__all__ = ["PreflightReport", "run_preflight"]
+async def run_preflight_preview(
+    bundle: str | None,
+    *,
+    project_dir: Path | None = None,
+    provider_override: str | None = None,
+    model_override: str | None = None,
+) -> PreflightReport:
+    """Build a strictly read-only preview of what a launch would select.
+
+    Unlike :func:`run_preflight`, this function never asks Foundation to load,
+    compose, prepare, fetch, mount, import, or probe anything. It reads the
+    existing settings and provider records, resolves only local/registered
+    bundle identity, and reports tool count as unknown because learning that
+    value requires composing the bundle. This is the contract behind the
+    CLI's explicit ``--dry-run`` promise that nothing changes.
+    """
+    from . import bundle_admin, setup
+
+    root = (project_dir or Path.cwd()).resolve()
+    paths = bundle_admin.settings_paths(root, None)
+    amplifier_home = paths.global_settings.parent
+    settings = load_merged_settings(paths)
+
+    try:
+        bundle_name, bundle_uri, _notice = resolve_bundle_source(
+            bundle,
+            settings,
+            bundle_search_paths(root, amplifier_home),
+        )
+    except BundleNotFoundError as error:
+        return PreflightReport(
+            ok=False,
+            error=f"bundle not found: {error}",
+            remediation=(f"check --bundle name/path, or run `{EXECUTABLE_NAME} bundle list`"),
+        )
+
+    configured = setup.configured_providers(root, amplifier_home)
+    chosen = None
+    if provider_override:
+        chosen = setup.find_configured_provider(
+            provider_override,
+            project_dir=root,
+            amplifier_home=amplifier_home,
+        )
+        if chosen is None and not (
+            provider_override in {"anthropic", "provider-anthropic"}
+            and setup.has_configured_provider(root, amplifier_home)
+            and not configured
+        ):
+            available = ", ".join(entry.name for entry in configured) or "none"
+            return PreflightReport(
+                ok=False,
+                bundle_name=bundle_name,
+                bundle_uri=bundle_uri,
+                error=(
+                    f"provider '{provider_override}' is not configured · available: {available}"
+                ),
+                remediation=(f"run `{EXECUTABLE_NAME} provider list` to see configured providers"),
+            )
+    elif configured:
+        chosen = configured[0]
+
+    if chosen is None and not setup.has_configured_provider(root, amplifier_home):
+        return PreflightReport(
+            ok=False,
+            bundle_name=bundle_name,
+            bundle_uri=bundle_uri,
+            error="no provider configured",
+            remediation=f"run `{EXECUTABLE_NAME} config` to configure a provider",
+        )
+
+    provider_name = chosen.name if chosen is not None else "anthropic"
+    model_name = model_override or (chosen.model if chosen is not None else None) or ""
+    return PreflightReport(
+        ok=True,
+        bundle_name=bundle_name,
+        bundle_uri=bundle_uri,
+        provider=provider_name,
+        model=model_name,
+        provider_count=len(configured) or 1,
+        tool_count=None,
+        routing_enabled=routing_enabled(settings),
+    )
+
+
+__all__ = ["PreflightReport", "run_preflight", "run_preflight_preview"]

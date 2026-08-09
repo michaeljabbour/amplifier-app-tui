@@ -6,20 +6,29 @@ permalink: /quickstart/
 
 Your first session, end to end. If the command is not installed yet, start with [Setup]({{ '/setup/' | relative_url }}).
 
+## Try the offline demo first
+
+Want to see the real interface before configuring a provider? Run the scripted offline tour. It uses the same screen and controls, needs no credentials, and does not contact a model provider.
+
+```sh
+{{ site.data.product.command }} --demo
+```
+
+When the tour opens, use it to orient yourself; then return here for a real first session.
+
+<figure class="terminal-shot">
+  <img src="{{ '/assets/screenshots/offline-demo.png' | relative_url }}" alt="Forge terminal session showing Amplifier's full-screen offline demo with a completed example prompt, transcript, composer, and status footer">
+  <figcaption>The real offline demo, captured during Forge terminal QA.</figcaption>
+</figure>
+
 ## 1. Start in the project you want to work on
 
 ```sh
 cd ~/code/my-project
-amplifier-tui
+{{ site.data.product.command }}
 ```
 
 Sessions are stored per project directory, so the directory you launch from is the directory your session belongs to.
-
-No provider configured yet? Take the offline tour instead — same interface, scripted answers, no credentials:
-
-```sh
-amplifier-tui --demo
-```
 
 ## 2. Read the screen
 
@@ -108,15 +117,15 @@ Every session is written under your app home, keyed by project:
 List what is stored for the current project, newest first:
 
 ```sh
-amplifier-tui sessions
+{{ site.data.product.command }} sessions
 ```
 
 Then pick one up again:
 
 ```sh
-amplifier-tui resume            # numbered picker of recent sessions
-amplifier-tui resume 3f9c       # by id, or an unambiguous prefix
-amplifier-tui continue          # straight into the newest session
+{{ site.data.product.command }} resume            # numbered picker of recent sessions
+{{ site.data.product.command }} resume 3f9c       # by id, or an unambiguous prefix
+{{ site.data.product.command }} continue          # straight into the newest session
 ```
 
 `resume` uses deterministic exit codes so scripts can tell failures apart: `2` when nothing matches, `3` when a prefix is ambiguous, `4` when the match is unreadable.
@@ -125,4 +134,4 @@ amplifier-tui continue          # straight into the newest session
 
 - [Using the TUI]({{ '/using-the-tui/' | relative_url }}) — modes, approvals, subagent lanes, and rewind in depth.
 - [Configuration]({{ '/configuration/' | relative_url }}) — providers, priority, routing, and where settings live.
-- [User guide](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/USER-GUIDE.md) — the exhaustive keybinding and command reference in the repository.
+- [Complete user guide]({{ '/reference/user-guide/' | relative_url }}) — every interaction, command family, shortcut, and recovery path.

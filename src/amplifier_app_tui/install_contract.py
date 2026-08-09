@@ -9,11 +9,11 @@ can import it without crossing the ADR-0007 layer boundary.
 
 from __future__ import annotations
 
-APP_REPO_URL = "https://github.com/michaeljabbour/amplifier-app-tui"
+from .product import REPOSITORY_SLUG, REPOSITORY_URL
+
+APP_REPO_URL = REPOSITORY_URL
 APP_INSTALL_URI = f"git+{APP_REPO_URL}"
-SOURCE_INSTALL_URL = (
-    "https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh"
-)
+SOURCE_INSTALL_URL = f"https://raw.githubusercontent.com/{REPOSITORY_SLUG}/main/scripts/install.sh"
 
 _PUBLIC_CURL_INSTALLER = f"curl -fsSL {SOURCE_INSTALL_URL}"
 _CURL_INSTALLER = f"curl --proto '=https' --tlsv1.2 -fsSL {SOURCE_INSTALL_URL}"

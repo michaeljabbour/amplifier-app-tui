@@ -19,8 +19,10 @@ uv run amplifier-tui run "PROMPT" # headless one-shot, prints the answer
 printf 'PROMPT\n' | uv run amplifier-tui run # stdin one-shot
 uv run amplifier-tui run --output-format json "PROMPT" # machine-readable stdout
 uv run amplifier-tui run --output-format jsonl "PROMPT" # live versioned JSONL events
+uv run amplifier-tui config       # guided durable settings control center
+uv run amplifier-tui config show --json # redacted effective config for scripts
 uv run amplifier-tui doctor       # setup checkup (exit 1 when findings exist)
-uv run amplifier-tui init         # set up a provider key in ~/.amplifier/keys.env
+uv run amplifier-tui init         # provider-first entry into the same control center
 uv run amplifier-tui bundle list  # bundles from the shared registry (--all for deps)
 uv run amplifier-tui bundle use B # set the active bundle (--global/--project/--local)
 uv run amplifier-tui routing manage   # inspect and choose a routing matrix
@@ -33,6 +35,27 @@ uv run amplifier-tui bundle refresh # advanced: refresh mounted bundles/modules
 `bundle` also has `show · current · clear · add · remove · update`; run
 `bundle --help`. These read/write the same amplifier settings and registry
 the reference CLI uses — nothing app-specific.
+
+### Configuration control center
+
+Run `amplifier-tui config` in a terminal for one numbered, name-friendly menu:
+providers; models and routing; bundles; directory access; notifications; exact
+settings paths; and maintenance previews. The dashboard shows the effective
+provider/model, routing matrix, active bundle, permission counts, and notification
+posture without printing credential values. Every write announces its scope and
+exact settings path; Enter/back does not write; destructive maintenance starts with
+a doctor/check/dry-run preview.
+
+All existing command groups remain the canonical automation surface. A bare `config`
+fails fast with exit 2 when stdin/stdout are not interactive instead of waiting for
+input. Scripts use `config show --json`, `config paths --json`, or direct commands such
+as `provider add`, `routing use`, and `bundle use`. `init` with flags preserves its
+non-interactive contract; `init` without flags opens the same control center and starts
+with providers when none are configured.
+
+The shell-level `config` control center manages durable app setup. The in-session
+`/config` command is intentionally different: it edits the currently mounted session
+through the configurator and can persist that session-derived delta.
 
 `routing manage` is a numbered picker. At `choice:`, type either the displayed
 row number or the exact matrix name to select it. Use `v NUMBER` or `v NAME` for
@@ -65,7 +88,7 @@ uv run amplifier-tui serve --attach amplifier-session:SESSION_ID#ho-9a2  # claim
 hands you the write lease. Full contract: [SESSION-CONTROL.md](SESSION-CONTROL.md).
 
 **First run:** follow the [README's Install section](../README.md#install). Its single
-source-install command verifies `amplifier-tui`; launch it to open the built-in provider setup; the
+source-install command verifies `amplifier-tui`; launch it to open the built-in control center; the
 full [Amplifier](https://github.com/microsoft/amplifier) CLI is optional. Existing
 `~/.amplifier/` providers and credentials are reused automatically. If anything is off,
 `doctor` will tell you what and how to fix it. Not sure everything's wired? `--demo` always
@@ -181,6 +204,12 @@ Cycle with **shift+tab**, or jump with `/mode <name>`, `/plan`, `/brainstorm`.
 | brainstorm | **no tools** — pure text | divergent thinking |
 | build | auto read/test; ask write/net/spend/exec/outside-project | hands-on work |
 | **auto** *(default)* | auto read/write/test; asks if risky at boundaries | Amplifier's natural wide scope |
+
+`auto` controls permission posture; it does **not** keep creating turns on its own. A
+normal prompt runs one orchestrator turn. Use `/goal [turn-cap] <success condition>` when
+you want Amplifier to continue autonomously until the condition passes or the cap is
+reached (`/goal stop` clears it). A turn that exhausts its model/iteration budget is shown
+as **incomplete**, never as a completed final answer.
 
 The app's posture gate is an Amplifier `tool:pre` hook: it resolves the trust slots shown by
 `/permissions`, denies-and-continues when a capability is blocked, and sends asks through

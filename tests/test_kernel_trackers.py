@@ -505,6 +505,27 @@ async def test_queue_bridge_synthesizes_agent_completed_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_queue_bridge_preserves_incomplete_child_status() -> None:
+    bridge = QueueBridge(
+        agent_result_lookup=lambda _sid: "implementation did not run",
+        agent_status_lookup=lambda _sid: "incomplete",
+    )
+    await bridge.handle_event(
+        "delegate:agent_completed",
+        {
+            "session_id": ROOT,
+            "agent": "builder",
+            "sub_session_id": "kid-builder",
+            "success": True,
+        },
+    )
+    event = bridge.queue.get_nowait()
+    assert event.success is False
+    assert event.incomplete is True
+    assert event.result == "implementation did not run"
+
+
+@pytest.mark.asyncio
 async def test_queue_bridge_keeps_native_result_and_error_markers() -> None:
     """A payload that DOES carry a result is authoritative, and the
     delegate:error normalization marker ('error') is never overwritten."""

@@ -31,7 +31,11 @@ from amplifier_app_tui.kernel.config import (
     ProviderNotConfiguredError,
     ResolvedConfig,
 )
-from amplifier_app_tui.kernel.preflight import PreflightReport, run_preflight
+from amplifier_app_tui.kernel.preflight import (
+    PreflightReport,
+    run_preflight,
+    run_preflight_preview,
+)
 from amplifier_app_tui.kernel.preflight_verify import ProviderVerification
 
 
@@ -88,6 +92,104 @@ async def _always_ok_verify_provider(**_kwargs: Any) -> ProviderVerification:
 
 def _bypass_provider_verification(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(preflight_mod, "verify_provider", _always_ok_verify_provider)
+
+
+# ---------------------------------------------------------------------------
+# explicit dry-run preview: reads settings but never prepares or writes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_preview_fresh_home_is_strictly_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "amplifier-home"
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("AMPLIFIER_HOME", str(home))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    report = await run_preflight_preview(None, project_dir=project)
+
+    assert report.ok is False
+    assert report.error == "no provider configured"
+    assert not home.exists()
+    assert list(project.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_preview_reports_configured_selection_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "amplifier-home"
+    project = tmp_path / "project"
+    project.mkdir()
+    home.mkdir()
+    settings = home / "settings.yaml"
+    settings.write_text(
+        "config:\n"
+        "  providers:\n"
+        "    - module: provider-openai\n"
+        "      config:\n"
+        "        default_model: gpt-test\n"
+        "        priority: 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AMPLIFIER_HOME", str(home))
+    before = settings.read_bytes()
+
+    report = await run_preflight_preview(None, project_dir=project)
+
+    assert report.ok is True
+    assert report.bundle_name == "tui"
+    assert report.provider == "openai"
+    assert report.model == "gpt-test"
+    assert report.tool_count is None
+    assert settings.read_bytes() == before
+    assert sorted(path.relative_to(home) for path in home.rglob("*")) == [Path("settings.yaml")]
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_unknown_bundle_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "amplifier-home"
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("AMPLIFIER_HOME", str(home))
+
+    report = await run_preflight_preview("does-not-exist", project_dir=project)
+
+    assert report.ok is False
+    assert "bundle not found" in (report.error or "")
+    assert not home.exists()
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_unknown_provider_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "amplifier-home"
+    project = tmp_path / "project"
+    project.mkdir()
+    home.mkdir()
+    settings = home / "settings.yaml"
+    settings.write_text(
+        "config:\n  providers:\n    - module: provider-openai\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AMPLIFIER_HOME", str(home))
+    before = settings.read_bytes()
+
+    report = await run_preflight_preview(
+        None,
+        project_dir=project,
+        provider_override="anthropic",
+    )
+
+    assert report.ok is False
+    assert report.error == "provider 'anthropic' is not configured · available: openai"
+    assert settings.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +270,7 @@ async def test_routing_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_no_providers_fails_with_init_remediation(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_no_providers_fails_with_config_remediation(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_resolve_config(bundle, **kwargs) -> ResolvedConfig:  # noqa: ANN001, ARG001
         return _resolved(providers=[], bundle_name="minimal")
 
@@ -178,7 +280,7 @@ async def test_no_providers_fails_with_init_remediation(monkeypatch: pytest.Monk
     assert report.bundle_name == "minimal"
     assert report.error == "no provider configured"
     assert report.remediation is not None
-    assert "init" in report.remediation
+    assert "config" in report.remediation
 
 
 # ---------------------------------------------------------------------------

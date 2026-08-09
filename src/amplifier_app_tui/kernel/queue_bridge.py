@@ -136,6 +136,7 @@ class QueueBridge:
         tap: Callable[[UIEvent], None] | None = None,
         events: tuple[str, ...] | None = None,
         agent_result_lookup: Callable[[str], str] | None = None,
+        agent_status_lookup: Callable[[str], str] | None = None,
     ) -> None:
         self.queue: asyncio.Queue[UIEvent] = queue if queue is not None else asyncio.Queue()
         self.dropped = 0
@@ -159,6 +160,9 @@ class QueueBridge:
         carries no result field (verified against the pinned module), so
         without this the delegate-summary snippets and lane recaps stay
         blank; the spawner records each child's final output."""
+        self._agent_status_lookup = agent_status_lookup
+        """Corrects tool-delegate's boolean-only outer completion status
+        using the app-owned child spawner's authoritative result."""
 
     def emit(self, event: UIEvent) -> None:
         """Push one already-typed event (used by DisplaySystem notices and
@@ -219,6 +223,17 @@ class QueueBridge:
                     result = ""
                 if result:
                     normalized = normalized.model_copy(update={"result": result})
+            if isinstance(normalized, AgentCompleted) and self._agent_status_lookup is not None:
+                try:
+                    child_status = self._agent_status_lookup(
+                        normalized.sub_session_id or normalized.session_id
+                    )
+                except Exception:  # noqa: BLE001 — lookup is best-effort enrichment
+                    child_status = ""
+                if child_status == "incomplete":
+                    normalized = normalized.model_copy(
+                        update={"success": False, "incomplete": True}
+                    )
             self.emit(normalized)
         return HookResult(action="continue")
 

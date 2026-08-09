@@ -4,7 +4,7 @@ title: Using the TUI
 permalink: /using-the-tui/
 ---
 
-Everything in Amplifier TUI happens on one screen: you type into a composer at the bottom, the work lands in a transcript above it, and a status footer tells you which posture you are in and what it is costing. This page covers the day-to-day loop — sending, steering, approving, rewinding, and finding things again. For the exhaustive engineering reference, see the [User Guide](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/USER-GUIDE.md).
+Everything in {{ site.data.product.display_name }} happens on one screen: you type into a composer at the bottom, the work lands in a transcript above it, and a status footer tells you which posture you are in and what it is costing. This page covers the day-to-day loop — sending, steering, approving, rewinding, and finding things again. For every edge case, see the [complete user guide]({{ '/reference/user-guide/' | relative_url }}).
 
 ## The screen
 
@@ -95,6 +95,8 @@ A mode is a posture: it decides which capabilities run silently and which ones s
 
 The trust string in the footer is the live rule, not a label — it is what the app will actually do with the next tool call. `plan` and `brainstorm` are the two safe postures: `plan` reads but changes nothing and hands its plan to build; `brainstorm` runs no tools at all. `auto`'s exact posture depends on how governance is configured for your install; the footer always shows the one in force.
 
+`auto` means **automatic tool approval**, not an endless agent loop. A normal message still runs one orchestrator turn and then gives control back to you. For autonomous follow-through, use `/goal [turn-cap] <success condition>`; Amplifier will continue taking turns until the condition passes or the cap is reached. `/goal stop` clears it. If a turn reaches its model or iteration limit first, the transcript marks it **incomplete** instead of presenting its progress summary as a final answer.
+
 `ctrl+p` reports the effective trust posture without changing it. To actually edit trust — boundary, blocks, and exceptions — use `/permissions`, and `/allowed-dirs` / `/denied-dirs` for the write directories this session may touch. Trust cannot be changed while an approval is pending: the mode, permission, and effort cycles are all disabled under an open approval bar.
 
 ## Approvals
@@ -183,11 +185,11 @@ Sessions are saved automatically, per project. Everything for one session lives 
 List and reopen them from the shell:
 
 ```sh
-amplifier-tui sessions          # newest first, this project only
-amplifier-tui sessions --plain  # bare ids, one per line
-amplifier-tui resume            # numbered picker of recent sessions
-amplifier-tui resume SESSION_ID # resume a specific one (id or unique prefix)
-amplifier-tui continue          # resume the newest session, no picker
+{{ site.data.product.command }} sessions          # newest first, this project only
+{{ site.data.product.command }} sessions --plain  # bare ids, one per line
+{{ site.data.product.command }} resume            # numbered picker of recent sessions
+{{ site.data.product.command }} resume SESSION_ID # resume a specific one (id or unique prefix)
+{{ site.data.product.command }} continue          # resume the newest session, no picker
 ```
 
 `resume` uses deterministic exit codes so scripts can tell the failures apart: `2` no match, `3` ambiguous prefix, `4` unreadable metadata. See the [Reference]({{ '/reference/' | relative_url }}) page.
@@ -255,14 +257,14 @@ The read-only overlay leads the chain deliberately: dismissing help should never
 
 `/copy` puts the last answer on your clipboard. It writes via OSC 52 — the terminal's own clipboard escape, which keeps working over SSH — and, where one exists, also through the OS clipboard tool, because some terminals ship with OSC 52 writes disabled.
 
-When you want the whole conversation rather than one answer, `/export` writes the transcript as markdown into `exports/`. That export is human-readable but lossy; for a structured, re-importable artifact use `amplifier-tui session export SESSION_ID` from the shell instead.
+When you want the whole conversation rather than one answer, `/export` writes the transcript as markdown into `exports/`. That export is human-readable but lossy; for a structured, re-importable artifact use `{{ site.data.product.command }} session export SESSION_ID` from the shell instead.
 
 ## Demo mode
 
 `--demo` is a **flag on the app, not a subcommand**:
 
 ```sh
-amplifier-tui --demo
+{{ site.data.product.command }} --demo
 ```
 
 It runs a scripted session that is fully offline — no bundle, no network, no credentials. First-run setup and the provider preflight are both skipped entirely. It is the right way to explore the screen, the palette, lanes, rewind, and the keymap before you have configured a provider, or to reproduce a UI question without spending anything.
@@ -271,4 +273,4 @@ It runs a scripted session that is fully offline — no bundle, no network, no c
 
 - [Configuration]({{ '/configuration/' | relative_url }}) — providers, priority, bundles, routing, and where settings live.
 - [Reference]({{ '/reference/' | relative_url }}) — the full CLI surface, file locations, and the headless JSONL contract.
-- [User Guide](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/USER-GUIDE.md) — the exhaustive engineering guide in the repository, for every key, command, and edge case this page summarizes.
+- [Complete user guide]({{ '/reference/user-guide/' | relative_url }}) — every key, command, and edge case this page summarizes.

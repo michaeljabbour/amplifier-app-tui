@@ -293,7 +293,7 @@ async def test_missing_credential_fails_closed_naming_only_the_var(
     assert result.ok is False
     assert "FLEX_CRED_MISSING_XYZ" in (result.error or "")
     assert "not set" in (result.error or "")
-    assert result.remediation is not None and "init" in result.remediation
+    assert result.remediation is not None and "config" in result.remediation
 
 
 @pytest.mark.asyncio

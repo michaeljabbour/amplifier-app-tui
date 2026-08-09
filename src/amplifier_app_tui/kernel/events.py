@@ -407,6 +407,8 @@ class AgentCompleted(_Envelope):
     sub_session_id: str = ""
     parent_session_id: str = ""
     success: bool = True
+    incomplete: bool = False
+    """The child stopped at a turn/token cap or returned without executing."""
     result: str = ""
     """Short result summary for the lane line (e.g. ``tests ✔``)."""
 

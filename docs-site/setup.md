@@ -37,23 +37,26 @@ If the shell cannot find the command afterward, restart the shell or run `uv too
 Print what actually got installed:
 
 ```sh
-amplifier-tui version
+{{ site.data.product.command }} version
 ```
 
-It reports `amplifier-tui` plus the `core` and `foundation` versions it resolved. The app label includes the short commit for a git-sourced install — this project does not bump the version on every commit, so the commit is the signal that tells two builds apart.
+It reports `{{ site.data.product.command }}` plus the `core` and `foundation` versions it resolved. The app label includes the short commit for a git-sourced install — this project does not bump the version on every commit, so the commit is the signal that tells two builds apart.
 
 Then run the checkup:
 
 ```sh
-amplifier-tui doctor
+{{ site.data.product.command }} doctor
 ```
 
-`doctor` is read-only and its exit code is the contract: **0 means ready, 1 means it found something**. It runs the same bundle and provider preflight a real launch runs, in strict mode, so a clean result means credentials actually resolve — not merely that a bundle file parses.
+`doctor` changes no settings or user data, and its exit code is the contract: **0 means ready, 1
+means it found something**. It runs the same strict bundle and provider preflight as a real launch,
+so it may contact the configured provider and prepare or inspect source caches. A clean result means
+credentials actually resolve — not merely that a bundle file parses.
 
 To see what a launch would resolve without launching anything:
 
 ```sh
-amplifier-tui --dry-run
+{{ site.data.product.command }} --dry-run
 ```
 
 That prints a "Would Launch" summary — bundle, provider, model, routing — and changes nothing.
@@ -64,7 +67,7 @@ Move into the project you want to work in, then start the app:
 
 ```sh
 cd ~/code/my-project
-amplifier-tui
+{{ site.data.product.command }}
 ```
 
 Sessions are stored per project directory, so where you start matters.
@@ -76,7 +79,7 @@ If the launch preflight fails, the app prints `✗ cannot launch: <error>` and a
 ## Run it with no credentials
 
 ```sh
-amplifier-tui --demo
+{{ site.data.product.command }} --demo
 ```
 
 `--demo` is a flag on the app, not a subcommand. It runs a scripted session with no bundle, no network, and no credentials — the first-run gate and the provider preflight are both skipped. It is the right way to look around before you configure anything.
@@ -86,10 +89,15 @@ amplifier-tui --demo
 To review or change providers later, run:
 
 ```sh
-amplifier-tui init
+{{ site.data.product.command }} init
 ```
 
-With no flags this opens the setup console: it shows the configured providers and the active routing resolution, then loops on `[p]` manage providers, `[r]` manage routing, `[w]` change write scope, `[d]` done. Passing any flag skips the console and takes the non-interactive path instead — the flags are listed in the [Reference]({{ '/reference/' | relative_url }}#init).
+For the complete settings control center, run `{{ site.data.product.command }} config`. It shows your effective
+provider, routing, bundle, directory access, notification state, and settings paths, then
+offers numbered menus for changing each area. `{{ site.data.product.command }} init` opens that same
+control center in provider-first mode; passing flags keeps it useful for automation. See the
+[`config` reference]({{ '/reference/' | relative_url }}#config) and
+[`init` reference]({{ '/reference/' | relative_url }}#init) for every option.
 
 Secrets are written to `~/.amplifier/keys.env` with `600` permissions. The provider entry itself goes into a settings file — `~/.amplifier/settings.yaml` by default. New entries are written at priority `1`, and lower priority wins, so a provider you configure beats the bundled fallback without you editing anything. See [Configuration]({{ '/configuration/' | relative_url }}) for the full priority model.
 
@@ -97,12 +105,12 @@ Secrets are written to `~/.amplifier/keys.env` with `600` permissions. The provi
 
 | Command | What it does |
 |---|---|
-| `amplifier-tui update` | Updates the installed app itself to the current `main` commit, using the same source-installer contract. `--check-only` reports without changing anything. |
-| `amplifier-tui reset` | Clears the regenerable cache and registry state, then repairs the install. Sessions, settings, local bundles, and `keys.env` are preserved unless you name them explicitly. |
+| `{{ site.data.product.command }} update` | Updates the installed app itself to the current `main` commit, using the same source-installer contract. `--check-only` reports without changing anything. |
+| `{{ site.data.product.command }} reset` | Clears the regenerable cache and registry state, then repairs the install. Sessions, settings, local bundles, and `keys.env` are preserved unless you name them explicitly. |
 
 Nothing updates on its own. There is no background updater, so the installed build stays exactly where you left it until you run one of these.
 
-Two useful variants: `amplifier-tui reset --dry-run` previews what would be removed and changes nothing, and `amplifier-tui reset --no-reinstall` cleans up without repairing the install. Mounted bundle and module source caches are a separate, advanced concern handled by `amplifier-tui bundle refresh` — see [Update and reset]({{ '/update-reset/' | relative_url }}).
+Two useful variants: `{{ site.data.product.command }} reset --dry-run` previews what would be removed and changes nothing, and `{{ site.data.product.command }} reset --no-reinstall` cleans up without repairing the install. Mounted bundle and module source caches are a separate, advanced concern handled by `{{ site.data.product.command }} bundle refresh` — see [Update and reset]({{ '/update-reset/' | relative_url }}).
 
 ## Advanced: review-first install
 
@@ -130,10 +138,10 @@ uv tool uninstall amplifier-app-tui
 
 There is no uninstall subcommand on the app — removal is a `uv tool` operation. It removes only the app's isolated tool environment and its executable. It deliberately leaves `~/.amplifier/` alone: your keys, settings, sessions, and caches survive, because the full `amplifier` platform CLI may share them. Removing that directory is a separate, destructive decision.
 
-If `amplifier-tui` still resolves after uninstalling, look for a second install or a shell alias before deleting anything else:
+If `{{ site.data.product.command }}` still resolves after uninstalling, look for a second install or a shell alias before deleting anything else:
 
 ```sh
-type -a amplifier-tui
+type -a {{ site.data.product.command }}
 uv tool list
 ```
 
@@ -141,4 +149,4 @@ uv tool list
 
 - [Quickstart]({{ '/quickstart/' | relative_url }}) — your first session, end to end.
 - [Troubleshooting]({{ '/troubleshooting/' | relative_url }}) — when install or launch does not go to plan.
-- [Install guide](https://github.com/michaeljabbour/amplifier-app-tui/blob/main/docs/INSTALL.md) — the repository's deeper install reference.
+- [Install reference]({{ '/setup/install-reference/' | relative_url }}) — exact installer guarantees, machine changes, and uninstall behavior.

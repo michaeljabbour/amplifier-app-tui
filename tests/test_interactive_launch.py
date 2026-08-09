@@ -335,6 +335,14 @@ def test_help_lists_dry_run_flag() -> None:
         assert "--dry-run" in result.output
 
 
+def test_short_help_flag_works_for_top_level_and_subcommands() -> None:
+    runner = CliRunner()
+    for args in (["-h"], ["init", "-h"], ["reset", "-h"], ["update", "-h"]):
+        result = runner.invoke(main, args)
+        assert result.exit_code == 0, result.output
+        assert "Usage:" in result.output
+
+
 def test_dry_run_reports_and_exits_zero_without_launching(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -349,7 +357,7 @@ def test_dry_run_reports_and_exits_zero_without_launching(monkeypatch: pytest.Mo
     async def boom_launch(**kwargs: object) -> int:
         raise AssertionError("--dry-run must never launch the TUI")
 
-    monkeypatch.setattr(main_mod, "_run_preflight", fake_preflight)
+    monkeypatch.setattr(main_mod, "_run_preflight_preview", fake_preflight)
     monkeypatch.setattr(main_mod, "_first_run_gate", boom_gate)
     monkeypatch.setattr(main_mod, "_launch_tui", boom_launch)
 
@@ -360,7 +368,7 @@ def test_dry_run_reports_and_exits_zero_without_launching(monkeypatch: pytest.Mo
     assert "claude-x" in result.stdout
     assert "DRY RUN" in result.stdout
     assert "nothing was launched" in result.stdout
-    assert calls == [{"strict": True}]
+    assert calls == [{}]
 
 
 def test_dry_run_failure_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -370,7 +378,7 @@ def test_dry_run_failure_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
             ok=False, error="bundle not found: nope", remediation="check --bundle name/path"
         )
 
-    monkeypatch.setattr(main_mod, "_run_preflight", fake_preflight)
+    monkeypatch.setattr(main_mod, "_run_preflight_preview", fake_preflight)
     result = CliRunner().invoke(main, ["--dry-run", "--bundle", "nope"])
     assert result.exit_code == 1
     assert "bundle not found" in result.stderr
@@ -381,7 +389,7 @@ def test_dry_run_with_demo_skips_preflight_and_exits_zero(monkeypatch: pytest.Mo
     async def boom(*args: object, **kwargs: object) -> PreflightReport:
         raise AssertionError("--demo --dry-run must not touch real mounts/providers")
 
-    monkeypatch.setattr(main_mod, "_run_preflight", boom)
+    monkeypatch.setattr(main_mod, "_run_preflight_preview", boom)
     result = CliRunner().invoke(main, ["--demo", "--dry-run"])
     assert result.exit_code == 0
     assert "no real mounts" in result.stdout
@@ -397,7 +405,7 @@ def test_run_command_dry_run_short_circuits_without_tty_or_prompt(
         del bundle, provider, model, kwargs
         return _OK_REPORT
 
-    monkeypatch.setattr(main_mod, "_run_preflight", fake_preflight)
+    monkeypatch.setattr(main_mod, "_run_preflight_preview", fake_preflight)
     monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: False)
     result = CliRunner().invoke(main, ["run", "--dry-run"])
     assert result.exit_code == 0
@@ -410,7 +418,7 @@ def test_run_command_dry_run_failure_exits_nonzero(monkeypatch: pytest.MonkeyPat
         del bundle, provider, model, kwargs
         return PreflightReport(ok=False, error="no provider configured", remediation="run init")
 
-    monkeypatch.setattr(main_mod, "_run_preflight", fake_preflight)
+    monkeypatch.setattr(main_mod, "_run_preflight_preview", fake_preflight)
     result = CliRunner().invoke(main, ["run", "--dry-run"])
     assert result.exit_code == 1
     assert "no provider configured" in result.stderr

@@ -239,14 +239,14 @@ class TodoItem(_FrozenModel):
     status: TodoStatus = "pending"
 
 
-DelegateState = Literal["running", "done", "error", "cancelled"]
+DelegateState = Literal["running", "done", "incomplete", "error", "cancelled"]
 
 
 class DelegateEntry(_FrozenModel):
     """One agent row inside a :class:`DelegateSummaryBlock`.
 
-    ``state`` maps to a glyph: ``✔`` done / ``✖`` error / ``⊘`` cancelled /
-    ``◐`` running. ``snippet`` is the agent's short result summary
+    ``state`` maps to a glyph: ``✔`` done / ``!`` incomplete /
+    ``✖`` error / ``⊘`` cancelled / ``◐`` running. ``snippet`` is the agent's short result summary
     (``AgentCompleted.result``), truncated by the renderer to fit the width.
     """
 
