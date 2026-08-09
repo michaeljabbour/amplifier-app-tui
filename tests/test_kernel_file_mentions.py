@@ -50,3 +50,19 @@ def test_filter_prefers_basename_prefix_then_path_matches() -> None:
 def test_filter_accepts_leading_at_and_limits_results() -> None:
     paths = tuple(f"file-{index}.txt" for index in range(20))
     assert len(filter_file_mentions(paths, "@file", limit=3)) == 3
+
+
+def test_filter_falls_back_to_fuzzy_recall() -> None:
+    paths = (
+        "src/app.py",
+        "src/kernel/tokens.py",
+        "docs/tokens.md",
+        "src/ui/palette.py",
+    )
+    # "tkn" is no substring anywhere: fuzzy basename recall finds the
+    # tokens files and nothing else.
+    assert set(filter_file_mentions(paths, "tkn")) == {
+        "src/kernel/tokens.py",
+        "docs/tokens.md",
+    }
+    assert filter_file_mentions(paths, "zzz") == ()

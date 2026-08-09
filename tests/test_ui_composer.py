@@ -241,6 +241,46 @@ def test_queue_hint_swaps_on_missing_kitty_protocol() -> None:
     assert Composer(kitty_protocol=False).queue_hint == "alt+enter"
 
 
+@pytest.mark.asyncio
+async def test_alt_f_and_alt_b_move_cursor_by_word() -> None:
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        await pilot.press(*"fix the bug")
+        await pilot.pause()
+        assert composer._input.cursor_location == (0, 11)
+
+        for _ in range(3):
+            await pilot.press("alt+b")
+        await pilot.pause()
+        assert composer._input.cursor_location == (0, 0)
+
+        await pilot.press("alt+f")
+        await pilot.pause()
+        assert composer._input.cursor_location == (0, 3)
+
+        await pilot.press("alt+f")
+        await pilot.pause()
+        assert composer._input.cursor_location == (0, 7)
+
+
+@pytest.mark.asyncio
+async def test_alt_d_deletes_word_right_and_stays_a_pure_edit() -> None:
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        await pilot.press(*"fix the bug")
+        await pilot.press("alt+b", "alt+b", "alt+b")
+        await pilot.pause()
+        assert composer._input.cursor_location == (0, 0)
+
+        await pilot.press("alt+d")
+        await pilot.pause()
+        assert composer.text == " the bug"
+        assert composer._input.cursor_location == (0, 0)
+        assert not _of(app, Composer.Submit)
+
+
 def test_active_file_mention_only_matches_token_at_cursor() -> None:
     text = "review @src/ap then later"
     assert active_file_mention(text, (0, 14)) == ("src/ap", 7, 14)

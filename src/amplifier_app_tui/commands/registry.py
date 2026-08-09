@@ -298,8 +298,9 @@ class CommandContext(Protocol):
         """``/rename <name>``: label the live session (resume-picker name)."""
         ...
 
-    def show_sessions(self) -> None:
-        """``/sessions``: post the stored-session roster for this project."""
+    def show_sessions(self, query: str = "") -> None:
+        """``/sessions [query]``: post the stored-session roster for this
+        project, pre-filtered by *query* (substring or fuzzy) when given."""
         ...
 
     def branch_session(self, name: str) -> None:

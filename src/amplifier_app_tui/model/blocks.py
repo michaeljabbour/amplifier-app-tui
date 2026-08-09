@@ -303,6 +303,29 @@ class Blocked(_FrozenModel):
     """The blocked action's decision is waiting in the needs-you queue."""
 
 
+class PendingChange(_FrozenModel):
+    """The diff-first face of a live approval: the pending change lands in
+    the transcript BEFORE its prompt is answered (DESIGN-SPEC §7, ergonomic
+    upgrade 2), so the supervisor reads WHAT changes while deciding.
+
+    ``title`` is the one-line digest (file path for an edit, the command
+    for a shell call); ``detail`` carries the staged context rows
+    (cwd · rule · capability); ``body`` is the diff itself (verbatim
+    unified-diff lines when the tool input carries new/old content,
+    otherwise the command lines) rendered with the same diff grammar as
+    an expanded :class:`ToolLine` (``body_style="diff"``). The block is
+    removed when the ticket resolves — decisions live in journal/blocked
+    history, not as stale cards."""
+
+    id: str
+    kind: Literal["pending_change"] = "pending_change"
+    title: str
+    detail: str = ""
+    body: tuple[str, ...] = ()
+    """Diff lines when synthesizable, else the raw command lines."""
+    body_style: ToolLineBodyStyle = "plain"
+
+
 class ActivityBranch(_FrozenModel):
     """One row of the live activity tree beneath the working pulse.
 
@@ -634,6 +657,7 @@ TranscriptBlock = Annotated[
     | LiveCommand
     | PlanBlock
     | Blocked
+    | PendingChange
     | WorkingStatus
     | Recap
     | Thinking
@@ -697,6 +721,7 @@ __all__ = [
     "PlanItem",
     "TodoItem",
     "PlanItemState",
+    "PendingChange",
     "Recap",
     "Segment",
     "SessionBanner",

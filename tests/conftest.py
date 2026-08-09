@@ -194,8 +194,8 @@ class FakeCommandContext:
     def rename_session(self, name: str) -> None:
         self.calls.append(f"rename_session:{name}")
 
-    def show_sessions(self) -> None:
-        self.calls.append("show_sessions")
+    def show_sessions(self, query: str = "") -> None:
+        self.calls.append(f"show_sessions:{query}")
 
     def branch_session(self, name: str) -> None:
         self.calls.append(f"branch_session:{name}")

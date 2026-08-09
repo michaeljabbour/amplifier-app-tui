@@ -88,7 +88,7 @@ MOCKUP_TABLE = [
     ),
     # Stored-session lifecycle (amplifier-app-cli parity).
     ("Between", "/rename", "name this session for the resume picker", "built-in"),
-    ("Between", "/sessions", "list stored sessions for this project", "built-in"),
+    ("Between", "/sessions", "list stored sessions; /sessions <query> filters", "built-in"),
     ("Between", "/branch", "snapshot this conversation into a new session", "built-in"),
     ("Between", "/fork", "snapshot into a new session primed to run a directive", "built-in"),
     # Beyond the mockup table: session tags (HGT session-tags-backend).
@@ -304,12 +304,14 @@ def test_session_lifecycle_dispatch_through_context(fake_command_context) -> Non
     registry.run("/branch", ctx)
     registry.run("/branch", ctx, "spike")
     registry.run("/fork", ctx, "continue the refactor")
+    registry.run("/sessions", ctx, "auth")
     assert ctx.calls == [
         "rename_session:auth refactor",
-        "show_sessions",
+        "show_sessions:",
         "branch_session:",
         "branch_session:spike",
         "fork_session:continue the refactor",
+        "show_sessions:auth",
     ]
 
 

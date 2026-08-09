@@ -17,12 +17,15 @@ outside the chain:
     ============  =====================  ==============================
     priority      context (active when)  action
     ============  =====================  ==============================
-    1             lane_focus             restore the parent transcript
-    2             palette                close the command palette
-    3             rewind                 close the rewind picker strip
-    4             sessions               close the sessions picker strip
-    5             lanes                  close the agent-lanes panel
-    6             running                interrupt the running turn
+    1             keys                   close the keys overlay
+    2             lane_focus             restore the parent transcript
+    3             palette                close the command palette
+    4             rewind                 close the rewind picker strip
+    5             sessions               close the sessions picker strip
+    6             themes                 close the theme picker strip
+    7             timeline               close the timeline scrubber strip
+    8             lanes                  close the agent-lanes panel
+    9             running                interrupt the running turn
     ============  =====================  ==============================
 """
 
@@ -32,6 +35,7 @@ import asyncio
 import logging
 import threading
 import time
+from collections import Counter
 from decimal import Decimal
 from typing import Any
 
@@ -63,6 +67,8 @@ from . import app_support, keymap, notifications, transcript_render
 from .approval_bar import ApprovalBar
 from .chrome import APP_TITLE_NAME, TitleBar, write_terminal_title
 from .sessions_strip import ResumeSessionRequest, SessionsStrip
+from .theme_strip import ThemeStrip
+from .timeline_strip import TimelineStrip
 from .command_context import AppCommandContext
 from .composer import Composer, ComposerDraft
 from .decision_capture import DecisionCaptureStrip
@@ -75,11 +81,12 @@ from .file_mentions import (
     close_file_mentions,
     handle_file_mention_intent,
 )
+from .keys_overlay import KeysOverlay
 from .lanes_panel import LanesPanel
 from .live_tail import LiveTail
 from .needs_you import NeedsYouList
 from .notices import NoticeSlot
-from .palette import PaletteStrip
+from .palette import CommandSpec as PaletteCommandSpec, PaletteStrip
 from .plan_panel import PlanPanel, plan_drill_notice, plan_overflow_notice
 from .queued_strip import QueuedStrip
 from .reducer import TranscriptReducer
@@ -283,6 +290,7 @@ class TuiApp(App[ResumeSessionRequest]):
         self._turn_started_at: float | None = None  # attention-bell elapsed basis
         self.esc_sequence = app_support.EscSequence()
         self.approval_bar: ApprovalBar | None = None
+        self._pending_change_block_id: str | None = None
         self._pending_custom_decision: str | None = None
         self.steer_echoes: dict[str, str] = {}  # steer message_id → ↳ echo block id
         self._lanes_fanout_open = False  # active-lane edge for the auto-open
@@ -300,6 +308,11 @@ class TuiApp(App[ResumeSessionRequest]):
         self.live_tail = LiveTail(id="live-tail")
         self.notice_slot = NoticeSlot(id="notice-slot")
         self.palette = PaletteStrip(self._commands.specs, id="palette-strip")
+        self._command_usage: Counter[str] = Counter()
+        """Frecency counts for palette ranking — bumped on every slash
+        dispatch path (typed, palette-picked, steered, or queued). Fed to
+        the strip as a live read-through mapping; never persisted."""
+        self.palette.set_usage(self._command_usage)
         # Open registry (story #2): any runtime registration — skills at
         # boot, recipe/pipeline verbs later — re-feeds the palette rows.
         self._commands.subscribe(self._sync_palette_commands)
@@ -307,10 +320,16 @@ class TuiApp(App[ResumeSessionRequest]):
         self.plan_panel = PlanPanel(id="plan-panel")
         self.rewind = RewindStrip(id="rewind-strip")
         self.sessions_strip = SessionsStrip(id="sessions-strip")
+        self.theme_strip = ThemeStrip(id="theme-strip")
+        self.timeline_strip = TimelineStrip(id="timeline-strip")
+        self._theme_picker_revert: str | None = None
+        """Theme active when the picker opened; restored if Esc closes the
+        picker without a keep (live-preview revert), cleared on choose."""
         self.queued_strip = QueuedStrip(id="queued-strip")
         self.file_mentions = FileMentionStrip(id="file-mentions")
         self.history_recall = HistoryRecallStrip(id="history-recall")
         self.decision_capture = DecisionCaptureStrip(id="decision-capture")
+        self.keys_overlay = KeysOverlay(id="keys-overlay")
         self.composer = Composer(kitty_protocol=kitty_protocol, id="composer")
         self.footer_bar = FooterBar(id="footer-bar")
 
@@ -328,10 +347,13 @@ class TuiApp(App[ResumeSessionRequest]):
             yield self.plan_panel
         yield self.rewind
         yield self.sessions_strip
+        yield self.theme_strip
+        yield self.timeline_strip
         yield self.queued_strip
         yield self.file_mentions
         yield self.history_recall
         yield self.decision_capture
+        yield self.keys_overlay
         with Container(id="composer-slot"):
             yield self.composer
         yield self.footer_bar
@@ -1021,6 +1043,20 @@ class TuiApp(App[ResumeSessionRequest]):
             spans.append(Segment(text=f"{description}\n", style_token="dim"))
         self.append_block(Answer(id=self.allocator.next_id(), spans=tuple(spans)))
 
+    def action_show_keys(self) -> None:
+        """F1 toggles the live which-key overlay."""
+        if self.keys_overlay.is_open:
+            # Toggle-close always works -- even if an approval arrives while
+            # the overlay is pinned, esc belongs to the bar there and f1 is
+            # the only way back out.
+            self.keys_overlay.close()
+        elif self.approval_bar is None:
+            # The approval bar owns the keyboard; an overlay it could never
+            # dismiss (esc belongs to the bar) would lie, and the modal's
+            # own notice may not be overwritten -- so f1 is dead there.
+            self.keys_overlay.show(self._underlying_context())
+        self._refresh_footer()
+
     def activate_native_mode(self, name: str | None) -> None:
         """``/mode <bundle-mode>`` ADDs to the active set; ``/mode off`` clears all."""
         self.run_worker(self._activate_native_mode(name), exclusive=False)
@@ -1094,22 +1130,35 @@ class TuiApp(App[ResumeSessionRequest]):
         ok, detail = await self.adapter.rename_session(name)
         self.show_notice(f"session renamed · {detail}" if ok else detail)
 
-    def show_sessions(self) -> None:
-        self.run_worker(self._show_sessions(), exclusive=False)
+    def show_sessions(self, query: str = "") -> None:
+        self.run_worker(self._show_sessions(query), exclusive=False)
 
-    async def _show_sessions(self) -> None:
-        """``/sessions``: open the interactive picker (S2 compliance gap 2).
+    async def _show_sessions(self, query: str = "") -> None:
+        """``/sessions [query]``: open the interactive picker (S2 compliance gap 2).
 
         An empty roster shows a notice instead of an empty strip (mirrors
-        ``open_rewind_strip`` on zero checkpoints). Enter opens a row's
-        full-id detail via :meth:`on_sessions_strip_session_activated`;
-        ``r`` requests a clean shutdown-and-resume of the highlighted row.
+        ``open_rewind_strip`` on zero checkpoints). A non-blank *query*
+        pre-filters the roster (substring or fuzzy over name, bundle, id,
+        and tags); a query that matches nothing costs a notice, never an
+        empty strip. Enter opens a row's full-id detail via
+        :meth:`on_sessions_strip_session_activated`; ``r`` requests a
+        clean shutdown-and-resume of the highlighted row.
         """
         summaries = await self.adapter.session_summaries()
         if not summaries:
             self.show_notice("no stored sessions \u00b7 this project has no history yet")
             return
-        self.sessions_strip.show_sessions(summaries, current=self.adapter.session_short)
+        query = query.strip()
+        if query:
+            from ..kernel.session_manager import summary_matches
+
+            summaries = [s for s in summaries if summary_matches(s, query)]
+            if not summaries:
+                self.show_notice(f"no sessions match '{query}'")
+                return
+        self.sessions_strip.show_sessions(
+            summaries, current=self.adapter.session_short, query=query
+        )
         self._refresh_footer()
 
     # -- prompt-stash (HGT from opencode) -----------------------------------
@@ -1559,7 +1608,13 @@ class TuiApp(App[ResumeSessionRequest]):
             self._splash = None
             self.call_later(splash.dismiss_splash, immediate=immediate)
 
-    def present_approval(self, ticket_id: str, prompt: str, options: tuple[str, ...]) -> None:
+    def present_approval(
+        self,
+        ticket_id: str,
+        prompt: str,
+        options: tuple[str, ...],
+        detail: object = None,
+    ) -> None:
         """Show the inline approval bar for one ticket (spec §7)."""
         if self.mode_id == "auto":
             # Auto is unattended progress: park the human choice, deny only
@@ -1569,7 +1624,7 @@ class TuiApp(App[ResumeSessionRequest]):
             self.show_notice("auto deferred decision · current call denied · work continues")
             self._refresh_footer()
             return
-        self.call_later(app_support.mount_approval, self, ticket_id, prompt, tuple(options))
+        self.call_later(app_support.mount_approval, self, ticket_id, prompt, tuple(options), detail)
 
     def on_approval_bar_resolved(self, message: ApprovalBar.Resolved) -> None:
         message.stop()
@@ -1578,7 +1633,7 @@ class TuiApp(App[ResumeSessionRequest]):
             self.journal.record_ask(bar.prompt, approved=message.choice != "Deny")
             bar.remove()
             self.approval_bar = None
-        self.composer.display = True
+        app_support._remove_pending_change(self)
         self.composer.focus_input()
         self.adapter.answer_approval(message.ticket_id, message.choice)
         self._refresh_footer()
@@ -1598,7 +1653,7 @@ class TuiApp(App[ResumeSessionRequest]):
         prompt, options = bar.prompt, bar.options
         bar.remove()
         self.approval_bar = None
-        self.composer.display = True
+        app_support._remove_pending_change(self)
         self.composer.focus_input()
         # Real runtime routes through the broker (which parks the shared
         # needs-you item and fires the decision Notification the app
@@ -1609,6 +1664,21 @@ class TuiApp(App[ResumeSessionRequest]):
         self._refresh_footer()
 
     # -- composer semantics -----------------------------------------------------------
+
+    def _note_command_use(self, name: str) -> None:
+        """Bump the frecency count for a dispatched slash command."""
+        self._command_usage[name.strip().casefold()] += 1
+
+    def _palette_selection_runs(self, text: str, selected: PaletteCommandSpec) -> bool:
+        """AC3 guard for Enter-runs-top-match: the implicit top row runs
+        only while the typed head is still a prefix of it (recall-as-you-
+        type). Anything else — including a fuzzy recall row — needs a
+        deliberate arrow-key move first, so a typo'd command costs a
+        suggestion notice instead of silently invoking a different one."""
+        if self.palette.selection_explicit:
+            return True
+        head = text.split(maxsplit=1)[0]
+        return selected.name.casefold().startswith(head.casefold())
 
     def on_composer_submit(self, message: Composer.Submit) -> None:
         message.stop()
@@ -1624,10 +1694,12 @@ class TuiApp(App[ResumeSessionRequest]):
         self.palette.apply_filter(None)
         if text.startswith("/"):
             if self._commands.parse_and_run(self._ctx, text):
+                self._note_command_use(text.split(maxsplit=1)[0])
                 self._refresh_footer()
                 return
-            if selected is not None:
+            if selected is not None and self._palette_selection_runs(text, selected):
                 self._commands.run(selected.name, self._ctx)
+                self._note_command_use(selected.name)
                 self._refresh_footer()
                 return
             # Story #1 amendment to the mockup: zero matches no longer
@@ -1685,10 +1757,13 @@ class TuiApp(App[ResumeSessionRequest]):
         # Mockup onKeyDown: an open palette match runs BEFORE the steer
         # branch — a slash command typed mid-turn runs, never steers (§6).
         selected = self.palette.selected_command if self.palette.is_open else None
-        if selected is not None:
+        if selected is not None and self._palette_selection_runs(message.text, selected):
             self.palette.apply_filter(None)
-            if not self._commands.parse_and_run(self._ctx, message.text):
+            if self._commands.parse_and_run(self._ctx, message.text):
+                self._note_command_use(message.text.split(maxsplit=1)[0])
+            else:
                 self._commands.run(selected.name, self._ctx)
+                self._note_command_use(selected.name)
             self._refresh_footer()
             return
         # A focused lane targets THAT delegate: mid-turn Enter steers the
@@ -1735,10 +1810,13 @@ class TuiApp(App[ResumeSessionRequest]):
         # Mockup onKeyDown: every Enter — shift held or not — runs an open
         # palette's top match BEFORE the queue/submit branch (§5/§6).
         selected = self.palette.selected_command if self.palette.is_open else None
-        if selected is not None:
+        if selected is not None and self._palette_selection_runs(message.text, selected):
             self.palette.apply_filter(None)
-            if not self._commands.parse_and_run(self._ctx, message.text):
+            if self._commands.parse_and_run(self._ctx, message.text):
+                self._note_command_use(message.text.split(maxsplit=1)[0])
+            else:
                 self._commands.run(selected.name, self._ctx)
+                self._note_command_use(selected.name)
             self._refresh_footer()
             return
         if not self.turn_active:
@@ -1939,6 +2017,7 @@ class TuiApp(App[ResumeSessionRequest]):
         self.composer.clear()
         self.palette.apply_filter(None)
         self._commands.run(message.command.name, self._ctx)
+        self._note_command_use(message.command.name)
         self.composer.focus_input()
         self._refresh_footer()
 
@@ -2026,6 +2105,27 @@ class TuiApp(App[ResumeSessionRequest]):
 
     def on_rewind_strip_closed(self, message: RewindStrip.Closed) -> None:
         message.stop()
+        self._restore_keyboard()
+        self._refresh_footer()
+
+    def on_timeline_strip_moved(self, message: TimelineStrip.Moved) -> None:
+        """Cursor move scrubs the transcript live (theme-picker preview idiom)."""
+        message.stop()
+        self.transcript.scroll_block_visible(message.block_id, top=True)
+
+    def on_timeline_strip_type_through(self, message: TimelineStrip.TypeThrough) -> None:
+        # Same mockup contract as the rewind picker: printable keys typed
+        # at the strip land in the composer ("/" opens the palette live).
+        message.stop()
+        self.composer.focus_input()
+        self.composer.insert_text(message.character)
+
+    def on_timeline_strip_closed(self, message: TimelineStrip.Closed) -> None:
+        """Enter keeps the landed scroll position; esc returns to the tail --
+        a pure look-around must not move anything (theme-picker revert idiom)."""
+        message.stop()
+        if not message.kept:
+            self.transcript.scroll_end(animate=False, immediate=True)
         self._restore_keyboard()
         self._refresh_footer()
 
@@ -2308,12 +2408,25 @@ class TuiApp(App[ResumeSessionRequest]):
         self.show_notice(f"tail · {record.lane.name}")
 
     def action_toggle_thinking(self) -> None:
-        """ctrl+g: expand/collapse thinking (issue #129).
+        """ctrl+g: thinking peek while a turn runs, timeline scrubber when idle.
 
-        The durable home is the transcript's collapsible Thinking block, so
-        ctrl-g toggles the newest one and scrolls it into view. When no
-        durable block exists yet (a still-streaming demo turn), it falls
-        back to PR #128's ephemeral live-tail reveal (peek ⇄ content)."""
+        One chord, two context-exclusive meanings (the keymap table holds
+        both on disjoint contexts): a running turn has a live box worth
+        peeking at, an idle session does not -- there ctrl+g opens the
+        turn film strip instead, and while that strip is open it
+        toggle-closes it (the f1 overlay idiom).
+
+        Thinking branch (issue #129): the durable home is the transcript's
+        collapsible Thinking block, so ctrl-g toggles the newest one and
+        scrolls it into view. When no durable block exists yet (a
+        still-streaming demo turn), it falls back to PR #128's ephemeral
+        live-tail reveal (peek ⇄ content)."""
+        if self.timeline_strip.display:
+            self.timeline_strip.close_strip()
+            return
+        if not self.turn_active and self.footer_context() == "idle":
+            app_support.open_timeline(self)
+            return
         for block in reversed(self.transcript.blocks):
             if block.kind == "thinking" and block.text:
                 toggled = block.model_copy(update={"expanded": not block.expanded})
@@ -2479,19 +2592,67 @@ class TuiApp(App[ResumeSessionRequest]):
     def set_theme_by_name(self, name: str) -> None:
         """Switch the spec theme at runtime (``/theme``, DESIGN-SPEC §1).
 
-        Empty *name* cycles slate → graphite → carbon; unknown names get
-        a notice listing the valid themes.
+        A named theme jumps straight to it; empty *name* opens the
+        live-preview picker (:meth:`open_theme_picker`); unknown names
+        get a notice listing the valid themes.
         """
         names = tuple(THEME_TOKENS)
         if not name:
-            current = self.theme.removeprefix(THEME_NAME_PREFIX)
-            index = names.index(current) if current in names else -1
-            name = names[(index + 1) % len(names)]
+            self.open_theme_picker()
+            return
         if name not in THEME_TOKENS:
             self.show_notice(f"unknown theme · {name} · themes: {', '.join(names)}")
             return
         self.theme = theme_id(name)
         self.show_notice(f"theme {name}")
+
+    def open_theme_picker(self) -> None:
+        """Bare ``/theme``: open the live-preview theme picker.
+
+        Records the active theme so Esc reverts to it; arrow keys preview
+        each theme as a real repaint and enter keeps the highlight.
+        """
+        current = self.theme.removeprefix(THEME_NAME_PREFIX)
+        self._theme_picker_revert = current
+        self.theme_strip.show_picker(tuple(THEME_TOKENS), current=current)
+        self._refresh_footer()
+
+    def on_theme_strip_preview_theme(self, message: ThemeStrip.PreviewTheme) -> None:
+        """Live preview: repaint in the highlighted theme (no notice --
+        nothing is kept or reverted yet)."""
+        message.stop()
+        if message.name in THEME_TOKENS:
+            self.theme = theme_id(message.name)
+
+    def on_theme_strip_theme_chosen(self, message: ThemeStrip.ThemeChosen) -> None:
+        """Enter/click keeps the theme: clear the revert marker BEFORE
+        closing so the Closed handler doesn't restore the opening theme."""
+        message.stop()
+        name = message.name
+        self._theme_picker_revert = None
+        self.theme_strip.close_strip()
+        self._restore_keyboard()
+        self._refresh_footer()
+        if name in THEME_TOKENS:
+            self.theme = theme_id(name)
+            self.show_notice(f"theme {name}")
+
+    def on_theme_strip_closed(self, message: ThemeStrip.Closed) -> None:
+        """Esc close reverts the preview to the opening theme (the marker
+        is already None when the close followed a keep, so that path
+        collapses to just focus/refresh)."""
+        message.stop()
+        revert = self._theme_picker_revert
+        self._theme_picker_revert = None
+        if revert is not None and revert in THEME_TOKENS:
+            self.theme = theme_id(revert)
+        self._restore_keyboard()
+        self._refresh_footer()
+
+    def on_keys_overlay_closed(self, message: KeysOverlay.Closed) -> None:
+        """F1/Esc close returns footer hints to the underlying context."""
+        message.stop()
+        self._refresh_footer()
 
     def open_permissions(self) -> None:
         self.append_block(
@@ -2511,6 +2672,17 @@ class TuiApp(App[ResumeSessionRequest]):
 
     def footer_context(self) -> keymap.Context:
         if self.approval_bar is not None:
+            # Approval hints are the truthful ones even while the overlay is
+            # pinned -- there "esc closes the overlay" would lie.
+            return "approval"
+        if self.keys_overlay.is_open:
+            return "keys"
+        return self._underlying_context()
+
+    def _underlying_context(self) -> keymap.Context:
+        """The context beneath the keys overlay -- what its pinned help rows
+        describe and what the footer returns to once it closes."""
+        if self.approval_bar is not None:
             return "approval"
         if self._pending_custom_decision:
             return "needs_you"
@@ -2520,11 +2692,18 @@ class TuiApp(App[ResumeSessionRequest]):
             return "palette"
         if self.sessions_strip.is_open:
             return "sessions"
+        if self.theme_strip.is_open:
+            return "themes"
+        if self.timeline_strip.display:
+            return "timeline"
         if self.turn_active:
             return "running"
         return "idle"
 
     def _refresh_footer(self) -> None:
+        if self.keys_overlay.is_open:
+            # Pinned help tracks the live context instead of going stale.
+            self.keys_overlay.show(self._underlying_context())
         self.footer_bar.update_state(app_support.footer_state(self))
 
     def _refresh_title(self) -> None:

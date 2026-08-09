@@ -131,7 +131,7 @@ def test_doctor_composes_real_launch_preflight(monkeypatch: pytest.MonkeyPatch) 
         return PreflightReport(
             ok=False,
             error="provider-anthropic failed to import",
-            remediation="run `amplifier-tui update --force`",
+            remediation="run `amplifier-tui bundle refresh --force`",
         )
 
     captured: dict[str, object] = {}
@@ -152,7 +152,7 @@ def test_doctor_composes_real_launch_preflight(monkeypatch: pytest.MonkeyPatch) 
     check = checks[0]
     assert not check.ok
     assert "provider-anthropic failed to import" in check.message
-    assert "amplifier-tui update --force" in check.message
+    assert "amplifier-tui bundle refresh --force" in check.message
 
 
 # ---------------------------------------------------------------------------

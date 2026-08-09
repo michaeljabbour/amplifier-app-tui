@@ -1,0 +1,13 @@
+title: Amplifier App TUI Docs
+description: Low-friction setup and usage notes for Amplifier App TUI.
+url: ""
+baseurl: "/amplifier-app-tui"
+
+markdown: kramdown
+highlighter: rouge
+
+include:
+  - llms.txt
+
+exclude:
+  - README.md

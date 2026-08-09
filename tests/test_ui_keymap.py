@@ -58,13 +58,16 @@ def test_shift_enter_with_alt_enter_fallback() -> None:
 
 
 def test_esc_chain_priority_order_per_spec() -> None:
-    """DESIGN-SPEC §5 (extended by S2): lane-focus → palette → rewind →
-    sessions → lanes → interrupt."""
+    """DESIGN-SPEC §5 (extended by S2): keys overlay → lane-focus →
+    palette → rewind → sessions → themes → timeline → lanes → interrupt."""
     assert [context for context, _ in ESC_CHAIN] == [
+        "keys",
         "lane_focus",
         "palette",
         "rewind",
         "sessions",
+        "themes",
+        "timeline",
         "lanes",
         "running",
     ]
@@ -275,6 +278,34 @@ def test_toggle_plan_overflow_is_bound_to_ctrl_h_everywhere_but_approval() -> No
     assert binding.label == "ctrl-h plan"
     assert len(binding.label) <= 32
     validate()
+
+
+def test_show_keys_is_bound_to_f1_everywhere_but_approval() -> None:
+    """The which-key overlay chord: f1 is free in the keymap table AND in
+    TextArea's own defaults, live in every context except approval (the
+    bar owns the keyboard while open), and esc gets its own ``keys``
+    context binding that leads ESC_CHAIN so the overlay dismisses before
+    any state-changing esc resolution underneath it."""
+    binding = next(b for b in KEYMAP if b.action == "show_keys")
+    assert binding.keys == ("f1",)
+    assert binding.contexts == NO_APPROVAL
+    assert binding.label == "f1 keys"
+    close = next(b for b in KEYMAP if b.action == "close_keys")
+    assert close.keys == ("escape",)
+    assert close.contexts == frozenset({"keys"})
+    validate()
+
+
+def test_show_keys_is_taught_in_keys_reference() -> None:
+    """The f1 chord joins HELP_ACTIONS so /keys (and the overlay itself,
+    which renders the same table) teach it -- never a hand-copied hint."""
+    assert "show_keys" in HELP_ACTIONS
+    rows = dict(help_rows())
+    assert rows["f1 keys"]
+
+
+def test_keys_footer_hint_is_exact() -> None:
+    assert FOOTER_HINTS["keys"] == "esc/f1 close · typing still reaches the composer"
 
 
 def test_toggle_plan_overflow_is_taught_in_keys_reference() -> None:

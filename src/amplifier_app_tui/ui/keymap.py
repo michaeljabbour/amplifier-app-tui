@@ -32,6 +32,9 @@ Context = Literal[
     "lane_focus",  # a subagent lane is focused (child transcript shown)
     "rewind",  # rewind picker strip open
     "sessions",  # sessions picker strip open (S2: interactive session table)
+    "themes",  # theme picker strip open (live preview; esc reverts)
+    "keys",  # which-key overlay open (read-only cheat sheet; esc/f1 closes)
+    "timeline",  # timeline scrubber strip open (ctrl+g idle; esc reverts the scroll)
     "approval",  # approval bar replaces the composer
     "needs_you",  # needs-you block focused
     "evidence",  # evidence block open
@@ -47,6 +50,9 @@ ALL_CONTEXTS: frozenset[Context] = frozenset(
         "lane_focus",
         "rewind",
         "sessions",
+        "themes",
+        "keys",
+        "timeline",
         "approval",
         "needs_you",
         "evidence",
@@ -100,6 +106,9 @@ _LANES: frozenset[Context] = frozenset({"lanes"})
 _LANE_FOCUS: frozenset[Context] = frozenset({"lane_focus"})
 _REWIND: frozenset[Context] = frozenset({"rewind"})
 _SESSIONS: frozenset[Context] = frozenset({"sessions"})
+_THEMES: frozenset[Context] = frozenset({"themes"})
+_KEYS: frozenset[Context] = frozenset({"keys"})
+_TIMELINE: frozenset[Context] = frozenset({"timeline"})
 _APPROVAL: frozenset[Context] = frozenset({"approval"})
 _EVIDENCE: frozenset[Context] = frozenset({"evidence"})
 _RUNNING: frozenset[Context] = frozenset({"running"})
@@ -139,9 +148,25 @@ KEYMAP: tuple[Binding, ...] = (
     # Show/hide the root stream box (thinking/response peek). Advertised
     # only while a turn runs — that is the only time a live box exists.
     _b("toggle_thinking", ("ctrl+g",), "ctrl-g think", _RUNNING),
+    # The SAME ctrl+g, idle half: with no turn running there is no live
+    # box to peek, so the chord opens the timeline scrubber instead
+    # (disjoint contexts keep the double claim valid under validate()).
+    # Dispatch: the single registered ctrl+g Textual binding stays
+    # ``toggle_thinking``; its handler branches on turn state (a second
+    # global binding on one chord would clash), so show_timeline is NOT
+    # in app_support._GLOBAL_ACTIONS -- documented here like
+    # approval_defer's ApprovalBar.on_key note so the table remains the
+    # single source of every chord.
+    _b("show_timeline", ("ctrl+g",), "ctrl-g timeline", _IDLE),
     _b("show_ledger", ("ctrl+l",), "ctrl-l", NO_APPROVAL),
     _b("show_needs_you", ("ctrl+y",), "ctrl-y", NO_APPROVAL),
     _b("open_rewind", ("ctrl+r",), "ctrl-r", NO_APPROVAL),
+    # Which-key overlay: f1 toggles a read-only cheat sheet rendered FROM
+    # THIS TABLE (ui/keys_overlay.py), so the reference can never drift
+    # from what is actually bound. It never takes the composer's focus,
+    # and esc dismisses it via ESC_CHAIN's first entry. f1 claims no
+    # other slot in this table or in TextArea's defaults.
+    _b("show_keys", ("f1",), "f1 keys", NO_APPROVAL),
     # Return to the current/most-recent turn's final-answer start anchor
     # (AC2, compliance 2026-08-02 B1). ctrl+f is free in the global table
     # AND in ComposerInput's TextArea bindings (unlike ctrl+a/ctrl+e, which
@@ -193,6 +218,18 @@ KEYMAP: tuple[Binding, ...] = (
     # shutdown-and-relaunch through the existing resume path. Enter remains
     # the distinct inspect/copy-details action.
     _b("sessions_resume", ("r",), "r resume", _SESSIONS),
+    # Theme picker (bare /theme): moving the highlight previews live;
+    # enter keeps, esc reverts to the opening theme.
+    _b("themes_up", ("up",), "↑↓ preview", _THEMES),
+    _b("themes_down", ("down",), "↑↓ preview", _THEMES),
+    _b("themes_choose", ("enter",), "enter keep", _THEMES),
+    # Timeline scrubber (ctrl+g while idle): moving the cursor scrubs the
+    # transcript live; enter keeps the scroll, esc returns to the tail.
+    # Handled by TimelineStrip's own BINDINGS while it holds focus --
+    # documented here so the table (and the overlay's help) stay complete.
+    _b("timeline_prev", ("up", "left"), "↑↓ scrub", _TIMELINE),
+    _b("timeline_next", ("down", "right"), "↑↓ scrub", _TIMELINE),
+    _b("timeline_keep", ("enter",), "enter keep", _TIMELINE),
     _b("evidence_prev", ("left",), "←/→", _EVIDENCE),
     _b("evidence_next", ("right",), "←/→", _EVIDENCE),
     _b("evidence_expand", ("enter",), "enter", _EVIDENCE),
@@ -221,6 +258,9 @@ KEYMAP: tuple[Binding, ...] = (
     _b("close_palette", ("escape",), "esc", _PALETTE),
     _b("close_rewind", ("escape",), "esc", _REWIND),
     _b("close_sessions", ("escape",), "esc", _SESSIONS),
+    _b("close_theme_picker", ("escape",), "esc", _THEMES),
+    _b("close_keys", ("escape",), "esc", _KEYS),
+    _b("close_timeline", ("escape",), "esc", _TIMELINE),
     _b("close_lanes", ("escape",), "esc", _LANES),
     _b("close_evidence", ("escape",), "esc", _EVIDENCE),
     _b("approval_deny", ("escape",), "esc", _APPROVAL),
@@ -232,18 +272,25 @@ KEYMAP: tuple[Binding, ...] = (
 
 
 ESC_CHAIN: tuple[tuple[Context, str], ...] = (
+    ("keys", "close_keys"),
     ("lane_focus", "lane_unfocus"),
     ("palette", "close_palette"),
     ("rewind", "close_rewind"),
     ("sessions", "close_sessions"),
+    ("themes", "close_theme_picker"),
+    ("timeline", "close_timeline"),
     ("lanes", "close_lanes"),
     ("running", "interrupt_running"),
 )
 """Esc priority order (DESIGN-SPEC §5, extended by S2 for the sessions
 picker): the first entry whose context is active consumes the Esc press.
-``sessions`` sits right after ``rewind`` -- both are single-purpose picker
-strips opened by an explicit command, so they share precedence ahead of
-the more ambient ``lanes`` panel. (Approval and evidence esc handling are
+``keys`` leads: the which-key overlay is pure read-only chrome, so while
+it is open Esc must dismiss it rather than peek at whatever lies beneath
+(closing a palette, unfocusing a lane, interrupting a turn are all real
+state changes the user did not ask for).
+``sessions`` and ``themes`` sit right after ``rewind`` -- single-purpose
+picker strips opened by an explicit command, so they share precedence
+ahead of the more ambient ``lanes`` panel. (Approval and evidence esc handling are
 context-exclusive — the approval bar owns the keyboard, and evidence esc
 only fires while the evidence block has focus — so they sit outside the
 global chain.)"""
@@ -259,6 +306,9 @@ FOOTER_HINTS: dict[str, str] = {
     "palette": "↑↓ select · enter run · esc close",
     "mention": "↑↓ select · enter/tab insert · esc close",
     "sessions": "↑↓ select · enter open · r resume · esc close",
+    "themes": "↑↓ preview · enter keep · esc revert",
+    "keys": "esc/f1 close · typing still reaches the composer",
+    "timeline": "↑↓ scrub · enter keep · esc back",
     "needs_you": "enter submit · ctrl-j newline · esc cancel",
     "running": "esc interrupt · enter steer · shift+enter queue",
     "idle": "",
@@ -315,6 +365,7 @@ HELP_ACTIONS: tuple[str, ...] = (
     "cycle_tail",
     "open_external_editor",
     "toggle_thinking",
+    "show_timeline",
     "show_ledger",
     "show_needs_you",
     "open_rewind",
@@ -323,6 +374,7 @@ HELP_ACTIONS: tuple[str, ...] = (
     "toggle_plan_overflow",
     "stash_prompt",
     "open_palette",
+    "show_keys",
 )
 """Actions worth teaching once, in ``/keys`` listing order (item D4).
 
@@ -349,6 +401,7 @@ ACTION_HELP: dict[str, str] = {
     "cycle_tail": "cycle live-tail focus while agents run",
     "open_external_editor": "compose the draft in $VISUAL/$EDITOR",
     "toggle_thinking": "show/hide the live thinking box while a turn runs",
+    "show_timeline": "scrub a film strip of past turns (enter keeps the scroll, esc returns to the tail)",
     "show_ledger": "print the session outcome ledger",
     "show_needs_you": "open deferred decisions",
     "open_rewind": "open pre-prompt checkpoints to restore code, conversation, or both (restoring mid-turn interrupts it first)",
@@ -357,6 +410,7 @@ ACTION_HELP: dict[str, str] = {
     "toggle_plan_overflow": "expand or collapse the plan panel's hidden rows",
     "stash_prompt": "stash the in-progress draft; /unstash restores it",
     "open_palette": "open the command palette",
+    "show_keys": "toggle the on-screen keys overlay (context-aware cheat sheet)",
 }
 """One-line descriptions for :func:`help_rows`, keyed by keymap action id.
 

@@ -12,14 +12,44 @@ from pathlib import Path
 import subprocess
 
 from amplifier_app_tui.install_contract import (
+    HARDENED_SOURCE_INSTALL_COMMAND,
+    PUBLIC_SOURCE_INSTALL_COMMAND,
     SOURCE_INSTALL_COMMAND,
     SOURCE_INSTALL_LAUNCH_COMMAND,
+    SOURCE_INSTALL_URL,
+    source_install_argv,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install.sh"
 SHA = "0123456789abcdef0123456789abcdef01234567"
+PUBLIC_DOCS = (
+    ROOT / "README.md",
+    ROOT / "docs" / "INSTALL.md",
+    ROOT / "docs" / "USER-GUIDE.md",
+    ROOT / "docs" / "SETTINGS.md",
+    ROOT / "docs" / "ARCHITECTURE.md",
+    ROOT / "docs" / "DESIGN-SPEC.md",
+    ROOT / "docs-site" / "index.md",
+    ROOT / "docs-site" / "setup.md",
+    ROOT / "docs-site" / "quickstart.md",
+    ROOT / "docs-site" / "update-reset.md",
+    ROOT / "docs-site" / "using-the-tui.md",
+    ROOT / "docs-site" / "configuration.md",
+    ROOT / "docs-site" / "reference.md",
+    ROOT / "docs-site" / "troubleshooting.md",
+    ROOT / "docs-site" / "development.md",
+)
+
+# Pages allowed to show the hardened wrapper, mapped to the heading that must
+# precede it on that page. Each page phrases its review-first/advanced-install
+# heading a little differently, so the heading text is per-doc rather than a
+# single shared literal.
+REVIEW_FIRST_DOCS: dict[str, str] = {
+    "docs/INSTALL.md": "## Review-first / advanced install",
+    "docs-site/setup.md": "## Advanced: review-first install",
+}
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -126,6 +156,33 @@ def _run(tmp_path: Path, *args: str, env_updates: dict[str, str] | None = None):
         check=False,
     )
     return result, log, tool_bin
+
+
+def test_install_command_contract_separates_public_and_hardened_commands() -> None:
+    expected_public = f"curl -fsSL {SOURCE_INSTALL_URL} | bash"
+    expected_hardened_pipeline = (
+        f"curl --proto '=https' --tlsv1.2 -fsSL {SOURCE_INSTALL_URL} | bash -s --"
+    )
+
+    assert PUBLIC_SOURCE_INSTALL_COMMAND == expected_public
+    assert SOURCE_INSTALL_COMMAND == PUBLIC_SOURCE_INSTALL_COMMAND
+    for token in ("--launch", "pipefail", "--proto", "--tlsv1.2", "bash -s --"):
+        assert token not in PUBLIC_SOURCE_INSTALL_COMMAND
+
+    assert HARDENED_SOURCE_INSTALL_COMMAND == f'bash -o pipefail -c "{expected_hardened_pipeline}"'
+    assert "--launch" not in HARDENED_SOURCE_INSTALL_COMMAND
+    for token in ("pipefail", "--proto", "--tlsv1.2", "bash -s --"):
+        assert token in HARDENED_SOURCE_INSTALL_COMMAND
+    assert source_install_argv() == ["bash", "-o", "pipefail", "-c", expected_hardened_pipeline]
+
+
+def test_launch_install_contract_keeps_launch_explicitly_hardened() -> None:
+    launch_argv = source_install_argv(launch=True)
+
+    assert "--launch" in SOURCE_INSTALL_LAUNCH_COMMAND
+    assert "--launch" in launch_argv[-1]
+    assert "pipefail" in SOURCE_INSTALL_LAUNCH_COMMAND
+    assert "--proto" in SOURCE_INSTALL_LAUNCH_COMMAND
 
 
 def test_source_install_resolves_main_to_immutable_sha(tmp_path: Path) -> None:
@@ -257,12 +314,54 @@ def test_help_is_available_without_git_or_uv(tmp_path: Path) -> None:
     assert "--ref REF" in result.stdout
 
 
-def test_documented_install_and_update_commands_use_the_shared_contract() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    guide = (ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
-    assert SOURCE_INSTALL_LAUNCH_COMMAND in readme
-    assert SOURCE_INSTALL_LAUNCH_COMMAND in guide
-    assert SOURCE_INSTALL_COMMAND in readme
+def test_public_docs_do_not_document_launch_flag() -> None:
+    for path in PUBLIC_DOCS:
+        assert "--launch" not in path.read_text(encoding="utf-8"), path
+
+
+def test_public_docs_show_short_install_command_first() -> None:
+    docs = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8") for path in PUBLIC_DOCS
+    }
+
+    for rel_path in ("README.md", "docs/INSTALL.md", "docs-site/setup.md"):
+        assert PUBLIC_SOURCE_INSTALL_COMMAND in docs[rel_path]
+
+    install_top = "\n".join(docs["docs/INSTALL.md"].splitlines()[:35])
+    assert PUBLIC_SOURCE_INSTALL_COMMAND in install_top
+    assert docs["README.md"].index(PUBLIC_SOURCE_INSTALL_COMMAND) < docs["README.md"].index(
+        "amplifier-tui doctor"
+    )
+
+
+def test_hardened_wrapper_appears_only_in_review_first_docs() -> None:
+    """The hardened wrapper is confined to each page's own review-first section.
+
+    Every doc listed in ``REVIEW_FIRST_DOCS`` may show the hardened wrapper exactly
+    once, but only after that page's own review-first/advanced-install heading, and
+    the short public command must still appear earlier on the page than the
+    hardened one -- the public command leads; the hardened wrapper is never the
+    primary/recommended install. Every other public doc -- including README.md,
+    which has no review-first section at all -- must not contain the hardened
+    wrapper anywhere.
+    """
+    docs = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8") for path in PUBLIC_DOCS
+    }
+
+    for rel_path, heading in REVIEW_FIRST_DOCS.items():
+        text = docs[rel_path]
+        assert text.count(HARDENED_SOURCE_INSTALL_COMMAND) == 1, rel_path
+        heading_index = text.index(heading)
+        hardened_index = text.index(HARDENED_SOURCE_INSTALL_COMMAND)
+        public_index = text.index(PUBLIC_SOURCE_INSTALL_COMMAND)
+        assert heading_index < hardened_index, rel_path
+        assert public_index < hardened_index, rel_path
+
+    for rel_path, text in docs.items():
+        if rel_path in REVIEW_FIRST_DOCS:
+            continue
+        assert HARDENED_SOURCE_INSTALL_COMMAND not in text, rel_path
 
 
 def test_documented_pipefail_wrapper_propagates_download_failure(tmp_path: Path) -> None:
@@ -277,7 +376,7 @@ def test_documented_pipefail_wrapper_propagates_download_failure(tmp_path: Path)
             "-o",
             "pipefail",
             "-c",
-            "curl -fsSL https://example.invalid/install.sh | bash -s -- --launch",
+            "curl -fsSL https://example.invalid/install.sh | bash -s --",
         ],
         env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
         text=True,

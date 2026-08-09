@@ -23,6 +23,8 @@ from .test_flow_helpers import (
 
 @pytest.mark.asyncio
 async def test_ctrl_g_toggles_durable_thinking_block_in_place() -> None:
+    """ctrl+g keeps ``toggle_thinking`` WHILE a turn runs (item 3b split the
+    chord: idle ctrl+g is the timeline strip now)."""
     adapter = GatedDemoAdapter()
     app = TuiApp(adapter)
     async with app.run_test(size=SIZE) as pilot:
@@ -30,6 +32,14 @@ async def test_ctrl_g_toggles_durable_thinking_block_in_place() -> None:
         app.transcript.append(Thinking(id=app.allocator.next_id(), text="weigh A\npick B"))
         await pilot.pause()
         assert blocks_of(app, "thinking")[0].expanded is False  # default collapsed
+
+        # Park the next turn at its first wait so ctrl+g hits the RUNNING
+        # branch (thinking toggle), not the idle timeline strip.
+        from .test_flow_helpers import type_text, wait_for
+
+        await type_text(pilot, "start turn")
+        await pilot.press("enter")
+        assert await wait_for(pilot, lambda: app.turn_active)
 
         await pilot.press("ctrl+g")
         await pilot.pause()
@@ -40,6 +50,8 @@ async def test_ctrl_g_toggles_durable_thinking_block_in_place() -> None:
         await pilot.pause()
         assert blocks_of(app, "thinking")[0].expanded is False
         assert app.notice_slot.current == "thinking · collapsed"
+
+        adapter.release()
 
 
 @pytest.mark.asyncio
@@ -63,7 +75,8 @@ async def test_enter_on_focused_thinking_block_toggles_and_syncs_history() -> No
 @pytest.mark.asyncio
 async def test_ctrl_g_falls_back_to_live_tail_without_durable_thinking() -> None:
     """No durable thinking block yet → ctrl-g still drives the live-tail
-    reveal (PR #128), so the two surfaces coexist."""
+    reveal (PR #128), so the two surfaces coexist. Exercised mid-turn:
+    idle ctrl+g belongs to the timeline strip (item 3b)."""
     adapter = GatedDemoAdapter()
     app = TuiApp(adapter)
     async with app.run_test(size=SIZE) as pilot:
@@ -74,9 +87,16 @@ async def test_ctrl_g_falls_back_to_live_tail_without_durable_thinking() -> None
         await pilot.pause()
         assert app.live_tail.revealed is False
 
+        from .test_flow_helpers import type_text, wait_for
+
+        await type_text(pilot, "start turn")
+        await pilot.press("enter")
+        assert await wait_for(pilot, lambda: app.turn_active)
+
         await pilot.press("ctrl+g")
         await pilot.pause()
         assert app.live_tail.revealed is True
         assert app.notice_slot.current == "thinking · shown"
+        adapter.release()
         # The withheld block stays collapsed/untouched.
         assert blocks_of(app, "thinking")[0].expanded is False

@@ -1,22 +1,4 @@
-"""Update the bundles/modules tui mounts — over amplifier-foundation.
-
-This is NOT the umbrella uv self-update: tui isn't the ``amplifier``
-uv-tool umbrella, it *consumes* amplifier-core/foundation as declared deps.
-So ``update`` here refreshes the amplifier **runtime cache**
-(``~/.amplifier/cache/<repo>-<hash>/``, the source layer foundation fetches
-bundles/modules into) for the bundles tui actually composes — the active
-bundle + its ``bundle.app`` overlays — via foundation's
-``check_bundle_status`` (SHA compare, pinned refs skipped) and
-``update_bundle`` (re-download updateable sources + reinstall deps).
-
-``--force`` additionally runs ``uv cache clean`` so a ``@main``-pinned git
-source that's stale in uv's *package* cache is genuinely re-fetched.
-
-Updating the app itself, or the whole Amplifier platform, is out of scope
-(see :func:`self_update_hint`) — the app uses the canonical source installer
-(or ``git pull``/``uv sync`` for a development clone); the platform uses
-``uv tool upgrade amplifier``. Neither is this command.
-"""
+"""Update helpers for the TUI app and its advanced bundle-cache refresh path."""
 
 from __future__ import annotations
 
@@ -26,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ..install_contract import APP_REPO_URL, SOURCE_INSTALL_COMMAND
+from ..install_contract import APP_REPO_URL, SOURCE_INSTALL_COMMAND, source_install_argv
 from .config import (
     DEFAULT_BUNDLE,
     SettingsPaths,
@@ -47,6 +29,8 @@ UNCHECKABLE_LABEL = "local/non-git sources skipped (no remote to compare)"
 # their upstream lives. The app itself is git-hosted; core is the PyPI one.
 APP_PACKAGE = "amplifier-app-tui"
 FOUNDATION_REPO_URL = "https://github.com/microsoft/amplifier-foundation"
+DEV_UPDATE_COMMAND = "git pull --ff-only && uv sync"
+"""Dev-checkout repair/update guidance; printed, not run, by public lifecycle commands."""
 
 
 @dataclass(frozen=True)
@@ -293,9 +277,9 @@ async def check_packages() -> list[PackageStatus]:
 
     The three checks run concurrently in threads (each is subprocess/httpx with
     a short timeout). Network failures degrade per-row to "could not check" —
-    this never crashes and never blocks past the timeouts. Advisory only:
-    applying app/platform updates stays out of scope (see
-    :func:`self_update_hint`)."""
+    this never crashes and never blocks past the timeouts. App updates are
+    handled by top-level ``amplifier-tui update``; platform/package rows stay
+    advisory."""
     import asyncio
 
     return list(
@@ -310,9 +294,9 @@ async def check_packages() -> list[PackageStatus]:
 # --- app identity (verified, not hardcoded) + upgrade-path confirmation -----
 # D1/AC3: `update` and the upgrade docs must PROVE what's installed, not just
 # echo the static `__version__` string baked at build time -- and, when the
-# app itself was upgraded (via the canonical source installer or
-# `git pull && uv sync`, both OUT of this command's scope), confirm it and say
-# what changed. See `self_update_hint` below for the paired guidance fix.
+# app itself is upgraded through the canonical source installer (or, for
+# editable dev checkouts, `git pull && uv sync`), confirm it and say what
+# changed. See `self_update_hint` below for the paired guidance fix.
 
 AppSource = Literal["git", "editable", "pypi", "unknown"]
 """How the running app was installed (PEP 610-derived).
@@ -351,6 +335,29 @@ class AppIdentity:
         return self.version
 
 
+@dataclass(frozen=True)
+class AppUpdateStatus:
+    """Update availability for the installed TUI app itself."""
+
+    identity: AppIdentity
+    remote_commit: str | None = None
+    has_update: bool | None = None
+    note: str | None = None
+
+    def describe(self) -> str:
+        """One concise status line for the public ``amplifier-tui update`` command."""
+        if self.identity.source == "editable":
+            return "dev checkout detected — update with `git pull --ff-only && uv sync`"
+        if self.has_update is True:
+            local = (self.identity.commit or "unknown")[:7]
+            remote = (self.remote_commit or "unknown")[:7]
+            return f"update available · {local} → {remote}"
+        if self.has_update is False:
+            suffix = f" ({self.identity.commit[:7]})" if self.identity.commit else ""
+            return f"up to date{suffix}"
+        return self.note or "could not check for app updates"
+
+
 def _install_source(dist_name: str) -> tuple[AppSource, str | None]:
     """PEP 610 introspection: how was *dist_name* installed, and its commit.
 
@@ -387,6 +394,65 @@ def app_identity(dist_name: str = APP_PACKAGE) -> AppIdentity:
     version = _dist_version(dist_name)
     source, commit = _install_source(dist_name)
     return AppIdentity(version=version, commit=commit, source=source)
+
+
+def check_app_update(identity: AppIdentity | None = None) -> AppUpdateStatus:
+    """Check whether the installed TUI app is behind the source channel.
+
+    This is side-effect-free and network-tolerant: git installs compare their
+    PEP 610 commit to upstream ``main``; editable/dev checkouts are explicitly
+    manual; unknown/PyPI-shaped installs degrade to guidance rather than
+    pretending to know how they should be updated.
+    """
+    identity = identity or app_identity()
+    if identity.source == "editable":
+        return AppUpdateStatus(identity, note="dev checkout")
+    if identity.source == "git" and identity.commit:
+        remote = _ls_remote_sha(APP_REPO_URL)
+        if remote:
+            return AppUpdateStatus(
+                identity,
+                remote_commit=remote,
+                has_update=identity.commit != remote,
+            )
+        return AppUpdateStatus(identity, note="could not check upstream")
+    return AppUpdateStatus(identity, note="install source cannot be compared")
+
+
+def app_self_update_command(identity: AppIdentity | None = None) -> list[str] | None:
+    """Command used to update/repair the app, or ``None`` for dev checkouts."""
+    identity = identity or app_identity()
+    if identity.source == "editable":
+        return None
+    return source_install_argv()
+
+
+def run_app_self_update(identity: AppIdentity | None = None) -> tuple[bool, str]:
+    """Run the canonical source installer for non-editable installs.
+
+    Editable/dev checkouts are deliberately not mutated: running the global
+    source installer from inside ``uv run`` would clobber the developer's tool
+    story instead of repairing it.
+    """
+    import subprocess
+
+    identity = identity or app_identity()
+    cmd = app_self_update_command(identity)
+    if cmd is None:
+        return (
+            True,
+            f"dev checkout detected; skipped source installer. To update/repair: {DEV_UPDATE_COMMAND}",
+        )
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except FileNotFoundError:
+        return (False, f"{cmd[0]} not found on PATH — run manually: " + " ".join(cmd))
+    except Exception as error:  # noqa: BLE001 — lifecycle repair must return an actionable message
+        return (False, f"update could not run ({error}); run manually: " + " ".join(cmd))
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        return (False, detail[-1] if detail else f"installer exited {proc.returncode}")
+    return (True, "amplifier-tui updated; run `amplifier-tui version` to verify")
 
 
 _IDENTITY_STATE_NAME = "tui_identity.json"
@@ -543,7 +609,7 @@ class AnchorsStatus:
             remote = (self.remote_commit or "unknown")[:8]
             return (
                 f"anchors (@{self.ref}) is behind upstream · {cached} → {remote} · "
-                "run `amplifier-tui update`"
+                "run `amplifier-tui bundle refresh`"
             )
         if self.has_update is False:
             cached = (self.cached_commit or self.remote_commit or "")[:8]
@@ -770,31 +836,19 @@ def uv_cache_clean() -> bool:
 
 
 def self_update_hint(identity: AppIdentity | None = None) -> str:
-    """How to update the app + platform (out of scope for this command).
-
-    Tailored to how the app is ACTUALLY installed (verified via
-    :func:`app_identity`, defaulting to the live one) so an editable dev
-    checkout -- which `uv tool install --reinstall` would fight, clobbering
-    its own venv link -- is told ONLY `git pull && uv sync`, and every other
-    install shape gets the REAL installable URI (the one README.md
-    documents), never a bare `.` (which only resolves from inside a clone,
-    and was actively wrong advice for the documented global-install path:
-    running it from an arbitrary directory tries to install whatever
-    project happens to be in the CWD).
-    """
+    """How to update the app + platform, tailored to the install shape."""
     identity = identity or app_identity()
     if identity.source == "editable":
-        app_line = "to update the app itself (dev checkout): `git pull && uv sync`"
+        app_line = f"to update the app itself (dev checkout): `{DEV_UPDATE_COMMAND}`"
     else:
         app_line = (
-            "to update the app itself: `git pull && uv sync` (clone) or "
-            f"`{SOURCE_INSTALL_COMMAND}` (source installer)"
+            f"to update the app itself: `amplifier-tui update` (runs `{SOURCE_INSTALL_COMMAND}`)"
         )
     return (
         f"{app_line}\n"
         "to update the Amplifier platform: `uv tool upgrade amplifier`\n"
-        "then verify: `amplifier-tui version` (or re-run this command -- it reports the "
-        "installed version and flags an upgrade automatically)"
+        "to refresh advanced bundle/module caches: `amplifier-tui bundle refresh`\n"
+        "then verify: `amplifier-tui version`"
     )
 
 
@@ -806,12 +860,16 @@ __all__ = [
     "AnchorsStatus",
     "AppIdentity",
     "AppSource",
+    "AppUpdateStatus",
     "BundleUpdate",
+    "DEV_UPDATE_COMMAND",
     "PackageStatus",
     "SourceRow",
     "anchors_ref",
     "anchors_status",
+    "app_self_update_command",
     "app_identity",
+    "check_app_update",
     "check_bundles",
     "check_packages",
     "count_stale_sources",
@@ -823,6 +881,7 @@ __all__ = [
     "read_last_identity",
     "record_identity",
     "refresh_anchors",
+    "run_app_self_update",
     "self_update_hint",
     "shape_package_status",
     "shorten_cache_path",

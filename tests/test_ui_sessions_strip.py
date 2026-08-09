@@ -260,3 +260,38 @@ async def test_click_row_body_still_activates_not_resume() -> None:
         await pilot.pause()
         assert app.activated == ["aaaa1111ff"]
         assert app.resumed == []
+
+
+@pytest.mark.asyncio
+async def test_show_sessions_query_prefilters_rows() -> None:
+    """``/sessions auth`` opens directly on the matching row (S2 recall)."""
+    app = SessionsHost()
+    async with app.run_test() as pilot:
+        strip = app.query_one(SessionsStrip)
+        strip.show_sessions(SUMMARIES, current="", query="auth")
+        await pilot.pause()
+        assert strip.is_open
+        assert len(list(strip.query(_SessionRow))) == 1
+        assert strip.selected_summary == SUMMARIES[0]
+
+
+@pytest.mark.asyncio
+async def test_show_sessions_query_supports_fuzzy_recall() -> None:
+    app = SessionsHost()
+    async with app.run_test() as pilot:
+        strip = app.query_one(SessionsStrip)
+        strip.show_sessions(SUMMARIES, current="", query="athrfctr")
+        await pilot.pause()
+        assert len(list(strip.query(_SessionRow))) == 1
+        assert strip.selected_summary == SUMMARIES[0]
+
+
+@pytest.mark.asyncio
+async def test_show_sessions_unmatched_query_keeps_strip_closed() -> None:
+    app = SessionsHost()
+    async with app.run_test() as pilot:
+        strip = app.query_one(SessionsStrip)
+        strip.show_sessions(SUMMARIES, current="", query="zzz")
+        await pilot.pause()
+        assert not strip.is_open
+        assert strip.selected_summary is None

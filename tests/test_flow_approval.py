@@ -62,8 +62,10 @@ async def test_approval_bar_replaces_composer_arrows_and_confirm() -> None:
         assert bar is not None
         assert bar.prompt == PYTEST_APPROVAL_PROMPT
         assert bar.options == APPROVAL_OPTIONS  # verbatim Allow once/always/Deny
-        # The bar replaces the composer while open.
-        assert app.composer.display is False
+        # The bar docks above the composer; the composer KEEPS display
+        # (upgrade 2, non-blocking) so an in-flight draft survives the
+        # decision. The bar still owns the keyboard while open.
+        assert app.composer.display is True
         assert app.notice_slot.current == APPROVAL_NOTICE
         assert app.footer_bar.state.context == "approval"
         assert footer_right_text(app.footer_bar.state) == "arrows select · enter confirm · esc deny"
@@ -84,7 +86,7 @@ async def test_approval_bar_replaces_composer_arrows_and_confirm() -> None:
         assert bar.option_texts() == ("Allow once", "› Allow always", "Deny")
         await pilot.press("left")
 
-        # Enter confirms → the composer comes back and the turn ships.
+        # Enter confirms → the turn ships and the footprint is gone.
         await pilot.press("enter")
         assert await wait_for(pilot, lambda: rules(app) >= 2 and not app.turn_active)
         assert app.approval_bar is None
@@ -119,6 +121,111 @@ async def test_auto_mode_defers_approval_without_mounting_a_blocking_bar() -> No
         )
 
 
+def test_pending_change_lines_prefers_a_verbatim_patch() -> None:
+    """An explicit patch/diff in the tool input travels byte-verbatim
+    (paged), never re-shaped by the before/after fallback."""
+    from amplifier_app_tui.ui.app_support import pending_change_lines
+
+    patch = "--- a/x.py\n+++ b/x.py\n@@ 4 @@\n-old\n+new"
+    lines = pending_change_lines({"patch": patch, "new_string": "ignored"})
+    assert lines == ("--- a/x.py", "+++ b/x.py", "@@ 4 @@", "-old", "+new")
+
+
+def test_pending_change_lines_unknown_input_yields_no_card_body() -> None:
+    """A gated call with no patch/before/after (e.g. a bare bash command)
+    must never INVENT a diff — the card falls back to its title."""
+    from amplifier_app_tui.ui.app_support import pending_change_lines
+
+    assert pending_change_lines({"command": "uv run pytest"}) is None
+    assert pending_change_lines({}) is None
+
+
+def test_pending_change_lines_pages_a_huge_edit() -> None:
+    from amplifier_app_tui.ui.app_support import pending_change_lines
+
+    big_new = "\n".join(f"line_{index}" for index in range(40))
+    lines = pending_change_lines({"new_string": big_new})
+    assert lines is not None
+    assert lines[-1].startswith("… ")
+    assert len(lines) <= 14  # page cap + head + ellipsis marker
+
+
+@pytest.mark.asyncio
+async def test_pending_change_card_lives_and_dies_with_the_ticket() -> None:
+    """Upgrade 2 (diff-first): an edit approval paints its pending change
+    in the transcript the moment the bar docks; resolving (or esc-deny)
+    removes the card again — decisions live in journal/blocked history,
+    not as a stale card."""
+    from amplifier_app_tui.kernel.approval import ApprovalDetail
+
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await seed_done(pilot, app)
+        await set_mode(pilot, app, "chat")  # auto defers instead of docking
+        detail = ApprovalDetail(
+            command="update src/session.py",
+            cwd="~/dev/app",
+            rule="write outside chat",
+            capability="write",
+            tool_input={
+                "file_path": "src/session.py",
+                "old_string": "def run():\n    old_call()",
+                "new_string": "def run():\n    new_call()",
+            },
+        )
+        app.present_approval(
+            "ticket-diff", "Allow edit?", ("Allow once", "Allow always", "Deny"), detail
+        )
+        assert await wait_for(pilot, lambda: app.approval_bar is not None)
+        cards = [b for b in app.transcript.blocks if b.kind == "pending_change"]
+        assert len(cards) == 1
+        card = cards[0]
+        assert card.title == "update src/session.py"
+        assert card.body_style == "diff"
+        assert any(line.startswith("--- a/src/session.py") for line in card.body)
+        assert any(line == "-def run():" for line in card.body)
+        assert any(line == "+new_call()" for line in card.body)
+        assert app._pending_change_block_id == card.id
+        # The composer never yielded — an in-flight draft survives.
+        assert app.composer.display is True
+
+        await pilot.press("escape")  # deny closes the ticket AND its card
+        await pilot.pause()
+        assert app.approval_bar is None
+        assert app._pending_change_block_id is None
+        assert not [b for b in app.transcript.blocks if b.kind == "pending_change"]
+
+
+@pytest.mark.asyncio
+async def test_pending_change_card_survives_a_cleared_transcript() -> None:
+    """A transcript clear beneath a live ticket unmounts the card with
+    every other block; resolving afterward must not raise on the stale
+    id. The /clear command path itself is unreachable mid-approval (the
+    bar owns the keyboard) — ``transcript.clear_view`` IS the same
+    view-only unmount /clear routes through."""
+
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await seed_done(pilot, app)
+        await set_mode(pilot, app, "chat")
+        app.present_approval(
+            "ticket-cmd", "Allow uv run pytest?", ("Allow once", "Allow always", "Deny")
+        )
+        assert await wait_for(pilot, lambda: app.approval_bar is not None)
+        assert app._pending_change_block_id is not None
+
+        # The bar owns the keyboard, so route the clear straight through
+        # the chop path a supervisor hits AFTER the bar's esc-deny -- here
+        # we force the stale-id race directly instead.
+        app.transcript.clear_view()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.approval_bar is None
+        assert app._pending_change_block_id is None
+
+
 @pytest.mark.asyncio
 async def test_ctrl_y_parks_live_ticket_and_denies_current_call_to_continue() -> None:
     """Ctrl-y parks the decision, denies this call, and keeps work moving."""
@@ -137,8 +244,9 @@ async def test_ctrl_y_parks_live_ticket_and_denies_current_call_to_continue() ->
             lambda: app.approval_bar is None and rules(app) >= 2 and not app.turn_active,
         )
 
-        # The composer is back, one decision is waiting, and the denied tool
-        # call returned to the model so the scripted turn reached close-out.
+        # The composer stays live (non-blocking), one decision is waiting,
+        # and the denied tool call returned to the model so the scripted
+        # turn reached close-out.
         assert app.composer.display is True
         assert adapter.needs_you.pending_count == 1
         assert app.footer_bar.state.waiting == 1

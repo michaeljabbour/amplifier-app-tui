@@ -367,7 +367,7 @@ async def verify_provider(
                 error=f"provider '{module_id}' cannot import dependency '{missing}'",
                 remediation=(
                     "run `amplifier-tui` once without --model so normal startup can install "
-                    "provider dependencies; if it persists, run `amplifier-tui update --force`"
+                    "provider dependencies; if it persists, run `amplifier-tui bundle refresh --force`"
                 ),
             )
         return ProviderVerification(

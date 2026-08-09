@@ -48,7 +48,7 @@ from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.widgets import Static
 
-from ..kernel.session_manager import SessionSummary
+from ..kernel.session_manager import SessionSummary, summary_matches
 from .session_ops_view import STATE_LABELS, STATE_STYLE_TOKENS
 
 ID_COL_MIN_WIDTH = 10
@@ -279,14 +279,26 @@ class SessionsStrip(VerticalScroll):
             return None
         return self._summaries[self._selected]
 
-    def show_sessions(self, summaries: Sequence[SessionSummary], *, current: str = "") -> None:
+    def show_sessions(
+        self,
+        summaries: Sequence[SessionSummary],
+        *,
+        current: str = "",
+        query: str = "",
+    ) -> None:
         """Open the picker on *summaries* (in the order supplied -- callers
         pass the newest-first roster from ``session_manager.list_summaries``).
 
-        An empty sequence keeps the strip hidden -- the app shows a "no
-        stored sessions" notice instead (mirrors ``RewindStrip.
-        show_checkpoints`` on an empty checkpoint list).
+        A non-blank *query* pre-filters the roster (substring or fuzzy over
+        name, bundle, id, and tags) so ``/sessions sweep`` opens directly
+        on the matching rows.
+
+        An empty sequence -- or a query that matches nothing -- keeps the
+        strip hidden; the app shows a notice instead (mirrors
+        ``RewindStrip.show_checkpoints`` on an empty checkpoint list).
         """
+        if query.strip():
+            summaries = [s for s in summaries if summary_matches(s, query)]
         self._summaries = tuple(summaries)
         self._current = current
         self._selected = 0

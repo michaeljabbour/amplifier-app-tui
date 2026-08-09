@@ -14,6 +14,7 @@ live list of open work is [../BACKLOG.md](../BACKLOG.md).
 | [2026-07-21 phase 1 — plan panel](2026-07-21-ambient-progress-phase1-plan-panel.md) | ✅ Implemented (PR #13) |
 | [2026-07-21 phase 2 — delegate summary](2026-07-21-ambient-progress-phase2-delegate-summary.md) | ✅ Implemented (PR #13) |
 | [2026-07-21 phase 3 — lane live tail](2026-07-21-ambient-progress-phase3-live-tail.md) | ✅ Implemented (PR #13, deepened in PR #17) |
+| [2026-08-08 docs site + simple setup](2026-08-08-docs-site-simple-setup.md) | 🚧 In execution (branch `task/simplify-public-contract`) |
 
 ## Decision / design docs (2026-07-22 audit round)
 

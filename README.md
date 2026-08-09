@@ -9,18 +9,19 @@ A full-screen terminal UI for [Amplifier](https://github.com/microsoft/amplifier
 ## Install
 
 The current distribution is a **latest-source channel** for macOS, Linux, and WSL. This
-single command installs the app and opens first-launch provider setup:
+single command installs the app. Run `amplifier-tui` afterward to launch first-run provider setup:
 
 ```sh
-bash -o pipefail -c "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash -s -- --launch"
+curl -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash
 ```
 
 The installer gets `uv` from Astral when needed, resolves `main` once to a full commit,
 checks out that exact revision, exports its committed `uv.lock`, installs the application
 under those locked runtime dependency versions, verifies the command, handles its `PATH`,
-and then launches the built-in setup flow. You need Bash, Git, curl, and an internet
-connection; it never uses `sudo`. There is no separate `init` step. Bash `pipefail` makes a
-failed bootstrap download return a failure instead of silently running an empty shell.
+and prints exactly how to run the verified executable. You need Bash, Git, curl, and an internet
+connection; it never uses `sudo`. There is no separate `init` step. If you want to inspect the
+script first or use a fail-closed shell wrapper, see the review-first section in the
+[install guide](docs/INSTALL.md#review-first--advanced-install).
 
 This is intentionally labeled a source install: the bootstrap URL follows `main`, and the
 project does not yet publish a signed binary/PyPI release or background app updater. The
@@ -73,6 +74,14 @@ amplifier-tui --demo     # launch with the scripted DemoRuntime (no credentials 
 
 Sessions are stored per project directory — `cd` into your project and launch. (Inside a clone without a tool install, prefix commands with `uv run`.)
 
+The public support story is intentionally three commands:
+
+```sh
+amplifier-tui          # launch / first-run provider setup
+amplifier-tui update   # update this app
+amplifier-tui reset    # safe repair (preserves keys, config, sessions, local bundles)
+```
+
 Options and subcommands:
 
 ```sh
@@ -92,7 +101,8 @@ amplifier-tui bundle list            # bundles from the shared registry (--all i
 amplifier-tui bundle use NAME        # set the active bundle (--global/--project/--local)
 amplifier-tui routing manage         # inspect and choose a routing matrix interactively
 amplifier-tui routing use NAME       # choose a matrix directly (e.g. anthropic or runpod)
-amplifier-tui update --check-only    # check the mounted bundles/modules for updates
+amplifier-tui update                 # update the app itself
+amplifier-tui reset                  # safe repair (cache/registry + app repair)
 ```
 
 A *bundle* is a packaged agent configuration — provider + tools + agents + behaviors. The app ships one (`tui`), so you never need `--bundle` to get started. The `bundle` group (`list · show · use · clear · current · add · remove · update`) reads and writes the same registry and settings the reference `amplifier` CLI uses.
@@ -164,17 +174,15 @@ boundary instead of pretending it hot-swapped it.
 ### Updating / uninstalling
 
 ```sh
-bash -o pipefail -c "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash"  # update this app from source
-amplifier-tui update                         # update the mounted bundles/modules (SHA-compare + re-fetch)
+amplifier-tui update                         # update this app from source
 uv tool upgrade amplifier                    # update the Amplifier platform (if installed)
 uv tool uninstall amplifier-app-tui          # remove this app
 uv tool uninstall amplifier                  # remove the Amplifier platform
 git pull && uv sync                          # update a development clone instead
 ```
 
-The app does not update itself in the background; re-running the source installer resolves
-and installs the then-current commit. `amplifier-tui update --check-only` reports available
-bundle/module updates without changing anything; `--force` runs `uv cache clean` first so
+The app does not update itself in the background; `amplifier-tui update` runs the same source-installer contract and installs the then-current commit. `amplifier-tui bundle refresh --check-only` reports available
+bundle/module cache updates without changing anything; `--force` runs `uv cache clean` first so
 `@main` sources genuinely re-fetch.
 Every `update` run also prints the app's VERIFIED installed version (read from the installed
 package's own metadata, not a hardcoded string) and, if it changed since your last run —
@@ -246,6 +254,14 @@ bundle.md                   the repo's amplifier bundle (packaged copy kept byte
 
 ## Documentation
 
+The user-facing documentation site lives in [`docs-site/`](docs-site/) and is published by
+GitHub Pages at <https://michaeljabbour.github.io/amplifier-app-tui/> — start with
+[Setup](docs-site/setup.md), then [Quickstart](docs-site/quickstart.md).
+[`docs-site/llms.txt`](docs-site/llms.txt) is served at the site root as `/llms.txt`: it is the
+agent-readable index of every published page and the source documents below.
+
+Engineering documentation in this repository:
+
 | Read | For |
 |---|---|
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | driving the TUI: modes, steering, approvals, lanes, rewind, keys, commands |
@@ -256,7 +272,7 @@ bundle.md                   the repo's amplifier bundle (packaged copy kept byte
 | [docs/BACKLOG.md](docs/BACKLOG.md) | what's next, calibrated against what's already shipped |
 | [docs/design-v3-cohesive.html](docs/design-v3-cohesive.html) | executable mockup — exact strings, colors, timing, state machines |
 | [docs/decisions/](docs/decisions/) | ADRs — why it's shaped this way (ADR-0007 = the architecture rules; ADR-0008 = the `amplifier-tui` command name) |
-| [docs/plans/](docs/plans/) | dated implementation plans, each with a status banner (all landed to date) |
+| [docs/plans/](docs/plans/) | dated implementation plans and design/decision docs; statuses range from implemented to proposed-only, and not every file carries a status banner |
 
 ## Architecture
 

@@ -42,6 +42,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from .fuzzy import fuzzy_indices
 from .persistence import (
     METADATA_FILENAME,
     TRANSCRIPT_FILENAME,
@@ -214,6 +215,31 @@ class SessionSummary:
         if not self.mtime:
             return "unknown"
         return format_time_ago(datetime.fromtimestamp(self.mtime, tz=UTC))
+
+
+def summary_matches(summary: SessionSummary, query: str) -> bool:
+    """``/sessions <query>`` recall: substring or fuzzy over the row's text.
+
+    A blank query matches everything. The needle is tried as a plain
+    substring first and then as a fuzzy subsequence (``swp`` finds a
+    session named ``auth-sweep``) over the name, bundle, short id, full
+    id, and each tag — case-insensitive.
+    """
+    needle = query.strip().casefold()
+    if not needle:
+        return True
+    haystacks = (
+        summary.name,
+        summary.bundle,
+        summary.short_id,
+        summary.session_id,
+        *summary.tags,
+    )
+    for hay in haystacks:
+        folded = hay.casefold()
+        if needle in folded or fuzzy_indices(needle, folded) is not None:
+            return True
+    return False
 
 
 def format_time_ago(dt: datetime) -> str:
@@ -795,6 +821,7 @@ __all__ = [
     "rename",
     "resolve",
     "sessions_by_tag",
+    "summary_matches",
     "summary_for",
     "take_pending_directive",
 ]

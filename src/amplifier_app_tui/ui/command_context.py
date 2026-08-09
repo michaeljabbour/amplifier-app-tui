@@ -203,8 +203,8 @@ class AppCommandContext:
     def rename_session(self, name: str) -> None:
         self._app.rename_session(name)
 
-    def show_sessions(self) -> None:
-        self._app.show_sessions()
+    def show_sessions(self, query: str = "") -> None:
+        self._app.show_sessions(query)
 
     def branch_session(self, name: str) -> None:
         self._app.branch_session(name)

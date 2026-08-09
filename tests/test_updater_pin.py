@@ -85,7 +85,7 @@ def test_describe_behind_names_the_action() -> None:
     )
     text = status.describe()
     assert status.is_stale
-    assert "behind upstream" in text and "amplifier-tui update" in text
+    assert "behind upstream" in text and "amplifier-tui bundle refresh" in text
 
 
 def test_describe_current() -> None:

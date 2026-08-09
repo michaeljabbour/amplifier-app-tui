@@ -1,4 +1,4 @@
-"""`amplifier-tui update` — pure helpers + CLI wiring.
+"""`amplifier-tui update` / `bundle refresh` — pure helpers + CLI wiring.
 
 The foundation-backed check/apply (check_bundles/update_bundles) and the
 package checks (check_packages) hit the network/cache, so the CLI tests stub
@@ -12,8 +12,58 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+from amplifier_app_tui.install_contract import PUBLIC_SOURCE_INSTALL_COMMAND
 from amplifier_app_tui.kernel import updater
 from amplifier_app_tui.main import main
+
+
+# -- top-level app self-update ------------------------------------------------
+
+
+def test_top_level_update_git_install_runs_source_installer(monkeypatch) -> None:
+    identity = updater.AppIdentity(version="0.1.0", commit="aaaaaaa", source="git")
+    calls: list[updater.AppIdentity] = []
+
+    def fake_self_update(ident: updater.AppIdentity | None = None) -> tuple[bool, str]:
+        assert ident is not None
+        calls.append(ident)
+        return True, "updated"
+
+    monkeypatch.setattr(updater, "app_identity", lambda *a, **k: identity)
+    monkeypatch.setattr(
+        updater,
+        "check_app_update",
+        lambda ident=None: updater.AppUpdateStatus(identity, "bbbbbbb", True),
+    )
+    monkeypatch.setattr(updater, "run_app_self_update", fake_self_update)
+
+    result = CliRunner().invoke(main, ["update", "-y"])
+
+    assert result.exit_code == 0
+    assert calls == [identity]
+    assert "update available" in result.output
+    assert "updated" in result.output
+
+
+def test_top_level_update_editable_prints_dev_guidance_without_install(monkeypatch) -> None:
+    identity = updater.AppIdentity(version="0.1.0", commit=None, source="editable")
+    calls: list[updater.AppIdentity | None] = []
+    monkeypatch.setattr(updater, "app_identity", lambda *a, **k: identity)
+    monkeypatch.setattr(
+        updater,
+        "check_app_update",
+        lambda ident=None: updater.AppUpdateStatus(identity, note="dev checkout"),
+    )
+    monkeypatch.setattr(
+        updater, "run_app_self_update", lambda ident=None: calls.append(ident) or (True, "bad")
+    )
+
+    result = CliRunner().invoke(main, ["update", "-y"])
+
+    assert result.exit_code == 0
+    assert calls == []
+    assert "git pull --ff-only && uv sync" in result.output
+    assert "not running the global source installer" in result.output
 
 
 # -- pure helpers -----------------------------------------------------------
@@ -49,7 +99,12 @@ def test_self_update_hint_git_install_uses_canonical_installer_not_dot() -> None
     """A tool install gets the immutable-resolution bootstrap documented by README."""
     identity = updater.AppIdentity(version="0.1.0", commit="abc1234", source="git")
     hint = updater.self_update_hint(identity)
+    assert updater.SOURCE_INSTALL_COMMAND == PUBLIC_SOURCE_INSTALL_COMMAND
+    assert PUBLIC_SOURCE_INSTALL_COMMAND in hint
     assert updater.SOURCE_INSTALL_COMMAND in hint
+    assert "--launch" not in hint
+    for token in ("pipefail", "--proto", "--tlsv1.2", "bash -s --"):
+        assert token not in hint
     assert "--reinstall .`" not in hint
 
 
@@ -58,7 +113,7 @@ def test_self_update_hint_editable_checkout_skips_tool_install() -> None:
     that would fight its own venv link."""
     identity = updater.AppIdentity(version="0.1.0", commit=None, source="editable")
     hint = updater.self_update_hint(identity)
-    assert "git pull && uv sync" in hint
+    assert "git pull --ff-only && uv sync" in hint
     assert "scripts/install.sh" not in hint
     assert "dev checkout" in hint
 
@@ -173,7 +228,7 @@ def test_describe_identity_change_reports_version_bump() -> None:
 
 def test_update_prints_installed_identity_line(monkeypatch) -> None:
     _stub(monkeypatch, [updater.BundleUpdate("tui", "tui", "up to date", False)])
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert "amplifier-tui 0.1.0 (aaaaaaa)" in result.output  # _DEFAULT_STUB_IDENTITY
 
@@ -187,7 +242,7 @@ def test_update_reports_upgrade_when_identity_changed(monkeypatch) -> None:
         identity=current,
         previous_identity=previous,
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert "upgraded" in result.output
     assert "aaa1111" in result.output and "bbb2222" in result.output
@@ -201,7 +256,7 @@ def test_update_silent_about_upgrade_when_identity_unchanged(monkeypatch) -> Non
         identity=same,
         previous_identity=same,
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert "upgraded" not in result.output
 
@@ -213,7 +268,7 @@ def test_update_records_identity_even_in_check_only_mode(monkeypatch) -> None:
         [updater.BundleUpdate("tui", "tui", "up to date", False)],
         recorded=recorded,
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     # Even --check-only records the current identity: the NEXT invocation
     # (of `update` or, after a manual reinstall, whenever the user next
@@ -443,7 +498,7 @@ def _stub(
 
 def test_update_all_up_to_date(monkeypatch) -> None:
     _stub(monkeypatch, [updater.BundleUpdate("tui", "tui", "up to date", False)])
-    result = CliRunner().invoke(main, ["update"])
+    result = CliRunner().invoke(main, ["bundle", "refresh"])
     assert result.exit_code == 0
     assert "up to date" in result.output
 
@@ -455,11 +510,11 @@ def test_update_check_only_does_not_apply(monkeypatch) -> None:
         [updater.BundleUpdate("tui", "tui", "1 update available", True)],
         applied=applied,
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert applied == []  # nothing applied in check-only
     # check-only still shows the action summary (everything but prompt/apply).
-    assert "Run amplifier-tui update to install" in result.output
+    assert "Run amplifier-tui bundle refresh to install" in result.output
 
 
 def test_update_applies_stale_with_yes(monkeypatch) -> None:
@@ -472,7 +527,7 @@ def test_update_applies_stale_with_yes(monkeypatch) -> None:
         ],
         applied=applied,
     )
-    result = CliRunner().invoke(main, ["update", "-y"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "-y"])
     assert result.exit_code == 0
     assert applied == ["tui"]  # only the stale one
     assert "✓ tui" in result.output
@@ -489,7 +544,7 @@ def test_update_force_cleans_cache_and_updates_all(monkeypatch) -> None:
         cleaned=cleaned,
         applied=applied,
     )
-    result = CliRunner().invoke(main, ["update", "--force", "-y"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--force", "-y"])
     assert result.exit_code == 0
     assert cleaned == [True]  # uv cache cleaned
     assert applied == ["tui"]  # --force updates all, not just stale
@@ -500,7 +555,7 @@ def test_update_force_cleans_cache_and_updates_all(monkeypatch) -> None:
 
 def test_update_prints_checking_header_and_substeps(monkeypatch) -> None:
     _stub(monkeypatch, [updater.BundleUpdate("tui", "tui", "up to date", False)])
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert "Checking for updates..." in result.output
     assert "Checking modules..." in result.output
@@ -521,7 +576,7 @@ def test_update_renders_packages_table(monkeypatch) -> None:
         [updater.BundleUpdate("tui", "tui", "up to date", False)],
         packages=pkgs,
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert "Amplifier" in result.output and "Package" in result.output
     assert "amplifier-app-tui" in result.output
@@ -545,7 +600,7 @@ def test_update_packages_stale_is_advisory_only(monkeypatch) -> None:
         packages=pkgs,
         applied=applied,
     )
-    result = CliRunner().invoke(main, ["update", "-y"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "-y"])
     assert result.exit_code == 0
     assert "Update Amplifier packages manually" in result.output
     assert "uv tool upgrade amplifier" in result.output
@@ -571,7 +626,7 @@ def test_update_renders_sha_table(monkeypatch) -> None:
             )
         ],
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     # app-cli headers: packages table uses Local, module/bundle tables Cached.
     assert "Cached" in result.output and "Remote" in result.output
@@ -599,7 +654,7 @@ def test_update_section_order_amplifier_modules_bundles(monkeypatch) -> None:
             )
         ],
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     out = result.output
     assert out.index("Amplifier") < out.index("Modules") < out.index("Bundles")
@@ -638,7 +693,7 @@ def test_update_table_dedupes_shared_sources_across_bundles(monkeypatch) -> None
         ],
         packages=[],  # keep "amplifier-foundation" out of the packages section
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     # foundation is in BOTH bundles but must appear exactly once in the table.
     assert result.output.count("amplifier-foundation") == 1
@@ -685,7 +740,7 @@ def test_update_uncheckable_collapses_to_one_summary_line(monkeypatch) -> None:
             ),
         ],
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     # ONE dim summary line, pointing at --verbose — no wall of paths.
     assert "2 local/non-git sources skipped (no remote to compare)" in result.output
@@ -716,7 +771,7 @@ def test_update_verbose_lists_uncheckable_with_short_paths(monkeypatch) -> None:
             ),
         ],
     )
-    result = CliRunner().invoke(main, ["update", "--check-only", "--verbose"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only", "--verbose"])
     assert result.exit_code == 0
     # Shortened to <repo>/modules/<module> — no home prefix, no hash suffix.
     assert "amplifier-bundle-skills/modules/tool-apply-patch" in result.output
@@ -738,7 +793,7 @@ def test_update_summary_counts_unique_stale_sources_not_bundle_flags(monkeypatch
             updater.BundleUpdate("attractor", "git+u/attractor", "", True, sources=(shared,)),
         ],
     )
-    result = CliRunner().invoke(main, ["update"], input="n\n")
+    result = CliRunner().invoke(main, ["bundle", "refresh"], input="n\n")
     assert result.exit_code == 0
     assert "Update 1 module/bundle source(s)" in result.output
     assert "Proceed with update? [Y/n]" in result.output
@@ -752,7 +807,7 @@ def test_update_prompt_defaults_to_yes(monkeypatch) -> None:
         [updater.BundleUpdate("tui", "tui", "1 update available", True)],
         applied=applied,
     )
-    result = CliRunner().invoke(main, ["update"], input="\n")  # bare Enter → Y
+    result = CliRunner().invoke(main, ["bundle", "refresh"], input="\n")  # bare Enter → Y
     assert result.exit_code == 0
     assert applied == ["tui"]
 
@@ -767,7 +822,7 @@ def test_update_apply_reports_per_item_failure(monkeypatch) -> None:
         return ([], [(updater.display_name(t), "clone failed") for t in targets])
 
     monkeypatch.setattr(updater, "update_bundles", _apply_fail)
-    result = CliRunner().invoke(main, ["update", "-y"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "-y"])
     assert result.exit_code == 1
     assert "✗ tui — clone failed" in result.output
     assert "Update completed with errors" in result.output
@@ -788,7 +843,7 @@ def test_update_reports_anchors_behind(monkeypatch) -> None:
         [updater.BundleUpdate("tui", "tui", "up to date", False)],
         anchors=behind,
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert "anchors" in result.output and "behind upstream" in result.output
     # Anchors joins the action summary as a bullet when stale.
@@ -804,14 +859,14 @@ def test_update_reports_anchors_current(monkeypatch) -> None:
         [updater.BundleUpdate("tui", "tui", "up to date", False)],
         anchors=current,
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert "anchors up to date" in result.output
 
 
 def test_update_applies_anchors_refresh_when_stale(monkeypatch) -> None:
     """A stale anchors cache is applicable work: update refreshes it and
-    reports it — the "run `amplifier-tui update`" hint is no longer circular."""
+    reports it — the "run `amplifier-tui bundle refresh`" hint is no longer circular."""
     refreshed: list = []
     applied: list = []
     behind = updater.AnchorsStatus(
@@ -824,7 +879,7 @@ def test_update_applies_anchors_refresh_when_stale(monkeypatch) -> None:
         applied=applied,
         refreshed=refreshed,
     )
-    result = CliRunner().invoke(main, ["update", "-y"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "-y"])
     assert result.exit_code == 0, result.output
     assert refreshed == [True]
     assert applied == []  # no stale bundles — only anchors needed work
@@ -843,7 +898,7 @@ def test_update_check_only_never_refreshes_anchors(monkeypatch) -> None:
         anchors=behind,
         refreshed=refreshed,
     )
-    result = CliRunner().invoke(main, ["update", "--check-only"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "--check-only"])
     assert result.exit_code == 0
     assert refreshed == []
 
@@ -862,7 +917,7 @@ def test_update_reports_anchors_refresh_failure(monkeypatch) -> None:
         return False
 
     monkeypatch.setattr(updater, "refresh_anchors", _refresh_fail)
-    result = CliRunner().invoke(main, ["update", "-y"])
+    result = CliRunner().invoke(main, ["bundle", "refresh", "-y"])
     assert result.exit_code == 1
     assert "✗ anchors — refresh failed" in result.output
 
@@ -886,7 +941,7 @@ def test_update_renders_bundle_error(monkeypatch) -> None:
             )
         ],
     )
-    result = CliRunner().invoke(main, ["update"])
+    result = CliRunner().invoke(main, ["bundle", "refresh"])
     assert result.exit_code == 1
     assert "Could not resolve URI: tui" in result.output
     assert "could not be checked" in result.output

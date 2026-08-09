@@ -25,7 +25,9 @@ uv run amplifier-tui bundle list  # bundles from the shared registry (--all for 
 uv run amplifier-tui bundle use B # set the active bundle (--global/--project/--local)
 uv run amplifier-tui routing manage   # inspect and choose a routing matrix
 uv run amplifier-tui routing use NAME # choose one directly (anthropic, runpod, ...)
-uv run amplifier-tui update       # update the mounted bundles/modules (--check-only/--force)
+uv run amplifier-tui update       # update the app itself (--check-only/--force)
+uv run amplifier-tui reset        # safe repair: clear cache/registry + repair app
+uv run amplifier-tui bundle refresh # advanced: refresh mounted bundles/modules
 ```
 
 `bundle` also has `show · current · clear · add · remove · update`; run
@@ -63,7 +65,7 @@ uv run amplifier-tui serve --attach amplifier-session:SESSION_ID#ho-9a2  # claim
 hands you the write lease. Full contract: [SESSION-CONTROL.md](SESSION-CONTROL.md).
 
 **First run:** follow the [README's Install section](../README.md#install). Its single
-source-install command verifies `amplifier-tui` and opens the built-in provider setup; the
+source-install command verifies `amplifier-tui`; launch it to open the built-in provider setup; the
 full [Amplifier](https://github.com/microsoft/amplifier) CLI is optional. Existing
 `~/.amplifier/` providers and credentials are reused automatically. If anything is off,
 `doctor` will tell you what and how to fix it. Not sure everything's wired? `--demo` always

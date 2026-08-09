@@ -186,22 +186,40 @@ async def test_theme_switch_at_runtime_via_command() -> None:
         assert app.theme == theme_id("graphite")
         assert app.notice_slot.current == "theme graphite"
 
-        # Bare /theme cycles graphite → carbon → paper (AC4/#210) → slate.
+        # Bare /theme opens the live-preview picker on the current theme.
         await type_text(pilot, "/theme")
         await pilot.press("enter")
+        await pilot.pause()
+        assert app.theme_strip.is_open
+        assert app.theme_strip.selected_name == "graphite"
+        assert app.theme == theme_id("graphite")  # opening alone changes nothing
+
+        # Moving the highlight repaints live (preview, not yet kept).
+        await pilot.press("down")
         await pilot.pause()
         assert app.theme == theme_id("carbon")
-
-        await type_text(pilot, "/theme")
-        await pilot.press("enter")
+        await pilot.press("down")
         await pilot.pause()
         assert app.theme == theme_id("paper")
-        assert app.notice_slot.current == "theme paper"
 
+        # Esc closes the picker AND reverts to the opening theme.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.theme_strip.is_open
+        assert app.theme == theme_id("graphite")
+
+        # Reopen, move one up, enter KEEPS the highlighted theme.
         await type_text(pilot, "/theme")
         await pilot.press("enter")
         await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
         assert app.theme == theme_id("slate")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not app.theme_strip.is_open
+        assert app.theme == theme_id("slate")
+        assert app.notice_slot.current == "theme slate"
 
         # Unknown names change nothing and explain the choices.
         await type_text(pilot, "/theme neon")
