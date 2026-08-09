@@ -4443,29 +4443,28 @@ async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: boo
 
     console = Console()
 
-    # Prove what's installed on every invocation. Persist the comparison
-    # baseline only after a non-check-only run crosses its action/no-op gate;
-    # a command promising "nothing changed" must not write even this
-    # auto-regenerating cache file.
+    # Prove what's installed on every invocation, but never describe a cached
+    # identity transition here.  This command did not perform an app upgrade;
+    # painting an old PATH-vs-checkout change as "upgraded" is misleading.
     current_identity = updater.app_identity()
-    previous_identity = updater.read_last_identity()
     console.print("[bold]Amplifier bundle refresh[/bold]")
     console.print(
         f"Installed app  {_active_command_name()} {current_identity.label()}", style="dim"
     )
-    identity_change = updater.describe_identity_change(previous_identity, current_identity)
-    if identity_change is not None:
-        console.print(f"[green]✓[/green] {identity_change}")
 
-    console.print("Checking for updates...")
-    console.print("  Checking modules...", style="dim")
-    console.print("  Checking bundles...", style="dim")
+    console.print("Checking for source-cache updates...")
+    console.print("  1/3 Checking modules and bundles...", style="dim")
     if force:
         console.print(
             "  Force refresh requested; cache clearing waits for confirmation.", style="dim"
         )
 
-    statuses = await updater.check_cached_sources() if check_only else await updater.check_bundles()
+    with console.status(
+        "[cyan]Comparing cached module and bundle revisions...[/cyan]", spinner="dots"
+    ):
+        statuses = (
+            await updater.check_cached_sources() if check_only else await updater.check_bundles()
+        )
     if not statuses:
         if check_only:
             console.print("No cached bundle/module sources to compare yet.")
@@ -4476,13 +4475,16 @@ async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: boo
         else:
             console.print("no bundles to check")
         console.print(updater.self_update_hint(), style="dim")
-        if not check_only:
-            updater.record_identity(current_identity)
         return 0
 
     # Amplifier packages (app + core + foundation) — advisory rows; offline
     # degrades each to a dim "could not check", never a crash.
-    packages = await updater.check_packages()
+    console.print("  2/3 Checking Amplifier packages...", style="dim")
+    with console.status("[cyan]Comparing installed package revisions...[/cyan]", spinner="dots"):
+        packages = await updater.check_packages()
+    console.print("  3/3 Checking the pinned Anchors source...", style="dim")
+    with console.status("[cyan]Checking the pinned Anchors revision...[/cyan]", spinner="dots"):
+        anchors = await updater.anchors_status()
 
     console.print()
     _print_update_table(console, statuses, packages)
@@ -4510,7 +4512,6 @@ async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: boo
 
     # Anchors is composed via an include, which foundation's check skips — so
     # surface its freshness explicitly (offline degrades to a neutral note).
-    anchors = await updater.anchors_status()
     if anchors.is_stale:
         console.print(f"[yellow]●[/yellow] {anchors.describe()}")
     elif anchors.error is not None or anchors.ref is None:
@@ -4539,8 +4540,6 @@ async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: boo
             verb = "has" if len(package_updates) == 1 else "have"
             console.print(f"  • Update Amplifier packages manually ({names} {verb} updates):")
         console.print(updater.self_update_hint(), style="dim")
-        if not check_only:
-            updater.record_identity(current_identity)
         return 1 if errored else 0
 
     # Action summary (app-cli style bullets), shown before the prompt and in
@@ -4573,18 +4572,19 @@ async def _bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: boo
         console.print("Update cancelled · nothing changed", style="dim")
         return 0
 
-    updater.record_identity(current_identity)
     if force:
         console.print("Clearing uv cache...", style="dim")
         updater.uv_cache_clean()
 
     targets = statuses if force else stale
-    updated, failed = await updater.update_bundles([s.target for s in targets])
-    if anchors_work:
-        if await updater.refresh_anchors():
-            updated.append("anchors")
-        else:
-            failed.append(("anchors", "refresh failed"))
+    console.print("Applying source-cache updates...", style="dim")
+    with console.status("[cyan]Refreshing module and bundle sources...[/cyan]", spinner="dots"):
+        updated, failed = await updater.update_bundles([s.target for s in targets])
+        if anchors_work:
+            if await updater.refresh_anchors():
+                updated.append("anchors")
+            else:
+                failed.append(("anchors", "refresh failed"))
 
     # Per-item apply results, then the app-cli completion lines.
     console.print()
@@ -4619,9 +4619,8 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
 
     console = Console(highlight=False)
     identity = updater.app_identity()
-    status = updater.check_app_update(identity)
     console.print("[bold]Amplifier update[/bold]")
-    console.print(f"{_active_command_name()} {identity.label()}", style="dim")
+    console.print(f"Installed  {identity.label()}")
 
     if identity.source == "editable":
         console.print("[green]✓ Development checkout detected[/green]")
@@ -4630,23 +4629,39 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
         console.print("\n[dim]Nothing changed.[/dim]")
         return 0
 
+    console.print("\n1/3  Checking the app update channel...", style="dim")
+    with console.status("[cyan]Resolving the latest source revision...[/cyan]", spinner="dots"):
+        status = updater.check_app_update(identity)
+
     if status.has_update is True:
-        console.print(f"[yellow]●[/yellow] {status.describe()}")
+        console.print(
+            f"[yellow]●[/yellow] Available  source revision "
+            f"{(status.remote_commit or 'unknown')[:7]}"
+        )
+        console.print(
+            "  The target package version is verified after installation; the commit identifies "
+            "this source update.",
+            style="dim",
+        )
     elif status.has_update is False:
         console.print(f"[green]✓[/green] {status.describe()}")
     else:
         console.print(f"[yellow]?[/yellow] {status.describe()}")
 
-    cmd = updater.app_self_update_command(identity)
+    target_commit = status.remote_commit if status.has_update is True else None
+    cmd = updater.app_self_update_command(identity, target_commit=target_commit)
     command_text = " ".join(cmd or [])
     if check_only:
         if status.has_update is True:
-            console.print(f"Run [cyan]{_command('update')}[/cyan] to install ({command_text})")
-        elif status.has_update is None:
+            console.print("\nUpdate plan")
+            console.print(f"  Installed  {identity.label()}", style="dim")
             console.print(
-                f"Run [cyan]{_command('update', '--force')}[/cyan] to repair ({command_text})"
+                f"  Target     source revision {(target_commit or 'unknown')[:7]}", style="dim"
             )
-        console.print("[dim]Check complete · nothing changed.[/dim]")
+            console.print(f"Run [cyan]{_command('update')}[/cyan] to install.")
+        elif status.has_update is None:
+            console.print(f"Run [cyan]{_command('update', '--force')}[/cyan] to repair.")
+        console.print("\n[dim]Check complete · nothing changed.[/dim]")
         return 0
 
     if status.has_update is False and not force:
@@ -4656,15 +4671,51 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
     if verbose and command_text:
         console.print(f"installer: {command_text}", style="dim")
 
+    console.print("\nUpdate plan")
+    console.print(f"  Installed  {identity.label()}")
+    if target_commit:
+        console.print(f"  Target     source revision {target_commit[:7]}")
+    else:
+        console.print("  Target     reinstall current source channel")
+    console.print("  Method     verified source installer", style="dim")
+
     if not yes and not click.confirm(
-        f"Run the source installer to update {_active_command_name()}?", default=False
+        f"Install this update for {_active_command_name()}?", default=False
     ):
         console.print("Update cancelled · nothing changed", style="dim")
         return 0
 
-    ok, message = updater.run_app_self_update(identity)
-    console.print(message if ok else f"update failed: {message}", style="green" if ok else "red")
-    return 0 if ok else 1
+    console.print("\n2/3  Installing the resolved source revision...", style="dim")
+    with console.status("[cyan]Installing Amplifier TUI...[/cyan]", spinner="dots"):
+        ok, message = updater.run_app_self_update(
+            identity,
+            target_commit=target_commit,
+            on_output=lambda line: console.print(f"  {line}", style="dim"),
+        )
+    if not ok:
+        console.print(f"[red]✗ Update failed[/red] — {message}")
+        return 1
+
+    console.print("\n3/3  Verifying the installed revision...", style="dim")
+    with console.status("[cyan]Reading installed package metadata...[/cyan]", spinner="dots"):
+        updated_identity = updater.app_identity()
+    console.print(f"Verified   {updated_identity.label()}")
+    if target_commit and updated_identity.commit != target_commit:
+        actual = (updated_identity.commit or "unknown")[:7]
+        console.print(
+            f"[red]✗ Verification failed[/red] — expected {target_commit[:7]}, found {actual}"
+        )
+        console.print(f"Run [cyan]{_command('version')}[/cyan] before trying again.", style="dim")
+        return 1
+
+    console.print(f"[green]✓ Updated[/green]  {identity.label()} → {updated_identity.label()}")
+    if identity.version == updated_identity.version and identity.commit != updated_identity.commit:
+        console.print(
+            f"  Package version remained {updated_identity.version}; source revision changed.",
+            style="dim",
+        )
+    console.print(f"Run [cyan]{_command('config')}[/cyan] to review configuration.", style="dim")
+    return 0
 
 
 @main.command()

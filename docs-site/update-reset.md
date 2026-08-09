@@ -39,7 +39,11 @@ string — and then acts on how the app got there.
 
 **Installed as a git tool** (the documented install path). The command compares the installed
 commit against `main` in the app repository. If the install is behind, it runs the same source
-installer the one-line install uses, and the package is replaced in place.
+installer the one-line install uses, pinned to the exact commit it just resolved, and the package
+is replaced in place. The terminal shows `Installed`, `Available`, `Installing`, and `Verified`
+states; each installer phase streams as it runs. It then re-reads installed metadata and refuses
+to claim success if the resulting commit does not match the target. Top-level `update` never runs
+the slower module/bundle scan.
 
 **Editable or dev checkout** (`uv sync` or `pip install -e` from a clone). The command deliberately
 does *not* run the global source installer, because that would clobber a developer's tool story
@@ -52,8 +56,13 @@ Run: git pull --ff-only && uv sync
 
 Run that pair yourself inside the checkout.
 
-Each run snapshots identity before and after, so the next invocation can report the transition —
-for example `upgraded · <old-label> → <new-label>`.
+The version string can remain `0.1.0` while the source changes. The short commits in the
+`Installed → Available → Verified` transition are therefore the authoritative build identities.
+
+If you are standing inside a checkout, an unqualified `{{ site.data.product.command }}` still runs
+the executable found on `PATH`; it does not automatically use the checkout. Use
+`uv run {{ site.data.product.command }}` to exercise the checkout itself, or update the global
+tool and confirm its identity with `{{ site.data.product.command }} version`.
 
 ### Update flags
 

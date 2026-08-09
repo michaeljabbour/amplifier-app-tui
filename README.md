@@ -193,13 +193,16 @@ uv tool uninstall amplifier                  # remove the Amplifier platform
 git pull && uv sync                          # update a development clone instead
 ```
 
-The app does not update itself in the background; `amplifier-tui update` runs the same source-installer contract and installs the then-current commit. `amplifier-tui bundle refresh --check-only` reports available
+The app does not update itself in the background; `amplifier-tui update` resolves the latest
+source commit, shows an Installed → Available → Installing → Verified plan, and runs the same
+source-installer contract pinned to that exact commit. Installer phases stream while they run;
+the command does not silently scan bundle/module caches. `amplifier-tui bundle refresh --check-only` reports available
 bundle/module cache updates without changing anything; `--force` runs `uv cache clean` first so
 `@main` sources genuinely re-fetch.
-Every `update` run also prints the app's VERIFIED installed version (read from the installed
-package's own metadata, not a hardcoded string) and, if it changed since your last run —
-typically because you just ran the reinstall command above — confirms what you upgraded
-from and to. `amplifier-tui version` shows the same verified version on demand.
+Every successful update re-reads the installed package metadata and refuses to report success if
+the resulting commit does not match the target. The package version can remain `0.1.0` across
+source builds, so the displayed commit transition is the authoritative update boundary.
+`amplifier-tui version` shows the same verified identity on demand.
 
 ## Providers
 
