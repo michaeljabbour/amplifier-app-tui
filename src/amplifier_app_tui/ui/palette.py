@@ -188,9 +188,7 @@ class _CommandRow(Static):
     }
     """
 
-    def __init__(
-        self, spec: CommandSpec, index: int, *, highlights: tuple[int, ...] = ()
-    ) -> None:
+    def __init__(self, spec: CommandSpec, index: int, *, highlights: tuple[int, ...] = ()) -> None:
         super().__init__(id=f"palette-row-{index}")
         self.spec = spec
         self.index = index
@@ -347,8 +345,7 @@ class PaletteStrip(VerticalScroll):
         self._filter = filter_text
         self._filtered = filter_commands(self._commands, filter_text, usage=self._usage)
         self._highlights = {
-            spec.name: command_match_indices(spec.name, filter_text)
-            for spec in self._filtered
+            spec.name: command_match_indices(spec.name, filter_text) for spec in self._filtered
         }
         self._selected = 0
         self._selection_explicit = False
@@ -405,9 +402,7 @@ class PaletteStrip(VerticalScroll):
             if headers and spec.group != last_group:
                 last_group = spec.group
                 rows.append(_GroupHeader(spec.group))
-            rows.append(
-                _CommandRow(spec, index, highlights=self._highlights.get(spec.name, ()))
-            )
+            rows.append(_CommandRow(spec, index, highlights=self._highlights.get(spec.name, ())))
         await self.mount(*rows)
         self._apply_selection()
 

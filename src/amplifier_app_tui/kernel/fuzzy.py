@@ -43,9 +43,7 @@ def fuzzy_indices(pattern: str, text: str) -> tuple[int, ...] | None:
     return tuple(out)
 
 
-def fuzzy_score(
-    pattern: str, text: str, indices: tuple[int, ...] | None = None
-) -> float | None:
+def fuzzy_score(pattern: str, text: str, indices: tuple[int, ...] | None = None) -> float | None:
     """Score a subsequence match: higher is a tighter, earlier match.
 
     *indices* may be passed when the caller already ran

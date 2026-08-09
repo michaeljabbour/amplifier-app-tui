@@ -248,6 +248,7 @@ async def test_no_stored_sessions_shows_notice_not_an_empty_picker(monkeypatch) 
         assert not app.sessions_strip.is_open
         assert await wait_for(pilot, lambda: "no stored sessions" in app.notice_slot.current)
 
+
 @pytest.mark.asyncio
 async def test_sessions_query_prefilters_the_picker_rows() -> None:
     """``/sessions sweep`` opens the picker on the matching row only."""
@@ -257,9 +258,7 @@ async def test_sessions_query_prefilters_the_picker_rows() -> None:
         await type_text(pilot, "/sessions sweep")
         await pilot.press("enter")
         assert await wait_for(pilot, lambda: app.sessions_strip.is_open)
-        assert await wait_for(
-            pilot, lambda: len(list(app.sessions_strip.query(_SessionRow))) == 1
-        )
+        assert await wait_for(pilot, lambda: len(list(app.sessions_strip.query(_SessionRow))) == 1)
         selected = app.sessions_strip.selected_summary
         assert selected is not None
         assert selected.name == "backend api sweep"
@@ -273,7 +272,5 @@ async def test_sessions_unmatched_query_notices_without_opening() -> None:
         await seed_done(pilot, app)
         await type_text(pilot, "/sessions zzz")
         await pilot.press("enter")
-        assert await wait_for(
-            pilot, lambda: app.notice_slot.current == "no sessions match 'zzz'"
-        )
+        assert await wait_for(pilot, lambda: app.notice_slot.current == "no sessions match 'zzz'")
         assert not app.sessions_strip.is_open

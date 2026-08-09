@@ -102,8 +102,9 @@ async def test_slash_opens_palette_with_group_headers_and_filters() -> None:
         await type_text(pilot, "led")
         assert await wait_for(
             pilot,
-            lambda: tuple(c.name for c in app.palette.filtered_commands)
-            == ("/ledger", "/allowed-dirs"),
+            lambda: (
+                tuple(c.name for c in app.palette.filtered_commands) == ("/ledger", "/allowed-dirs")
+            ),
         )
         assert await wait_for(pilot, lambda: not list(app.palette.query(_GroupHeader)))
 
@@ -116,8 +117,9 @@ async def test_enter_runs_top_match_with_user_line_echo() -> None:
         await type_text(pilot, "/led")
         assert await wait_for(
             pilot,
-            lambda: tuple(c.name for c in app.palette.filtered_commands)
-            == ("/ledger", "/allowed-dirs"),
+            lambda: (
+                tuple(c.name for c in app.palette.filtered_commands) == ("/ledger", "/allowed-dirs")
+            ),
         )
         await pilot.press("enter")
         await pilot.pause()
