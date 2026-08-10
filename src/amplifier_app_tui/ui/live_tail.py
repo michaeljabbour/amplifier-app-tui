@@ -37,7 +37,7 @@ from ..model.blocks import (
     Segment,
 )
 from ..model.evidence import EvidenceLink
-from .segments import segment_markup
+from .segments import escape_content, segment_markup
 
 THROTTLE_SECONDS = 1 / 30
 """Minimum interval between tail repaints (30Hz — inside the 30–60Hz budget)."""
@@ -418,12 +418,10 @@ def lane_tail_markup(text: str) -> str:
     transcript — removed; the chat carries compact delegate lifecycle
     markers instead.
     """
-    from textual.markup import escape
-
     lines = [line for line in text.split("\n") if line.strip()][-LANE_TAIL_LINES:]
     if not lines:
         return ""
-    body = "\n".join(f"┆ {escape(line)}" for line in lines)
+    body = "\n".join(f"┆ {escape_content(line)}" for line in lines)
     return f"[$dim]{body}[/]"
 
 
@@ -683,22 +681,20 @@ class LiveTail(Static):
         producer: str = "",
         turn: int = 0,
     ) -> str:
-        from textual.markup import escape
-
         lines = source.split("\n")
         cut = visible_length(lines)
         visible = source if cut >= len(lines) else "\n".join(lines[:cut])
         body = ""
         if visible and block_type == "thinking":
             text = _last_lines(visible, max_lines)
-            body = f"[italic $dim]{escape(text)}[/]"
+            body = f"[italic $dim]{escape_content(text)}[/]"
         elif visible:
             render_source = _last_lines(source, max_lines) if max_lines is not None else source
             body = "".join(segment_markup(segment) for segment in streaming_spans(render_source))
         identity = f"{producer.strip()} · t{turn}" if producer.strip() and turn > 0 else ""
         if not identity:
             return body
-        label = f"[$dimmer]{escape(identity)}[/]"
+        label = f"[$dimmer]{escape_content(identity)}[/]"
         return f"{label}\n{body}" if body else label
 
 

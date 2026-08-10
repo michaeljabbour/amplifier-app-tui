@@ -17,6 +17,9 @@ form without ever touching a color value:
   theme, never from this module.
 - :func:`line_plain` / :func:`lines_plain` are the style-free projections
   the golden tests assert exact glyph/label text against.
+- :func:`escape_content` is the single home for escaping arbitrary
+  user/model text before it is embedded in Textual markup — see its
+  docstring for why ``textual.markup.escape`` itself is not safe enough.
 
 No hex values appear here; ``tests/test_ui_themes.py`` enforces that
 repo-wide.
@@ -24,16 +27,61 @@ repo-wide.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 
 from rich.style import Style
 from rich.text import Text
-from textual.markup import escape
 
 from ..model.blocks import Segment
 
 Line = tuple[Segment, ...]
 """One rendered transcript line: a run of styled segments."""
+
+_UNESCAPED_BRACKET_RE = re.compile(r"(\\*)(\[)")
+"""Any literal ``[``, with its run of preceding backslashes captured (so
+they can be correctly doubled -- see :func:`escape_content`)."""
+
+
+def escape_content(text: str) -> str:
+    r"""Escape *text* so Textual can never parse any part of it as markup.
+
+    ``textual.markup.escape`` (and ``rich.markup.escape``, which ships the
+    exact same implementation) only escapes a ``[`` when a *matching* ``]``
+    is present in the SAME string -- its regex is
+    ``(\\*)(\[[a-z#/@][^[]*?])``, requiring the whole ``[tag...]`` span,
+    closing bracket included, to be there. Content that opens a bracket
+    with no same-string closing ``]`` -- e.g. a Graphviz/DOT attribute list
+    wrapped across two source lines, where ``answer_spans`` turns each
+    fenced-code *line* into its own :class:`Segment` (``node [style=...,``
+    on one line, ``  shape=box];`` on the next) -- passes straight through
+    UNESCAPED and crashes Textual's parser (``MarkupError: Expected markup
+    value``) the moment that segment reaches a widget's ``update()``. This
+    crashed transcript rendering for any resumed session whose answer
+    quoted DOT/graphviz source, an unbalanced markdown/log fragment, or
+    similar (S5-class isolation gap, caught here at the source instead).
+
+    Textual's tokenizer only treats an unescaped ``[`` as special
+    (``open_tag = r"(?<!\\)\["``) -- it never inspects what follows.
+    Escaping EVERY ``[`` unconditionally is therefore always correct and
+    always sufficient; a bare ``]`` outside an open tag is always literal
+    and never needs escaping (Textual's own grammar has no rule that gives
+    a lone ``]`` meaning outside of one). The backslash-doubling below (and
+    the trailing-odd-backslash guard) mirror ``textual.markup.escape``
+    exactly, so text that already contains literal backslashes keeps
+    round-tripping the same way it does today.
+    """
+
+    def _double(match: re.Match[str]) -> str:
+        backslashes = match.group(1)
+        return f"{backslashes}{backslashes}\\["
+
+    escaped = _UNESCAPED_BRACKET_RE.sub(_double, text)
+    if escaped.endswith("\\") and not escaped.endswith("\\\\"):
+        # A lone trailing backslash would otherwise escape the '[' of the
+        # `[/]` (or `[link=...]`) tag callers append right after this text.
+        escaped += "\\"
+    return escaped
 
 
 def segment_style(segment: Segment) -> str:
@@ -64,7 +112,7 @@ def segment_markup(segment: Segment) -> str:
     """
     if not segment.text:
         return ""
-    body = escape(segment.text)
+    body = escape_content(segment.text)
     if segment.link:
         safe_link = segment.link.replace('"', "%22")
         body = f'[link="{safe_link}"]{body}[/link]'
@@ -122,6 +170,7 @@ def to_rich_text(line: Iterable[Segment], variables: Mapping[str, str] | None = 
 
 __all__ = [
     "Line",
+    "escape_content",
     "line_markup",
     "line_plain",
     "lines_markup",
