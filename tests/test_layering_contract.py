@@ -41,11 +41,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 APP_ROOT = SRC_ROOT / "amplifier_app_tui"
 
-# ui/app.py ratchet: current size at the WS0 baseline (2026-08-09).
+# ui/app.py ratchet: current size after WS1 step 1 (StripManager, 2026-08-09).
 # WS1 (docs/plans/2026-08-09-settings-ux-and-hygiene-campaign.md) extracts
 # controllers and ratchets this DOWN toward ADR-0007's <500-line budget.
 # Never raise it — shrink the file or split it instead.
-APP_PY_LINE_BUDGET = 2723
+APP_PY_LINE_BUDGET = 2566
 
 # The app's own package is layered, not banned: only EXTERNAL amplifier
 # platform packages (amplifier_core, amplifier_foundation, amplifier_module_*)
