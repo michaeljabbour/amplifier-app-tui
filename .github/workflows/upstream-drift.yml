@@ -1,0 +1,114 @@
+# Weekly upstream-drift watch: runs the read-only check modes of the two pin
+# lifecycle scripts and opens (or refreshes) one tracking issue on drift instead
+# of failing any gate. Schedule/dispatch only — intentionally no push or
+# pull_request trigger, so this can never block the default PR gate.
+name: upstream-drift
+
+on:
+  schedule:
+    # Mondays 06:17 UTC (off the hour: scheduled workflows queue at HH:00).
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-drift
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions pinned to a content-verified commit SHA, not a floating tag
+      # (compliance B9), matching ci.yml. Re-verify via
+      # `git ls-remote --tags <repo>` before bumping either version comment.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+
+      # bump_anchors_ref.py --check: verify-only, rewrites nothing.
+      # Exit 0 = all three outer ref copies match the reviewed recursive lock;
+      # exit 1 = lock mismatch, drifted copies, or invalid lock ref.
+      - name: Anchors ref check (read-only)
+        id: anchors
+        run: |
+          status=0
+          uv run python scripts/bump_anchors_ref.py --check 2>&1 | tee anchors.log || status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      # bump_optional_source_refs.py without --write is check mode per its
+      # usage line: compares every app-owned optional source pin with the
+      # upstream main tip via `git ls-remote`, rewrites nothing.
+      # Exit 0 = all current; exit 2 = stale pin(s); exit 1 = lookup/shape error.
+      - name: Optional source-refs check (read-only)
+        id: optional
+        run: |
+          status=0
+          uv run python scripts/bump_optional_source_refs.py 2>&1 | tee optional.log || status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        if: always()
+        env:
+          ANCHORS_STATUS: ${{ steps.anchors.outputs.status }}
+          OPTIONAL_STATUS: ${{ steps.optional.outputs.status }}
+        run: |
+          {
+            echo "## Upstream drift check"
+            echo
+            echo "| Check | Mode | Exit | Meaning |"
+            echo "|---|---|---|---|"
+            echo "| \`scripts/bump_anchors_ref.py --check\` | read-only | ${ANCHORS_STATUS} | $( [ "$ANCHORS_STATUS" = 0 ] && echo "in sync with the recursive lock" || echo "DRIFT: outer refs disagree with the reviewed lock" ) |"
+            echo "| \`scripts/bump_optional_source_refs.py\` | read-only (no \`--write\`) | ${OPTIONAL_STATUS} | $( [ "$OPTIONAL_STATUS" = 0 ] && echo "all optional pins current" || { [ "$OPTIONAL_STATUS" = 2 ] && echo "DRIFT: stale pin(s) behind upstream main" || echo "check error (network/shape) — see logs"; } ) |"
+            echo
+            echo "Checked $(date -u +%F) UTC. On drift this workflow opens or refreshes one \`upstream drift: <date>\` issue; it never blocks PRs."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Drift = anchors nonzero, or optional exit 2. Open one tracking issue per
+      # drift day, or refresh the existing open one (title carries the date).
+      - name: Open or refresh the tracking issue
+        if: steps.anchors.outputs.status != '0' || steps.optional.outputs.status == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANCHORS_STATUS: ${{ steps.anchors.outputs.status }}
+          OPTIONAL_STATUS: ${{ steps.optional.outputs.status }}
+        run: |
+          today="$(date -u +%F)"
+          title="upstream drift: ${today}"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          {
+            echo "The weekly upstream-drift check flagged drift. Run: ${run_url}"
+            echo
+            echo "### \`scripts/bump_anchors_ref.py --check\` (exit ${ANCHORS_STATUS})"
+            echo '```'
+            head -c 3000 anchors.log
+            echo '```'
+            echo "### \`scripts/bump_optional_source_refs.py\` (read-only check mode, exit ${OPTIONAL_STATUS})"
+            echo '```'
+            head -c 3000 optional.log
+            echo '```'
+            echo "_Remediation: review upstream, then run \`uv run python scripts/bump_anchors_ref.py\` (syncs to the reviewed lock) and/or \`uv run python scripts/bump_optional_source_refs.py --write\`, and land the printed focused gates._"
+          } > body.md
+
+          existing="$(gh issue list --state open --search 'in:title "upstream drift"' --json number --limit 5 --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file body.md
+            gh issue edit "$existing" --title "$title"
+            echo "refreshed issue #${existing}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            url="$(gh issue create --title "$title" --body-file body.md)"
+            echo "opened ${url}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # A check *error* (optional exit 1, e.g. network) is not drift: no issue,
+      # fail the scheduled run so it stays visible in the Actions tab only.
+      - name: Surface check errors
+        if: steps.optional.outputs.status == '1'
+        run: |
+          echo "::error::optional source-refs check errored (see step log)"
+          exit 1

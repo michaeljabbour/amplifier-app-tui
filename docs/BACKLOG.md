@@ -131,6 +131,35 @@ reviewed, merged, installed, deployed, or released.
 | 20 | Live bundle and additive module loading | **PARTIAL (safe additive/content path local; singleton identity boundary open)** | Bundle instructions/context and additive providers, tools, hooks, and agent definitions load into the current session; proven live configuration propagates transactionally to child sessions, providers remain idle until selected, and failed remaps restore identity/order. Orchestrator, context-module, existing-provider, and explicit agent-module identity replacement remains a new-session boundary. |
 | 21 | Live MCP reconciliation | **PARTIAL (new/owned servers live; boot-owned replacement upstream-bound)** | New and TUI-owned servers connect/reload/remove live. Boot-owned server replacement remains a restart boundary until the upstream aggregate exposes ownership-aware reconciliation. |
 
+## Upstream workstream (tracked, not local gaps)
+
+The four `PARTIAL` rows in the supplemental ledger above are partial only
+because their remaining slice lives in an upstream repository, not because
+local work is stalled or missing. They are recorded here as upstream
+workstream notes so they stop reading as local partials; the ledger rows
+themselves stay as-is. Staleness of the pins the TUI tracks against is
+watched by the weekly `upstream-drift` workflow, which opens a tracking
+issue instead of failing any gate.
+
+- **Row 4 — context-simple compaction (amplifier-core):** the `context-simple`
+  module still needs cached/incremental request-view maintenance and
+  compaction hysteresis. Local AC1/2/3/5 pass; AC4 stays open until both
+  pieces land upstream.
+- **Row 13 — cold-boot activation (amplifier-foundation,
+  [#130](https://github.com/michaeljabbour/amplifier-app-tui/issues/130)):**
+  Foundation `prepare()` still needs cross-process locking, timeout/retry,
+  signal-aware diagnostics, and lossless state merging; our deterministic
+  probe reproduced cache overlap and lost state against the inspected
+  upstream `main`.
+- **Row 20 tail — live singleton identity replacement (amplifier-core):**
+  replacing orchestrator, context-module, existing-provider, or explicit
+  agent-module identity in a running session remains an upstream seam; the
+  TUI deliberately mounts only the proven additive path until one exists.
+- **Row 21 tail — boot-owned MCP replacement (amplifier-foundation):**
+  new and TUI-owned servers already reconcile live; replacing a boot-owned
+  server stays a restart boundary until the upstream MCP aggregate exposes
+  ownership-aware reconciliation.
+
 ## Non-goals
 
 - **Syntax highlighting in answers.** Doable, but fights the restraint aesthetic
