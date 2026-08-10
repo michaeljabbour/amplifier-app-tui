@@ -36,9 +36,9 @@ Everything else on this page is discoverable, advanced surface — never require
 | `bundle` | Manage bundles: list, show, use, add, warm, remove, refresh |
 | `allowed-dirs` | Manage directories the AI may write to |
 | `denied-dirs` | Manage directories the AI may never write to |
-| `config` | Durable settings control center, plus redacted scriptable inspection |
-| `settings` | Read and write individual settings: get, set, unset (validated, secret-aware) |
-| `init` | Configure a provider and routing; no flags opens the provider-focused control center |
+| `config` | Settings-panel alias (hidden), plus redacted scriptable inspection: `show`, `paths` |
+| `settings` | Full-screen settings panel (bare); get, set, unset individual values (validated, secret-aware) |
+| `init` | Configure a provider and routing; no flags opens the panel's Providers section |
 | `provider` | Manage configured providers: list, add, use, remove, dashboard |
 | `notify` | Configure attention notifications: bell, desktop, ntfy push |
 | `update` | Update the installed app itself |
@@ -132,32 +132,41 @@ Runs an interactive session as a **bidirectional line protocol on stdio** — th
 | `--from-env` | Non-interactive: configure a provider detected from env vars. |
 | `--yes`, `-y` | Non-interactive: never prompt (needs --api-key). |
 
-With **no flags**, `init` opens the provider section of the durable settings control center.
+With **no flags**, `init` opens the settings panel on the Providers section.
 First run (no providers configured) enters a focused provider wizard automatically. Passing any
-flag bypasses the control center and targets the direct setup path; outside a terminal that path
+flag bypasses the panel and targets the direct setup path; outside a terminal that path
 requires `--yes` or `--from-env`.
 
 ### `config`
 
-Bare `config` opens the complete durable-settings control center. It begins with a redacted
-dashboard and one numbered path each for providers, models and routing, bundles, directory
-access, notifications, settings paths, and safe maintenance previews.
+The group is hidden from help; bare `config` is an alias that prints a note and opens
+the settings panel exactly like bare `settings`. Its two subcommands remain the
+canonical scriptable reads.
 
 | Surface | Purpose |
 |---|---|
-| `config --scope global\|project\|local` | Choose the initial write scope for interactive changes (default `global`) |
+| `config --scope global\|project\|local` | Choose the initial write scope for panel changes (default `global`) |
 | `config show` | Print effective provider, routing, bundle, access, and notification state |
 | `config show --json` | Emit the same redacted snapshot as one JSON document |
 | `config paths` | Print every settings path without reading or printing secret values |
 | `config paths --json` | Emit those paths as one JSON document |
 
 The in-session `/config` slash command is different: it edits the currently mounted live
-session. Top-level `{{ site.data.product.command }} config` manages durable setup for future launches.
+session. Top-level `{{ site.data.product.command }} settings` manages durable setup for future launches.
 
 ### `settings`
 
-The scriptable per-key surface over the durable settings files. Bare `settings` prints its
-own help; `get` with no argument lists the six settings sections, `get <section>` lists
+Bare `settings` opens the full-screen settings panel: a sidebar with the sections
+**Providers; Models & routing; Bundles; Directory access; Notifications; Behavior** and
+a read-only **Maintenance** tab, fields beside it. `settings <section>` deep-links into
+one section (the same ids `get` prints). Edits stage (`*`-marked) and write only after
+`ctrl+s` shows a redacted review and you confirm; `u` stages an unset, `s` cycles the
+write scope, `/` filters the visible section's fields, and Escape exits. Secret fields
+edit masked and route to `keys.env`. Outside a terminal, bare `settings` and the
+section deep-links exit 2 rather than waiting for input.
+
+The `get|set|unset` trio is the scriptable per-key surface over the same files. `get`
+with no argument lists the six settings sections, `get <section>` lists
 that section's settings, and `get <path>` prints one value plus its source (`env`,
 `keys.env`, `local`, `project`, `global`, or `default`).
 

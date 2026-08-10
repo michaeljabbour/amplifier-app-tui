@@ -10,7 +10,7 @@ A full-screen terminal UI for [Amplifier](https://github.com/microsoft/amplifier
 
 The current distribution is a **latest-source channel** for macOS, Linux, and WSL. This
 single command installs the app. Run `amplifier-tui` afterward to launch; first run opens
-the same guided control center available later as `amplifier-tui config`:
+the same settings panel available later as `amplifier-tui settings`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash
@@ -87,14 +87,15 @@ Options and subcommands:
 
 ```sh
 amplifier-tui --bundle NAME_OR_URI   # pick a bundle (default: settings/bundled)
-amplifier-tui config                 # guided durable settings control center
+amplifier-tui settings               # full-screen durable settings panel
+amplifier-tui settings providers     # deep-link straight into one section
 amplifier-tui config show --json     # redacted effective config for scripts
 amplifier-tui config paths           # exact settings locations; never prints secrets
 amplifier-tui settings get           # list settings sections; `get <section|path>` reads one (redacted)
 amplifier-tui settings set PATH VALUE --project   # validated write into one scope (default --global)
 amplifier-tui settings unset PATH    # remove one setting (idempotent)
 amplifier-tui doctor                 # setup checkup; exit 1 when findings exist
-amplifier-tui init                   # provider-first entry into the same control center
+amplifier-tui init                   # provider-first entry into the same panel
 amplifier-tui sessions               # list stored session ids for this project
 amplifier-tui resume SESSION_ID      # relaunch the TUI resuming a stored session
 amplifier-tui run "PROMPT"           # execute one prompt headlessly, print the response
@@ -121,14 +122,17 @@ scope, and `d` to finish. For the rare custom name that collides with a control 
 is numeric, use `select NAME`; colon-prefixed controls such as `:done` stay
 unambiguous. The selected matrix applies when the next session starts.
 
-`config` is the human-friendly hub for providers, models and routing, bundles,
-directory access, notifications, settings paths, and read-only maintenance previews.
-Every existing direct command remains the automation API. A bare `config` requires a
-real terminal and never hangs on redirected stdin; use `config show --json`, `config
-paths --json`, or the direct command groups in scripts. `settings get|set|unset` is the
-typed per-key layer over the same scopes — values are validated with plain-language
-errors, and secrets (provider keys, the ntfy topic) are routed to `keys.env` and never
-echoed. This durable control center is
+`settings` (bare) opens the full-screen settings panel — the human-friendly hub for
+providers, models and routing, bundles, directory access, notifications, behavior, and
+a read-only maintenance tab. Sections sit in a sidebar (`settings <section>` deep-links
+straight to one); edits stage without writing (`*` marks them), `u` unsets a value,
+`s` cycles the write scope, `/` filters the current section, and `ctrl+s` opens a
+redacted review before anything lands. Secrets (provider keys, the ntfy topic) route
+to `keys.env` and are never echoed. A bare `settings` requires a real terminal and
+exits fast on redirected stdin; use `config show --json`, `config paths --json`, or the
+direct command groups in scripts (`config` itself remains as a hidden alias that opens
+the same panel). `settings get|set|unset` is the typed per-key layer over the same
+scopes — values are validated with plain-language errors. This durable panel is
 different from the in-session `/config` command, which edits the currently mounted
 session through the app's configurator.
 

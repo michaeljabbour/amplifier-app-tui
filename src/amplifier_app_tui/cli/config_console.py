@@ -1,13 +1,14 @@
-"""Interactive control center behind ``amplifier-tui config``.
+"""Scriptable, redacted config reads behind ``amplifier-tui config show|paths``.
 
-This module owns terminal presentation and menu orchestration only.  Durable
-reads and writes still go through the existing kernel admin modules, while
-the Click command callbacks remain thin wiring in :mod:`amplifier_app_tui.main`.
+The interactive half of durable-settings management moved to the full-screen
+settings panel (:mod:`amplifier_app_tui.ui.settings_panel`, WS3); this module
+keeps only the offline, script-stable renderers.  Durable reads still go
+through the existing kernel admin modules, while the Click command callbacks
+remain thin wiring in :mod:`amplifier_app_tui.main`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
@@ -62,19 +63,6 @@ class ConfigSnapshot:
         }
 
 
-@dataclass(frozen=True)
-class ConfigActions:
-    """Existing admin flows injected into the control-center menu."""
-
-    providers: Callable[[WriteScope], WriteScope]
-    routing: Callable[[WriteScope], WriteScope]
-    bundles: Callable[[WriteScope], WriteScope]
-    directories: Callable[[WriteScope], WriteScope]
-    notifications: Callable[[WriteScope], WriteScope]
-    maintenance: Callable[[], None]
-    change_scope: Callable[[Console, WriteScope], WriteScope]
-
-
 def config_paths() -> ConfigPaths:
     """Resolve the actual paths for this cwd and Amplifier home."""
 
@@ -87,17 +75,6 @@ def config_paths() -> ConfigPaths:
         keys=str(setup.keys_file()),
         routing=str(home / "routing"),
     )
-
-
-def write_target(scope: WriteScope) -> str:
-    """Return the exact settings file changed by the selected scope."""
-
-    paths = config_paths()
-    return {
-        "global": paths.global_settings,
-        "project": paths.project_settings,
-        "local": paths.local_settings,
-    }[scope]
 
 
 def snapshot() -> ConfigSnapshot:
@@ -194,116 +171,12 @@ def render_paths(*, as_json: bool = False, console: Console | None = None) -> No
     console.print("\n[dim]Secret values are never shown.[/dim]")
 
 
-_CHOICES: dict[str, str] = {
-    "1": "providers",
-    "provider": "providers",
-    "providers": "providers",
-    # Undocumented compatibility keys from the legacy ``init`` dashboard.
-    "p": "providers",
-    "2": "routing",
-    "model": "routing",
-    "models": "routing",
-    "routing": "routing",
-    "models and routing": "routing",
-    "r": "routing",
-    "3": "bundles",
-    "bundle": "bundles",
-    "bundles": "bundles",
-    "b": "bundles",
-    "4": "directories",
-    "directory": "directories",
-    "directories": "directories",
-    "directory access": "directories",
-    "permissions": "directories",
-    "5": "notifications",
-    "notification": "notifications",
-    "notifications": "notifications",
-    "6": "paths",
-    "path": "paths",
-    "paths": "paths",
-    "settings paths": "paths",
-    "7": "maintenance",
-    "maintain": "maintenance",
-    "maintenance": "maintenance",
-    "s": "scope",
-    "w": "scope",
-    "scope": "scope",
-    "q": "done",
-    "d": "done",
-    "quit": "done",
-    "done": "done",
-    "exit": "done",
-    "": "done",
-}
-
-
-def run_control_center(
-    actions: ConfigActions,
-    *,
-    scope: WriteScope = "global",
-    start: Literal["dashboard", "providers"] = "dashboard",
-) -> int:
-    """Run the durable settings menu; Enter/back never writes by itself."""
-
-    console = Console(highlight=False)
-    if start == "providers" and snapshot().provider_count == 0:
-        scope = actions.providers(scope)
-
-    while True:
-        console.rule(f"[bold]{BRAND_NAME} control center[/bold]")
-        render_snapshot(console=console)
-        console.print(f"[dim]Write target: {scope} · {write_target(scope)}[/dim]", soft_wrap=True)
-        console.print(
-            "\n"
-            "  [cyan]1[/cyan]  Providers\n"
-            "  [cyan]2[/cyan]  Models and routing\n"
-            "  [cyan]3[/cyan]  Bundles\n"
-            "  [cyan]4[/cyan]  Directory access\n"
-            "  [cyan]5[/cyan]  Notifications\n"
-            "  [cyan]6[/cyan]  Settings paths\n"
-            "  [cyan]7[/cyan]  Maintenance previews\n"
-            "  [dim]s  Change write scope · q  Done[/dim]\n"
-        )
-        try:
-            raw = click.prompt("Choose a number or name", default="q", show_default=False)
-        except (click.Abort, EOFError):
-            console.print("[dim]Done · no additional changes.[/dim]")
-            return 0
-        choice = _CHOICES.get(raw.strip().casefold())
-        if choice is None:
-            console.print("[yellow]Choose 1-7, an action name, or q to finish.[/yellow]")
-            continue
-        if choice == "done":
-            console.print("[green]✓ Configuration complete[/green]")
-            return 0
-        if choice == "providers":
-            scope = actions.providers(scope)
-        elif choice == "routing":
-            scope = actions.routing(scope)
-        elif choice == "bundles":
-            scope = actions.bundles(scope)
-        elif choice == "directories":
-            scope = actions.directories(scope)
-        elif choice == "notifications":
-            scope = actions.notifications(scope)
-        elif choice == "paths":
-            render_paths(console=console)
-            click.pause("Press Enter to return")
-        elif choice == "maintenance":
-            actions.maintenance()
-        elif choice == "scope":
-            scope = actions.change_scope(console, scope)
-
-
 __all__ = [
-    "ConfigActions",
     "ConfigPaths",
     "ConfigSnapshot",
     "WriteScope",
     "config_paths",
     "render_paths",
     "render_snapshot",
-    "run_control_center",
     "snapshot",
-    "write_target",
 ]

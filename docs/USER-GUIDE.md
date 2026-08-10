@@ -19,13 +19,14 @@ uv run amplifier-tui run "PROMPT" # headless one-shot, prints the answer
 printf 'PROMPT\n' | uv run amplifier-tui run # stdin one-shot
 uv run amplifier-tui run --output-format json "PROMPT" # machine-readable stdout
 uv run amplifier-tui run --output-format jsonl "PROMPT" # live versioned JSONL events
-uv run amplifier-tui config       # guided durable settings control center
+uv run amplifier-tui settings     # full-screen durable settings panel
+uv run amplifier-tui settings providers # deep-link into one section
 uv run amplifier-tui config show --json # redacted effective config for scripts
 uv run amplifier-tui settings get     # list settings sections; `get <section|path>` reads one (redacted)
 uv run amplifier-tui settings set PATH VALUE --project  # validated write into one scope
 uv run amplifier-tui settings unset PATH # idempotent removal
 uv run amplifier-tui doctor       # setup checkup (exit 1 when findings exist)
-uv run amplifier-tui init         # provider-first entry into the same control center
+uv run amplifier-tui init         # provider-first entry into the same panel
 uv run amplifier-tui bundle list  # bundles from the shared registry (--all for deps)
 uv run amplifier-tui bundle use B # set the active bundle (--global/--project/--local)
 uv run amplifier-tui routing manage   # inspect and choose a routing matrix
@@ -45,28 +46,33 @@ when the shell is sitting inside this repository. If a newly added command is mi
 `amplifier-tui version` with `uv run amplifier-tui version`; update the global tool when they name
 different commits.
 
-### Configuration control center
+### The settings panel
 
-Run `amplifier-tui config` in a terminal for one numbered, name-friendly menu:
-providers; models and routing; bundles; directory access; notifications; exact
-settings paths; and maintenance previews. The dashboard shows the effective
-provider/model, routing matrix, active bundle, permission counts, and notification
-posture without printing credential values. Every write announces its scope and
-exact settings path; Enter/back does not write; destructive maintenance starts with
-a doctor/check/dry-run preview.
+Run `amplifier-tui settings` in a terminal for the full-screen durable settings panel.
+A sidebar lists the sections — **Providers; Models & routing; Bundles; Directory
+access; Notifications; Behavior** — plus a read-only **Maintenance** tab, and the
+fields of the selected section sit to its right. `amplifier-tui settings <section>`
+deep-links straight into one (e.g. `settings providers`). Drives entirely from the
+keyboard: ↑/↓ move, tab or ←/→ switch between sidebar and fields, enter edits the
+highlighted field. Nothing writes on the fly — edits stage instead (marked with `*` and
+counted in the status line), `u` stages an unset, `s` cycles the write scope
+(global → project → local), `/` filters the visible section's fields, and `ctrl+s`
+opens a redacted review of every staged change before you confirm. Escape exits;
+secrets (provider keys, the ntfy topic) are edited masked, routed to `keys.env`, and
+never echoed in the review either.
 
-All existing command groups remain the canonical automation surface. A bare `config`
+All existing command groups remain the canonical automation surface. A bare `settings`
 fails fast with exit 2 when stdin/stdout are not interactive instead of waiting for
-input. Scripts use `config show --json`, `config paths --json`, or direct commands such
+input (`config` remains as a hidden alias that opens the same panel). Scripts use
+`config show --json`, `config paths --json`, or direct commands such
 as `provider add`, `routing use`, and `bundle use`. For single keys, `settings
 get|set|unset` is the typed per-key layer over the same scopes: values are validated
-with plain-language errors, secrets (provider keys, the ntfy topic) live in `keys.env`
-regardless of the scope flag and are never echoed, `unset` is idempotent, and every
-change applies at the next session. `init` with flags preserves its
-non-interactive contract; `init` without flags opens the same control center and starts
-with providers when none are configured.
+with plain-language errors, secrets live in `keys.env` regardless of the scope flag,
+`unset` is idempotent, and every change applies at the next session. `init` with flags
+preserves its non-interactive contract; `init` without flags opens the same panel on
+the Providers section.
 
-The shell-level `config` control center manages durable app setup. The in-session
+The shell-level `settings` panel manages durable app setup. The in-session
 `/config` command is intentionally different: it edits the currently mounted session
 through the configurator and can persist that session-derived delta.
 
@@ -101,7 +107,7 @@ uv run amplifier-tui serve --attach amplifier-session:SESSION_ID#ho-9a2  # claim
 hands you the write lease. Full contract: [SESSION-CONTROL.md](SESSION-CONTROL.md).
 
 **First run:** follow the [README's Install section](../README.md#install). Its single
-source-install command verifies `amplifier-tui`; launch it to open the built-in control center; the
+source-install command verifies `amplifier-tui`; launch it to open the built-in settings panel; the
 full [Amplifier](https://github.com/microsoft/amplifier) CLI is optional. Existing
 `~/.amplifier/` providers and credentials are reused automatically. If anything is off,
 `doctor` will tell you what and how to fix it. Not sure everything's wired? `--demo` always

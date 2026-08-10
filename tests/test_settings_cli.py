@@ -26,11 +26,22 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_settings_group_help_lists_the_trio(isolated_config: Path) -> None:
-    for args in (["settings"], ["settings", "--help"]):
-        result = CliRunner().invoke(main, args)
-        assert result.exit_code == 0, result.output
-        for verb in ("get", "set", "unset"):
-            assert verb in result.output
+    result = CliRunner().invoke(main, ["settings", "--help"])
+    assert result.exit_code == 0, result.output
+    for verb in ("get", "set", "unset"):
+        assert verb in result.output
+
+
+def test_bare_settings_without_a_terminal_points_at_the_scriptable_trio(
+    isolated_config: Path,
+) -> None:
+    """Bare `settings` opens the full-screen panel; without a TTY it must
+    fail with a pointer to the scriptable surface, not a traceback."""
+    result = CliRunner().invoke(main, ["settings"])
+    assert result.exit_code == 2
+    assert "needs a terminal" in result.output
+    assert "settings get" in result.output
+    assert "settings set" in result.output
 
 
 def test_root_help_offers_settings_under_configure_and_maintain(isolated_config: Path) -> None:

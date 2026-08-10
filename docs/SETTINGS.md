@@ -77,6 +77,16 @@ rather than expanded to `""` (this prevents e.g. a provider being handed an empt
 
 ## Reading and writing from the CLI
 
+Bare `amplifier-tui settings` opens a full-screen **settings panel** over the same
+files — the interactive surface; the `get|set|unset` trio below is the scriptable one.
+The panel's sidebar carries the six sections plus a read-only **Maintenance** tab;
+`amplifier-tui settings <section>` deep-links into one and bare `amplifier-tui init`
+opens it on Providers. Edits stage without writing (`*` marks them) until `ctrl+s`
+shows a redacted review and you confirm; secrets write to `keys.env` masked and are
+never echoed. `s` cycles the write scope, `u` stages an unset, `/` filters the visible
+section, and Escape exits. It needs a real terminal — redirected stdin/stdout exits 2
+(`amplifier-tui config` remains as a hidden alias opening the same panel).
+
 The `settings get|set|unset` trio is the scriptable per-key surface over the files above
 — no YAML editing by hand:
 

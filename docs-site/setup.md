@@ -92,11 +92,11 @@ To review or change providers later, run:
 {{ site.data.product.command }} init
 ```
 
-For the complete settings control center, run `{{ site.data.product.command }} config`. It shows your effective
-provider, routing, bundle, directory access, notification state, and settings paths, then
-offers numbered menus for changing each area. `{{ site.data.product.command }} init` opens that same
-control center in provider-first mode; passing flags keeps it useful for automation. See the
-[`config` reference]({{ '/reference/' | relative_url }}#config) and
+For the complete settings panel, run `{{ site.data.product.command }} settings`. It shows your effective
+provider, routing, bundle, directory access, notification state, and more, sectioned in a
+sidebar; edits stage and only write after a redacted review. `{{ site.data.product.command }} init` opens that same
+panel in provider-first mode; passing flags keeps it useful for automation. See the
+[`settings` reference]({{ '/reference/' | relative_url }}#settings) and
 [`init` reference]({{ '/reference/' | relative_url }}#init) for every option.
 
 Secrets are written to `~/.amplifier/keys.env` with `600` permissions. The provider entry itself goes into a settings file — `~/.amplifier/settings.yaml` by default. New entries are written at priority `1`, and lower priority wins, so a provider you configure beats the bundled fallback without you editing anything. See [Configuration]({{ '/configuration/' | relative_url }}) for the full priority model.

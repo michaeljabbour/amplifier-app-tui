@@ -6,17 +6,24 @@ permalink: /configuration/
 
 {{ site.data.product.display_name }} keeps all of its configuration on your machine — there is no hosted account or cloud settings store. This page maps every file the app reads or writes, explains exactly how it picks a provider when more than one is configured, and lists the environment variables that matter.
 
-For a guided control center, run:
+For full-screen interactive setup, run:
 
 ```sh
-{{ site.data.product.command }} config
+{{ site.data.product.command }} settings
 ```
 
-The menu starts with a redacted dashboard, keeps the current write scope visible, and gives
-one numbered path each for providers, models and routing, bundles, directory access,
-notifications, settings paths, and maintenance previews. `{{ site.data.product.command }} config show --json`
+The settings panel shows a sidebar of sections — Providers; Models & routing; Bundles;
+Directory access; Notifications; Behavior — plus a read-only Maintenance tab, with the
+selected section's fields beside it. `{{ site.data.product.command }} settings <section>` deep-links
+straight into one. Edits stage first (marked `*`, counted in the status line); nothing
+writes until `ctrl+s` opens a redacted review and you confirm. `u` stages an unset,
+`s` cycles the write scope, `/` filters the visible section's fields, and Escape exits.
+Secret fields (provider keys, the ntfy topic) edit masked and always land in `keys.env`.
+Outside a terminal the command exits quickly instead of waiting for input.
+`{{ site.data.product.command }} config show --json`
 is the scriptable read-only snapshot; `{{ site.data.product.command }} config paths --json` lists settings
-locations without reading or printing secret values.
+locations without reading or printing secret values (`config` itself stays available as
+a hidden alias that opens the same panel).
 
 For reading or changing one key at a time, the `settings` trio is the scriptable
 read/write surface over the same files:
@@ -38,7 +45,7 @@ change applies at the next session start. The full key-by-key semantics are in t
 
 <figure class="terminal-shot">
   <img src="{{ '/assets/screenshots/config-control-center.png' | relative_url }}" alt="Forge terminal session showing the Amplifier configuration control center, its redacted status summary, numbered setup areas, and global write target">
-  <figcaption>The real configuration control center, captured during Forge terminal QA.</figcaption>
+  <figcaption>The settings surface, captured during Forge terminal QA. (Predates the full-screen panel; a fresh capture is tracked as follow-up work.)</figcaption>
 </figure>
 
 ## Where configuration lives
@@ -77,10 +84,10 @@ A provider is what actually talks to a model API — Anthropic, a self-hosted vL
 
 ### Set one up
 
-`{{ site.data.product.command }} init` opens the same numbered control center as `config`, starting
-with providers so first setup stays focused. The first time you launch with zero providers, the app
+`{{ site.data.product.command }} init` opens the same settings panel as bare `settings`, starting
+with the Providers section so first setup stays focused. The first time you launch with zero providers, the app
 opens a focused provider wizard before the full-screen interface. Passing any `init` flag skips the
-control center and uses the direct setup path; outside a terminal, add `--yes` or use `--from-env`
+panel and uses the direct setup path; outside a terminal, add `--yes` or use `--from-env`
 so the command can never hang waiting for input:
 
 | Flag | Help text |
@@ -209,9 +216,9 @@ Each provider declares its own required credential variable(s) — there's no si
 
 ## Choose the right configuration surface
 
-- There is no `setup` subcommand. First-run configuration happens automatically: the first time you run bare `{{ site.data.product.command }}`, it walks an interactive terminal through provider setup before anything else (the *first-run gate*). You can reopen the same console any time with `{{ site.data.product.command }} init`.
-- Use top-level `{{ site.data.product.command }} config` for durable setup across providers, routing, bundles,
-  directories, notifications, and maintenance. Use `{{ site.data.product.command }} init` when you only need
+- There is no `setup` subcommand. First-run configuration happens automatically: the first time you run bare `{{ site.data.product.command }}`, it walks an interactive terminal through provider setup before anything else (the *first-run gate*). You can reopen the same panel any time with `{{ site.data.product.command }} init`.
+- Use top-level `{{ site.data.product.command }} settings` for durable setup across providers, routing, bundles,
+  directories, notifications, and behavior, plus read-only maintenance. Use `{{ site.data.product.command }} init` when you only need
   provider-and-routing onboarding. Use the in-session `/config` command for the currently
   mounted live session; it is intentionally a different, temporary surface.
 - Use `{{ site.data.product.command }} settings get|set|unset` from scripts or your shell history when you
