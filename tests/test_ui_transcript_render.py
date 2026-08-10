@@ -603,6 +603,33 @@ def test_markup_uses_theme_variables_and_escapes_brackets() -> None:
     assert plain == "❯ [build] Please verify the persistence boundary"
 
 
+@pytest.mark.parametrize(
+    ("_name", "text"),
+    [
+        ("unpaired bracket (no closing ']' in this string)", 'node [style="filled,rounded",'),
+        ("markdown link literal", "See [the PR](https://example.com/pr/1) for details."),
+        ("info log line", "plain [INFO] log line here"),
+        ("nested brackets / list literal", "values = [[1, 2], [3, 4]]"),
+        ("regex character class", "pattern: [a-z]+ and [^0-9]*"),
+        ("bare trailing bracket", "oops ["),
+        ("adjacent empty brackets", "[][][]"),
+    ],
+)
+def test_escape_content_never_crashes_the_markup_parser(_name: str, text: str) -> None:
+    """Regression: ``textual.markup.escape`` (and ``rich.markup.escape``,
+    same implementation) only escapes a ``[`` when a MATCHING ``]`` is
+    present in the same string -- it does not escape a bare/unpaired
+    opening bracket. ``ui.segments.escape_content`` must handle every one
+    of these without ever raising, and must round-trip the exact original
+    text once parsed back out.
+    """
+    from amplifier_app_tui.ui.segments import escape_content
+
+    markup = f"[$fg]{escape_content(text)}[/]"
+    content = Content.from_markup(markup)  # the exact operation that used to crash
+    assert content.plain == text
+
+
 @pytest.mark.parametrize("name", tuple(GOLDEN_MARKERS))
 def test_markup_roundtrip_matches_plain(name: str) -> None:
     lines = render_block(_blocks()[name], 80)

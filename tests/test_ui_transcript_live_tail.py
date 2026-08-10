@@ -441,6 +441,33 @@ def test_lane_tail_markup_escapes_and_handles_empty() -> None:
     assert "┆ \\[red]not markup" in markup  # escaped — content is never interpreted
 
 
+def test_lane_tail_markup_escapes_bracket_with_no_closing_bracket_on_its_line() -> None:
+    """Regression: ``lane_tail_markup`` gutters each line independently, so a
+    stream that opens a bracket on one line and closes it on a LATER line (a
+    wrapped Graphviz/DOT attribute list is the real-world trigger) must still
+    be escaped -- ``textual.markup.escape`` only escapes a bracket pair
+    present in the SAME string, and silently passes an unpaired ``[``
+    through, which used to crash Textual's parser once painted."""
+    from textual.content import Content
+
+    markup = lane_tail_markup('node [style="filled,rounded", fontname="Helvetica", fontsize=10,')
+    content = Content.from_markup(markup)  # must not raise
+    assert 'node [style="filled,rounded"' in content.plain
+
+
+def test_markup_for_thinking_escapes_bracket_with_no_closing_bracket() -> None:
+    """Same regression as above, through the OTHER native ``escape()`` call
+    site this fix touched: the revealed-root-stream ``thinking`` markup."""
+    from textual.content import Content
+
+    src = (
+        'digraph G {\n  node [style="filled,rounded", fontname="Helvetica",\n        shape=box];\n}'
+    )
+    markup = LiveTail._markup_for(src, "thinking")
+    content = Content.from_markup(markup)  # must not raise
+    assert "shape=box" in content.plain
+
+
 def test_live_tail_carries_no_lane_mode_surface() -> None:
     """Child lane streams must never paint through the main-chat LiveTail:
     the old lane-mode mirror (``show_lane_tail`` / ``lane_markup``)
