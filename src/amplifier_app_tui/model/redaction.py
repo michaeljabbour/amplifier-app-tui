@@ -61,6 +61,12 @@ _RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     # GitHub tokens (PAT/OAuth/app/refresh + fine-grained pat).
     (re.compile(r"\bgh[posur]_[A-Za-z0-9]{36,}\b"), REDACTION_PLACEHOLDER),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b"), REDACTION_PLACEHOLDER),
+    # Provider API keys with recognizable prefixes (Anthropic sk-ant-…,
+    # OpenAI sk-proj-/sk-svcacct-/sk-admin-…).
+    (
+        re.compile(r"\bsk-(?:ant|proj|svcacct|admin)-[A-Za-z0-9_\-]{8,}\b"),
+        REDACTION_PLACEHOLDER,
+    ),
     # Google API keys.
     (re.compile(r"\bAIza[A-Za-z0-9_\-]{35}\b"), REDACTION_PLACEHOLDER),
     # Slack tokens.
