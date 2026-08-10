@@ -18,6 +18,24 @@ notifications, settings paths, and maintenance previews. `{{ site.data.product.c
 is the scriptable read-only snapshot; `{{ site.data.product.command }} config paths --json` lists settings
 locations without reading or printing secret values.
 
+For reading or changing one key at a time, the `settings` trio is the scriptable
+read/write surface over the same files:
+
+```sh
+{{ site.data.product.command }} settings get                 # list the six settings sections
+{{ site.data.product.command }} settings get <section>       # one section's settings, redacted
+{{ site.data.product.command }} settings get <path>          # one value plus where it came from
+{{ site.data.product.command }} settings set <path> <value> --project
+{{ site.data.product.command }} settings unset <path> --project
+```
+
+Writes are validated before they land — an unknown path or an invalid value is a usage
+error with a plain-language message — and `unset` is idempotent, so scripts can assert
+end state. Secrets (provider API keys, the ntfy topic) are stored in `keys.env`
+regardless of the scope flag and read back only as `configured` or `not set`. Every
+change applies at the next session start. The full key-by-key semantics are in the
+[settings reference]({{ '/configuration/settings/' | relative_url }}).
+
 <figure class="terminal-shot">
   <img src="{{ '/assets/screenshots/config-control-center.png' | relative_url }}" alt="Forge terminal session showing the Amplifier configuration control center, its redacted status summary, numbered setup areas, and global write target">
   <figcaption>The real configuration control center, captured during Forge terminal QA.</figcaption>
@@ -43,7 +61,7 @@ Every location below hangs off one root, the **app home**: `~/.amplifier` by def
 | MCP server config | `~/.amplifier/mcp.json`, plus a project-local `./.amplifier/mcp.json` |
 | Custom routing matrices | `~/.amplifier/routing` |
 
-Most commands that write configuration — `provider add`, `bundle use`, `routing use`, `allowed-dirs add`, and others — accept a **scope** flag that picks which settings file gets the write:
+Most commands that write configuration — `provider add`, `bundle use`, `routing use`, `settings set`/`unset`, `allowed-dirs add`, and others — accept a **scope** flag that picks which settings file gets the write:
 
 - `--global` → `~/.amplifier/settings.yaml` (the default when no scope flag is given)
 - `--project` → `<project>/.amplifier/settings.yaml`
@@ -196,6 +214,8 @@ Each provider declares its own required credential variable(s) — there's no si
   directories, notifications, and maintenance. Use `{{ site.data.product.command }} init` when you only need
   provider-and-routing onboarding. Use the in-session `/config` command for the currently
   mounted live session; it is intentionally a different, temporary surface.
+- Use `{{ site.data.product.command }} settings get|set|unset` from scripts or your shell history when you
+  need one typed, validated value — not a YAML file — into or out of a scope.
 
 ## See also
 

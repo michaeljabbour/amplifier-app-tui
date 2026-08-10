@@ -1,6 +1,9 @@
 # ADR-0007: amplifier-app-tui ground-up architecture
 
 Status: accepted · 2026-07-16
+Status note (2026-08-09): the layering contract below is enforced by
+`tests/test_layering_contract.py` (stdlib-AST walk), not import-linter — no
+import-linter contract or dependency ever shipped. The resolutions are unchanged.
 Context: rebuild of amplifier-app-cli as a new Textual full-screen TUI, 100% compliant
 with `docs/DESIGN-SPEC.md` (Amplifier TUI v3 — Cohesive), built the amplifier-native way.
 Grounding: `docs/RESEARCH-BRIEF.md` (synthesis of 10 deep-readers).

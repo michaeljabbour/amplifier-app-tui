@@ -29,7 +29,7 @@ into it.
 │ ui/            Textual app, widgets, reducer, runtime adapters         │
 │                (imports model/; consumes UIEvents; never sees hooks)   │
 ├────────────────────────────────────────────────────────────────────────┤
-│ commands/      slash commands as data (imports model/ + stdlib only)   │
+│ commands/      slash commands as data (pure logic; no Textual/kernel)  │
 ├────────────────────────────────────────────────────────────────────────┤
 │ model/         pure domain: blocks, lanes, queues, modes, trust,       │
 │                turns, evidence (no Textual, no amplifier-core)         │
@@ -74,7 +74,10 @@ These are the rules the whole design hangs on. Every one is enforced by tests an
 1. **One normalization boundary.** All raw hook payloads become a frozen pydantic `UIEvent`
    union in `kernel/events.py` — nowhere else. The UI never sees a raw hook payload.
 2. **Strict layering.** `kernel/` never imports Textual; `model/` imports neither Textual nor
-   amplifier-core; `commands/` imports only `model/` + stdlib.
+   amplifier-core; `commands/` stays pure command logic (stdlib, third-party, `model/`,
+   top-level package modules) — never Textual, amplifier-*, or `kernel/`. Enforced by
+   `tests/test_layering_contract.py` (a stdlib-AST walk; ADR-0007 named import-linter, but
+   no such contract ever shipped — see the ADR's 2026-08-09 status note).
 3. **Two event channels, never cross-reconstructed.** Channel A (live streaming deltas) and
    Channel B (durable records) are consumed independently. Tool correlation is by
    `tool_call_id` only.
@@ -320,8 +323,12 @@ composer keypress
 ### 5.1 Widget tree
 
 Composed in `ui/app.py`, the composition root. ADR-0007 prescribes a <500-line budget for
-this file; as built it has grown to roughly double that — helper logic lives in
-`app_support.py` and the widgets, and further extraction is the standing direction:
+this file; as built it has grown to **2723 lines** (measured 2026-08-09) — over 5× the
+budget. Helper logic lives in `app_support.py` and the widgets, and workstream WS1 of
+[docs/plans/2026-08-09-settings-ux-and-hygiene-campaign.md](plans/2026-08-09-settings-ux-and-hygiene-campaign.md)
+extracts controllers (strip manager, session admin, submit pipeline, evidence) toward the
+budget; `APP_PY_LINE_BUDGET` in `tests/test_layering_contract.py` ratchets the size, so it
+can only shrink:
 
 ```
 TuiApp

@@ -618,7 +618,7 @@ class _RootGroup(click.Group):
         ),
         (
             "Configure and maintain",
-            ("config", "init", "doctor", "update", "reset"),
+            ("config", "settings", "init", "doctor", "update", "reset"),
         ),
         (
             "Direct configuration",
@@ -4012,6 +4012,49 @@ def config_paths(as_json: bool) -> None:
     from .cli.config_console import render_paths
 
     render_paths(as_json=as_json)
+
+
+# --------------------------------------------------------------------------
+# settings group — the scriptable get/set/unset trio over the settings schema
+# --------------------------------------------------------------------------
+
+
+@main.group("settings", invoke_without_command=True)
+@click.pass_context
+def settings(ctx: click.Context) -> None:
+    """Read and write durable settings: get, set, unset."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@settings.command("get")
+@click.argument("target", required=False)
+def settings_get(target: str | None) -> None:
+    """List sections, or read one section or setting (secrets stay redacted)."""
+    from .cli.settings_commands import run_get
+
+    raise SystemExit(run_get(target))
+
+
+@settings.command("set")
+@click.argument("path")
+@click.argument("value")
+@_scope_options
+def settings_set(path: str, value: str, is_global: bool, is_project: bool, is_local: bool) -> None:
+    """Set PATH to VALUE in one scope (keys.env-backed secrets ignore scope)."""
+    from .cli.settings_commands import run_set
+
+    raise SystemExit(run_set(path, value, _scope(is_global, is_project, is_local)))
+
+
+@settings.command("unset")
+@click.argument("path")
+@_scope_options
+def settings_unset(path: str, is_global: bool, is_project: bool, is_local: bool) -> None:
+    """Remove PATH from one scope (idempotent)."""
+    from .cli.settings_commands import run_unset
+
+    raise SystemExit(run_unset(path, _scope(is_global, is_project, is_local)))
 
 
 # --------------------------------------------------------------------------

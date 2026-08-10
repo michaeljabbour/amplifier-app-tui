@@ -487,6 +487,40 @@ def write_key(path: Path, name: str, value: str, *, update_environ: bool = True)
         os.environ[name] = value
 
 
+def remove_key(path: Path, name: str, *, update_environ: bool = True) -> bool:
+    """Remove ``name`` from the keys file (line-preserving). Returns existed.
+
+    Same lock + atomic tmp→replace + ``chmod 600`` posture as
+    :func:`write_key`; comments and other keys are preserved. Also drops
+    ``os.environ[name]`` so the removal is live in-process (KeyManager
+    parity). A missing file is simply ``False`` (nothing was stored).
+    """
+    with _keys_lock(path):
+        lines: list[str] = []
+        if path.is_file():
+            lines = path.read_text(encoding="utf-8").splitlines()
+        kept: list[str] = []
+        removed = False
+        for raw in lines:
+            stripped = raw.strip()
+            if not stripped.startswith("#") and "=" in stripped:
+                if stripped.split("=", 1)[0].strip() == name:
+                    removed = True
+                    continue
+            kept.append(raw)
+        if removed:
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+            tmp.replace(path)
+            try:
+                path.chmod(0o600)
+            except OSError:
+                pass  # best-effort on filesystems without POSIX perms
+    if update_environ:
+        os.environ.pop(name, None)
+    return removed
+
+
 # -- provider module catalog ------------------------------------------------
 
 # The same provider roster app-cli exposes, but pinned to the upstream main
@@ -1651,6 +1685,7 @@ __all__ = [
     "provider_env_prefix",
     "remove_provider",
     "read_keys",
+    "remove_key",
     "setup_status",
     "stored_key_names",
     "use_provider",

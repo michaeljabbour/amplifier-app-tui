@@ -63,7 +63,8 @@ These are the [ADR-0007](decisions/ADR-0007-tui-ground-up-architecture.md) invar
 reviewers will hold your PR to (details in [ARCHITECTURE.md §1](ARCHITECTURE.md)):
 
 1. **Layering** — `ui/` → `model/` → `kernel/`. `kernel/` never imports Textual; `model/`
-   imports neither Textual nor amplifier-core; `commands/` imports only `model/` + stdlib.
+   imports neither Textual nor amplifier-core; `commands/` never imports Textual,
+   amplifier-*, or `kernel/`. Enforced by `tests/test_layering_contract.py`.
 2. **One normalization boundary** — raw hook payloads become `UIEvent`s in
    `kernel/events.py` and nowhere else.
 3. **Reducer never touches widgets** — it acts through the `ReducerHost` protocol; widgets
@@ -72,8 +73,9 @@ reviewers will hold your PR to (details in [ARCHITECTURE.md §1](ARCHITECTURE.md
 5. **Keymap is data** — new keys go in `ui/keymap.py`'s table (which also drives the
    footer hints); `validate()` rejects conflicting claims.
 6. **`ui/app.py` stays a composition root** — ADR-0007 prescribes a <500-line budget; the
-   file currently exceeds it, so the direction for new work is extraction into
-   `app_support.py`/widgets, never growth.
+   file is at 2723 lines (2026-08-09), so the direction for new work is extraction into
+   `app_support.py`/widgets (WS1 controllers), never growth. `APP_PY_LINE_BUDGET` in
+   `tests/test_layering_contract.py` pins the current size and only ratchets down.
 7. **The demo is a contract** — `DemoRuntime` must emit the same typed events as
    `RealRuntime`; if you add an event, teach both.
 

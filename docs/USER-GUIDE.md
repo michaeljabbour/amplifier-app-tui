@@ -21,6 +21,9 @@ uv run amplifier-tui run --output-format json "PROMPT" # machine-readable stdout
 uv run amplifier-tui run --output-format jsonl "PROMPT" # live versioned JSONL events
 uv run amplifier-tui config       # guided durable settings control center
 uv run amplifier-tui config show --json # redacted effective config for scripts
+uv run amplifier-tui settings get     # list settings sections; `get <section|path>` reads one (redacted)
+uv run amplifier-tui settings set PATH VALUE --project  # validated write into one scope
+uv run amplifier-tui settings unset PATH # idempotent removal
 uv run amplifier-tui doctor       # setup checkup (exit 1 when findings exist)
 uv run amplifier-tui init         # provider-first entry into the same control center
 uv run amplifier-tui bundle list  # bundles from the shared registry (--all for deps)
@@ -55,7 +58,11 @@ a doctor/check/dry-run preview.
 All existing command groups remain the canonical automation surface. A bare `config`
 fails fast with exit 2 when stdin/stdout are not interactive instead of waiting for
 input. Scripts use `config show --json`, `config paths --json`, or direct commands such
-as `provider add`, `routing use`, and `bundle use`. `init` with flags preserves its
+as `provider add`, `routing use`, and `bundle use`. For single keys, `settings
+get|set|unset` is the typed per-key layer over the same scopes: values are validated
+with plain-language errors, secrets (provider keys, the ntfy topic) live in `keys.env`
+regardless of the scope flag and are never echoed, `unset` is idempotent, and every
+change applies at the next session. `init` with flags preserves its
 non-interactive contract; `init` without flags opens the same control center and starts
 with providers when none are configured.
 

@@ -37,6 +37,7 @@ Everything else on this page is discoverable, advanced surface — never require
 | `allowed-dirs` | Manage directories the AI may write to |
 | `denied-dirs` | Manage directories the AI may never write to |
 | `config` | Durable settings control center, plus redacted scriptable inspection |
+| `settings` | Read and write individual settings: get, set, unset (validated, secret-aware) |
 | `init` | Configure a provider and routing; no flags opens the provider-focused control center |
 | `provider` | Manage configured providers: list, add, use, remove, dashboard |
 | `notify` | Configure attention notifications: bell, desktop, ntfy push |
@@ -152,6 +153,28 @@ access, notifications, settings paths, and safe maintenance previews.
 
 The in-session `/config` slash command is different: it edits the currently mounted live
 session. Top-level `{{ site.data.product.command }} config` manages durable setup for future launches.
+
+### `settings`
+
+The scriptable per-key surface over the durable settings files. Bare `settings` prints its
+own help; `get` with no argument lists the six settings sections, `get <section>` lists
+that section's settings, and `get <path>` prints one value plus its source (`env`,
+`keys.env`, `local`, `project`, `global`, or `default`).
+
+| Subcommand | Purpose |
+|---|---|
+| `settings get [TARGET]` | List sections, or read one section or setting (secrets stay redacted) |
+| `settings set PATH VALUE` | Set PATH to VALUE in one scope — scope options apply; keys.env-backed secrets ignore them |
+| `settings unset PATH` | Remove PATH from one scope — idempotent; scope options apply |
+
+Values are validated before they land: booleans accept `true/false` (also `yes/no`,
+`on/off`, `1/0`), and choice and numeric fields check their options and bounds. An
+unknown path or invalid value is a usage error (exit 2) with a plain-language message; a
+failed write exits 1. Secrets — provider API keys and `notifications.push.topic` — are
+stored in `keys.env` no matter the scope flag and read back only as `configured` or
+`not set`. Writes take effect at the next session start. `config show --json` remains the
+whole-surface snapshot; this trio handles one key at a time. The full field list with
+per-key semantics is the [settings reference]({{ '/configuration/settings/' | relative_url }}).
 
 ### `doctor`
 

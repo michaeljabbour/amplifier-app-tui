@@ -17,8 +17,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from ..kernel import bundle_admin, directory_permissions, notify_admin, routing_admin, setup
-from ..kernel.config import DEFAULT_BUNDLE, load_merged_settings
+from ..kernel import bundle_admin, directory_permissions, notify_admin, settings_service, setup
 from ..product import BRAND_NAME, EXECUTABLE_NAME
 
 WriteScope = Literal["global", "project", "local"]
@@ -105,7 +104,10 @@ def snapshot() -> ConfigSnapshot:
     """Build a read-only, redacted configuration summary."""
 
     paths = bundle_admin.settings_paths(None, None)
-    settings = load_merged_settings(paths)
+    keys = setup.keys_file()
+    routing = settings_service.resolve_path(paths, keys, "routing.matrix")
+    bundle = settings_service.resolve_path(paths, keys, "tui.bundle.active")
+    assert routing is not None and bundle is not None  # registered schema paths
     providers = setup.configured_providers()
     primary = next(
         (entry for entry in providers if entry.primary), providers[0] if providers else None
@@ -124,8 +126,8 @@ def snapshot() -> ConfigSnapshot:
         provider_type=primary.module_id if primary else None,
         model=primary.model if primary else None,
         provider_count=len(providers),
-        routing=routing_admin.active_matrix(settings),
-        bundle=bundle_admin.current_bundle() or DEFAULT_BUNDLE,
+        routing=routing.value,
+        bundle=bundle.value,
         allowed_directories=len(directory_permissions.configured_entries(paths, "allowed")),
         denied_directories=len(directory_permissions.configured_entries(paths, "denied")),
         notification_ceiling=notifications.ceiling,

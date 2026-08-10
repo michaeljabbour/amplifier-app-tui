@@ -48,6 +48,8 @@ def test_bearer_token_redacted_but_scheme_kept() -> None:
         "github_pat_" + "11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz",
         "AIzaSy" + "A1234567890abcdefghijklmnopqrstuvw",
         "xoxb-" + "1234567890-abcdefghijklmnop",
+        "sk-ant-" + "fake12345",
+        "sk-proj-" + "abcdefghij",
     ],
 )
 def test_provider_tokens_are_redacted(secret: str) -> None:

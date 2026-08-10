@@ -40,6 +40,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ..model.blocks import UnsupportedBlock
+from ..model.redaction import scrub_text
 
 _event_counter = count(1)
 
@@ -281,12 +282,25 @@ class ProviderResponseUsage(_Envelope):
     pricing-table estimate."""
 
 
+ProviderErrorCategory = Literal["auth", "quota", "network", "timeout", "model", "unknown"]
+"""App-local classification of a provider failure (WS8 phase 1)."""
+
+
 class ProviderNotice(_Envelope):
-    """Provider error/retry/throttle notice (footer transient)."""
+    """Provider error/retry/throttle notice (footer transient).
+
+    ``message`` is the verbatim provider text scrubbed at this boundary
+    (never truncated — clipping is a display concern). ``category`` /
+    ``provider`` classify the failure from the payload's error type,
+    status code and message; both are additive and default off for
+    legacy persisted records.
+    """
 
     kind: Literal["provider_notice"] = "provider_notice"
     notice: Literal["error", "retry", "throttle"] = "error"
     message: str = ""
+    category: ProviderErrorCategory = "unknown"
+    provider: str = ""
 
 
 # --------------------------------------------------------------------------
@@ -788,6 +802,66 @@ _NOTICE_KINDS: dict[str, str] = {
     "provider:throttle": "throttle",
 }
 
+_PROVIDER_ERROR_SIGNALS: dict[ProviderErrorCategory, tuple[str, ...]] = {
+    "auth": (
+        "401",
+        "403",
+        "authenticationerror",
+        "invalid_api_key",
+        "api key",
+        "unauthorized",
+        "forbidden",
+    ),
+    "quota": (
+        "429",
+        "ratelimiterror",
+        "rate limit",
+        "rate_limit",
+        "insufficient_quota",
+        "too many requests",
+        "quota",
+    ),
+    "timeout": (
+        "408",
+        "504",
+        "apitimeouterror",
+        "timed out",
+        "timeout",
+        "deadline exceeded",
+    ),
+    "network": (
+        "apiconnectionerror",
+        "connectionerror",
+        "connection",
+        "econnrefused",
+        "unreachable",
+        "dns",
+    ),
+    "model": (
+        "404",
+        "notfounderror",
+        "model_not_found",
+        "model-not-found",
+        "no such model",
+        "unknown model",
+        "does not exist",
+    ),
+}
+"""Signal fragments → failure category, in match order (first hit wins).
+
+Checked case-insensitively against the notice's error type, status code
+and scrubbed message. Ordered so ``timeout`` beats ``network`` (a
+"connection timed out" carries both) and ``unknown`` is the default.
+"""
+
+
+def _classify_provider_error(*parts: str) -> ProviderErrorCategory:
+    haystack = " ".join(part for part in parts if part).lower()
+    for category, signals in _PROVIDER_ERROR_SIGNALS.items():
+        if any(signal in haystack for signal in signals):
+            return category
+    return "unknown"
+
 
 def normalize(event_name: str, data: Mapping[str, Any] | None) -> UIEvent | None:
     """Normalize one raw hook payload into a typed :class:`UIEvent`.
@@ -966,11 +1040,16 @@ def normalize(event_name: str, data: Mapping[str, Any] | None) -> UIEvent | None
                 model=_str(payload, "model"),
             )
         case "provider:error" | "provider:retry" | "provider:throttle":
-            _, message = _error_fields(payload)
+            error_type, message = _error_fields(payload)
+            # Scrub the verbatim text at the boundary; never truncate.
+            message = scrub_text(message or _str(payload, "message", "reason"))
+            status = _str(payload, "status_code", "status", "http_status")
             return ProviderNotice(
                 **env,
                 notice=_NOTICE_KINDS[event_name],  # type: ignore[arg-type]
-                message=message or _str(payload, "message", "reason"),
+                message=message,
+                category=_classify_provider_error(error_type, status, message),
+                provider=_str(payload, "provider", "provider_id", "provider_name"),
             )
         case "context:compaction":
             return ContextCompacted(
@@ -1131,6 +1210,7 @@ __all__ = [
     "ParsedEvent",
     "PromptComplete",
     "PromptSubmit",
+    "ProviderErrorCategory",
     "ProviderNotice",
     "ProviderResponseUsage",
     "RewindMarker",

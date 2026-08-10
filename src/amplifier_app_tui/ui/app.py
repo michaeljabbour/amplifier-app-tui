@@ -94,9 +94,10 @@ from .reducer import TranscriptReducer
 from .rewind_strip import RewindStrip
 from .runtime_adapter import RuntimeAdapter
 from .session_ops_controller import SessionOpsController
-from .session_ops_view import resume_command_for, session_detail_spans, sessions_spans
+from .session_ops_view import sessions_spans
 from .splash import BootSplash
-from .themes import DEFAULT_THEME, THEME_NAME_PREFIX, THEME_TOKENS, register_themes, theme_id
+from .strip_manager import StripManager
+from .themes import DEFAULT_THEME, THEME_TOKENS, register_themes, theme_id
 from .transcript import (
     BackToParent,
     BlockWidget,
@@ -226,6 +227,7 @@ class TuiApp(App[ResumeSessionRequest]):
         self._commands = build_registry()
         self._ctx = AppCommandContext(self)
         self.session_ops = SessionOpsController(self)
+        self._strip_manager = StripManager(self)
         self.reducer = TranscriptReducer(
             self,
             allocator=self.allocator,
@@ -2015,59 +2017,19 @@ class TuiApp(App[ResumeSessionRequest]):
     # -- palette / lanes / rewind / needs-you messages ------------------------------------
 
     def on_palette_strip_command_run(self, message: PaletteStrip.CommandRun) -> None:
-        message.stop()
-        self.composer.clear()
-        self.palette.apply_filter(None)
-        self._commands.run(message.command.name, self._ctx)
-        self._note_command_use(message.command.name)
-        self.composer.focus_input()
-        self._refresh_footer()
+        self._strip_manager.palette_command_run(message)
 
     def on_palette_strip_closed(self, message: PaletteStrip.Closed) -> None:
-        message.stop()
-        self.close_palette()
+        self._strip_manager.palette_closed(message)
 
     def on_lanes_panel_focus_lane(self, message: LanesPanel.FocusLane) -> None:
-        message.stop()
-        blocks = self.adapter.lane_blocks(message.name, message.session_id, self.allocator)
-        if blocks is None:
-            # Real sessions have no scripted lane logs — the reducer
-            # accumulates each child's diverted events into a focus
-            # transcript instead (DESIGN-SPEC §8).
-            blocks = self.reducer.lane_transcript(message.session_id or message.name)
-        if blocks is None:
-            self.show_notice(f"no transcript for lane · {message.name}")
-            return
-        # The panel stays open while a lane is focused (mockup focusLane
-        # never touches lanesOpen); its row snaps to the focused lane.
-        self.lanes_panel.set_focused(message.name)
-        # Esc must resolve via ESC_CHAIN (lane_focus first, lanes later),
-        # so the keyboard returns to the composer, not the panel.
-        self.composer.focus_input()
-        if not self._lane_focus_intro_shown:
-            # First-ever focus transition (S6 AC4): a transient notice
-            # announcing the exit path, not a permanent tutorial overlay —
-            # never repeats once the user has seen it.
-            self._lane_focus_intro_shown = True
-            self.show_notice(app_support.LANE_FOCUS_INTRO_NOTICE)
-        self.run_worker(
-            self.transcript.focus_lane(message.session_id or message.name, blocks),
-            exclusive=False,
-        )
+        self._strip_manager.lanes_focus_lane(message)
 
     def on_lanes_panel_type_through(self, message: LanesPanel.TypeThrough) -> None:
-        # Mockup: the composer input keeps focus while lanesOpen — a
-        # printable key typed "at" the panel lands in the composer ("/"
-        # opens the palette via the composer's normal edit path) and the
-        # keyboard returns to the composer for the rest of the typing.
-        message.stop()
-        self.composer.focus_input()
-        self.composer.insert_text(message.character)
+        self._strip_manager.lanes_type_through(message)
 
     def on_lanes_panel_closed(self, message: LanesPanel.Closed) -> None:
-        message.stop()
-        self._restore_keyboard()
-        self._refresh_footer()
+        self._strip_manager.lanes_closed(message)
 
     def on_lane_focus_changed(self, message: LaneFocusChanged) -> None:
         app_support.handle_lane_focus_change(self, message.lane_id)
@@ -2086,104 +2048,31 @@ class TuiApp(App[ResumeSessionRequest]):
             self.lanes_panel.show_panel(focus=False)
 
     def on_rewind_strip_fork_requested(self, message: RewindStrip.ForkRequested) -> None:
-        message.stop()
-        # The strip hid itself on fork; hand the keyboard back NOW — the
-        # approval bar while one is open (it owns the keyboard, spec §7,
-        # so Esc still means Deny for a fork parked behind a pending
-        # approval), the composer otherwise. A fork-chip click must not
-        # strand focus on the hidden strip (spec §12).
-        self._restore_keyboard()
-        self._refresh_footer()
-        app_support.handle_restore(self, message.checkpoint_id, message.scope)
+        self._strip_manager.rewind_fork_requested(message)
 
     def on_rewind_strip_type_through(self, message: RewindStrip.TypeThrough) -> None:
-        # Mockup: the composer input keeps focus while rewindOpen — a
-        # printable key typed "at" the strip lands in the composer ("/"
-        # opens the palette live-filtered, §5) and the keyboard returns
-        # to the composer for the rest of the typing.
-        message.stop()
-        self.composer.focus_input()
-        self.composer.insert_text(message.character)
+        self._strip_manager.rewind_type_through(message)
 
     def on_rewind_strip_closed(self, message: RewindStrip.Closed) -> None:
-        message.stop()
-        self._restore_keyboard()
-        self._refresh_footer()
+        self._strip_manager.rewind_closed(message)
 
     def on_timeline_strip_moved(self, message: TimelineStrip.Moved) -> None:
-        """Cursor move scrubs the transcript live (theme-picker preview idiom)."""
-        message.stop()
-        self.transcript.scroll_block_visible(message.block_id, top=True)
+        self._strip_manager.timeline_moved(message)
 
     def on_timeline_strip_type_through(self, message: TimelineStrip.TypeThrough) -> None:
-        # Same mockup contract as the rewind picker: printable keys typed
-        # at the strip land in the composer ("/" opens the palette live).
-        message.stop()
-        self.composer.focus_input()
-        self.composer.insert_text(message.character)
+        self._strip_manager.timeline_type_through(message)
 
     def on_timeline_strip_closed(self, message: TimelineStrip.Closed) -> None:
-        """Enter keeps the landed scroll position; esc returns to the tail --
-        a pure look-around must not move anything (theme-picker revert idiom)."""
-        message.stop()
-        if not message.kept:
-            self.transcript.scroll_end(animate=False, immediate=True)
-        self._restore_keyboard()
-        self._refresh_footer()
+        self._strip_manager.timeline_closed(message)
 
     def on_sessions_strip_session_activated(self, message: SessionsStrip.SessionActivated) -> None:
-        """A session row was activated (Enter or click) -- S2 gap 1 + 2:
-        show its full-id detail (``r``/the trailing glyph is the distinct
-        resume action), and
-        best-effort copy the full id via the app's existing clipboard
-        helper (OSC 52 + OS tool where available; the detail block below
-        is the reliable fallback -- terminal clipboard access is
-        environment-dependent)."""
-        message.stop()
-        summary = next(
-            (s for s in self.sessions_strip.summaries if s.session_id == message.session_id),
-            None,
-        )
-        self.sessions_strip.close_strip()
-        self._restore_keyboard()
-        self._refresh_footer()
-        if summary is None:
-            return
-        self.copy_to_clipboard(summary.session_id)
-        self.append_block(Answer(id=self.allocator.next_id(), spans=session_detail_spans(summary)))
+        self._strip_manager.sessions_session_activated(message)
 
     def on_sessions_strip_resume_requested(self, message: SessionsStrip.ResumeRequested) -> None:
-        """``r``, or a click on a row's resume glyph -- Samuel S2 AC4.
-
-        Close the picker, reject rows the canonical resume resolver also
-        considers unresumable, then exit with a typed request. Textual's
-        shutdown completes (including adapter cleanup) before ``_launch_tui``
-        constructs the selected session's fresh runtime. The exact CLI
-        command is copied as a fallback, but the key action itself resumes.
-        """
-        message.stop()
-        summary = next(
-            (s for s in self.sessions_strip.summaries if s.session_id == message.session_id),
-            None,
-        )
-        self.sessions_strip.close_strip()
-        self._restore_keyboard()
-        self._refresh_footer()
-        if summary is None:
-            return
-        from ..kernel.session_manager import RESUMABLE_STATES
-
-        if summary.state not in RESUMABLE_STATES:
-            state = summary.state.replace("_", " ")
-            self.show_notice(f"cannot resume · session is {state} · enter opens details")
-            return
-        self.copy_to_clipboard(resume_command_for(summary))
-        self.exit(ResumeSessionRequest(summary.session_id))
+        self._strip_manager.sessions_resume_requested(message)
 
     def on_sessions_strip_closed(self, message: SessionsStrip.Closed) -> None:
-        message.stop()
-        self._restore_keyboard()
-        self._refresh_footer()
+        self._strip_manager.sessions_closed(message)
 
     def on_open_rewind(self, message: OpenRewind) -> None:
         checkpoints = self.ledger.checkpoints
@@ -2322,8 +2211,7 @@ class TuiApp(App[ResumeSessionRequest]):
         app_support.begin_custom_decision_capture(self, message.item_id)
 
     def on_queued_strip_recall_requested(self, message: QueuedStrip.RecallRequested) -> None:
-        message.stop()
-        app_support.recall_queued_message(self)
+        self._strip_manager.queued_recall_requested(message)
 
     def on_click(self, event: events.Click) -> None:
         """Transcript clicks never strand the keyboard (DESIGN-SPEC §12).
@@ -2534,19 +2422,7 @@ class TuiApp(App[ResumeSessionRequest]):
         app_support.handle_esc(self)
 
     def open_rewind_strip(self, index: int | None) -> None:
-        if self.session_ops.context_operation_pending:
-            self.show_notice(
-                f"{self.session_ops.context_operation_label} in progress · rewind unavailable"
-            )
-            return
-        checkpoints = self.ledger.checkpoints
-        if not checkpoints:
-            self.show_notice("no rewind checkpoints yet")
-            return
-        self.rewind.show_checkpoints(checkpoints, index)
-        if self.approval_bar is not None:
-            self.approval_bar.focus()  # approval owns the keyboard (spec §7)
-        self._refresh_footer()
+        self._strip_manager.open_rewind_strip(index)
 
     def close_palette(self) -> None:
         # Mockup Esc only clears the filter (palFilter = null); the typed
@@ -2609,52 +2485,19 @@ class TuiApp(App[ResumeSessionRequest]):
         self.show_notice(f"theme {name}")
 
     def open_theme_picker(self) -> None:
-        """Bare ``/theme``: open the live-preview theme picker.
-
-        Records the active theme so Esc reverts to it; arrow keys preview
-        each theme as a real repaint and enter keeps the highlight.
-        """
-        current = self.theme.removeprefix(THEME_NAME_PREFIX)
-        self._theme_picker_revert = current
-        self.theme_strip.show_picker(tuple(THEME_TOKENS), current=current)
-        self._refresh_footer()
+        self._strip_manager.open_theme_picker()
 
     def on_theme_strip_preview_theme(self, message: ThemeStrip.PreviewTheme) -> None:
-        """Live preview: repaint in the highlighted theme (no notice --
-        nothing is kept or reverted yet)."""
-        message.stop()
-        if message.name in THEME_TOKENS:
-            self.theme = theme_id(message.name)
+        self._strip_manager.theme_preview_theme(message)
 
     def on_theme_strip_theme_chosen(self, message: ThemeStrip.ThemeChosen) -> None:
-        """Enter/click keeps the theme: clear the revert marker BEFORE
-        closing so the Closed handler doesn't restore the opening theme."""
-        message.stop()
-        name = message.name
-        self._theme_picker_revert = None
-        self.theme_strip.close_strip()
-        self._restore_keyboard()
-        self._refresh_footer()
-        if name in THEME_TOKENS:
-            self.theme = theme_id(name)
-            self.show_notice(f"theme {name}")
+        self._strip_manager.theme_theme_chosen(message)
 
     def on_theme_strip_closed(self, message: ThemeStrip.Closed) -> None:
-        """Esc close reverts the preview to the opening theme (the marker
-        is already None when the close followed a keep, so that path
-        collapses to just focus/refresh)."""
-        message.stop()
-        revert = self._theme_picker_revert
-        self._theme_picker_revert = None
-        if revert is not None and revert in THEME_TOKENS:
-            self.theme = theme_id(revert)
-        self._restore_keyboard()
-        self._refresh_footer()
+        self._strip_manager.theme_closed(message)
 
     def on_keys_overlay_closed(self, message: KeysOverlay.Closed) -> None:
-        """F1/Esc close returns footer hints to the underlying context."""
-        message.stop()
-        self._refresh_footer()
+        self._strip_manager.keys_overlay_closed(message)
 
     def open_permissions(self) -> None:
         self.append_block(
