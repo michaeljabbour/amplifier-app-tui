@@ -75,6 +75,46 @@ config value that is *exactly* one unset `${VAR}` with no default is dropped ent
 rather than expanded to `""` (this prevents e.g. a provider being handed an empty
 `base_url`).
 
+## Reading and writing from the CLI
+
+The `settings get|set|unset` trio is the scriptable per-key surface over the files above
+— no YAML editing by hand:
+
+```
+amplifier-tui settings get                     # list the six settings sections
+amplifier-tui settings get <section>           # one section's settings, redacted
+amplifier-tui settings get <path>              # one value plus its source
+amplifier-tui settings set <path> <value> [--global|--project|--local]
+amplifier-tui settings unset <path> [--global|--project|--local]
+```
+
+The scope flags pick the write target (`--global` is the default, matching the merge
+table above; pass exactly one). Reads resolve most-specific-scope-first, the mirror of
+the merge order, and `get` annotates each value with where it came from:
+`env` / `keys.env` / `local` / `project` / `global` / `default` (plus the file path for
+scope sources). Resolution runs through the same code the runtime uses, so what `get`
+prints is what a session sees — including legacy top-level fallbacks for namespaced
+`tui:` keys.
+
+**Secrets never touch a settings file.** Keys.env-backed fields (the provider API keys
+and tokens, `notifications.push.topic`) are read from and written to
+`~/.amplifier/keys.env` no matter which scope flag is passed — the flag is ignored for
+them — and their values are never echoed: `get` prints `configured` or `not set`, and a
+successful `set` declines to repeat the value. An exported environment variable beats a
+stored `keys.env` line, same as at runtime.
+
+Values are validated before they land: booleans accept `true/false` (also `yes/no`,
+`on/off`, `1/0`), lists are comma-separated, and choice and numeric fields check their
+options and bounds — failures print a plain-language message and exit 2 (a usage error,
+like an unknown path); a write that fails on disk prints the reason and exits 1.
+`unset` is idempotent — removing an absent value reports "nothing to do" with exit 0 —
+so scripts can assert end state. Field paths are the dotted display paths `settings get`
+prints (e.g. `tui.permissions.governance`); app-owned keys land in their namespaced
+`tui:` location in the scope file, and the `notifications.*` paths map to
+`config.notifications.*`. Every setting currently **applies at the next session** — a
+running TUI is unaffected until restart. `config show --json` remains the whole-surface
+snapshot; the trio is for one key at a time.
+
 ## Settings keys
 
 This is the complete set of keys the app consumes:

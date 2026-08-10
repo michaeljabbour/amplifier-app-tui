@@ -90,6 +90,9 @@ amplifier-tui --bundle NAME_OR_URI   # pick a bundle (default: settings/bundled)
 amplifier-tui config                 # guided durable settings control center
 amplifier-tui config show --json     # redacted effective config for scripts
 amplifier-tui config paths           # exact settings locations; never prints secrets
+amplifier-tui settings get           # list settings sections; `get <section|path>` reads one (redacted)
+amplifier-tui settings set PATH VALUE --project   # validated write into one scope (default --global)
+amplifier-tui settings unset PATH    # remove one setting (idempotent)
 amplifier-tui doctor                 # setup checkup; exit 1 when findings exist
 amplifier-tui init                   # provider-first entry into the same control center
 amplifier-tui sessions               # list stored session ids for this project
@@ -122,7 +125,10 @@ unambiguous. The selected matrix applies when the next session starts.
 directory access, notifications, settings paths, and read-only maintenance previews.
 Every existing direct command remains the automation API. A bare `config` requires a
 real terminal and never hangs on redirected stdin; use `config show --json`, `config
-paths --json`, or the direct command groups in scripts. This durable control center is
+paths --json`, or the direct command groups in scripts. `settings get|set|unset` is the
+typed per-key layer over the same scopes — values are validated with plain-language
+errors, and secrets (provider keys, the ntfy topic) are routed to `keys.env` and never
+echoed. This durable control center is
 different from the in-session `/config` command, which edits the currently mounted
 session through the app's configurator.
 
