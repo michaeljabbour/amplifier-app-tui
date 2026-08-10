@@ -141,6 +141,13 @@ the "not pip-installed yet" shape that must degrade, not block."""
 import some_definitely_missing_third_party_sdk_xyz  # noqa: F401
 '''
 
+_BROKEN_PROVIDER = '''
+"""Fake module whose import raises a non-ImportError -- a genuine bug,
+not a missing file; cache repair cannot fix this."""
+
+raise RuntimeError("boom at import time")
+'''
+
 
 # ---------------------------------------------------------------------------
 # Check 1: real provider mounting
@@ -166,6 +173,23 @@ async def test_bundle_module_never_resolved_fails_closed() -> None:
     assert result.ok is False
     assert "failed to import" in (result.error or "")
     assert result.remediation is not None
+
+
+@pytest.mark.asyncio
+async def test_missing_bundle_module_remediation_repairs_the_cache() -> None:
+    """The cold-install shape (provider package absent from sys.path after a
+    fetch hiccup) must LEAD with cache repair -- leading with `doctor` is a
+    dead end, since doctor re-runs this same resolution and prints the same
+    error. `doctor` may still appear as a trailing fallback for when the
+    re-fetch itself doesn't resolve it (stale network, permissions); what
+    must never come back is doctor as the first thing the user is sent to."""
+    result = await verify_provider(module_id="provider-totally-never-exists", config={}, model="")
+    assert result.ok is False
+    assert result.remediation is not None
+    assert "bundle refresh --force" in result.remediation
+    refresh_at = result.remediation.index("bundle refresh --force")
+    doctor_at = result.remediation.index("doctor")
+    assert refresh_at < doctor_at
 
 
 @pytest.mark.asyncio
@@ -202,6 +226,22 @@ async def test_strict_missing_third_party_dependency_fails_closed(
     assert result.ok is False
     assert "some_definitely_missing_third_party_sdk_xyz" in (result.error or "")
     assert result.remediation is not None and "without --model" in result.remediation
+
+
+@pytest.mark.asyncio
+async def test_broken_module_keeps_the_diagnose_remediation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-ImportError import failure is a bug in the module, not a
+    missing cache entry -- the remediation stays on the diagnose path and
+    must never suggest a re-fetch can fix it."""
+    _install_fake_module(tmp_path, monkeypatch, "provider-brokenimport", _BROKEN_PROVIDER)
+    result = await verify_provider(module_id="provider-brokenimport", config={}, model="")
+    assert result.ok is False
+    assert "failed to import" in (result.error or "")
+    assert result.remediation is not None
+    assert "doctor" in result.remediation
+    assert "bundle refresh" not in result.remediation
 
 
 @pytest.mark.asyncio
