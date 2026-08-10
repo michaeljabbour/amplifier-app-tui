@@ -618,7 +618,7 @@ class _RootGroup(click.Group):
         ),
         (
             "Configure and maintain",
-            ("config", "settings", "init", "doctor", "update", "reset"),
+            ("settings", "init", "doctor", "update", "reset"),
         ),
         (
             "Direct configuration",
@@ -3143,7 +3143,7 @@ def _init_basic_interactive(
 
 
 # --------------------------------------------------------------------------
-# init console — the combined setup dashboard (app-cli `amplifier init` parity)
+# write-scope helpers shared by the routing console and the settings panel
 # --------------------------------------------------------------------------
 
 _WriteScope = Literal["global", "project", "local"]
@@ -3161,18 +3161,6 @@ def _scope_path(scope: _WriteScope) -> Path:
     from .kernel import bundle_admin
 
     return bundle_admin.scope_file(bundle_admin.settings_paths(None, None), scope)
-
-
-def _print_scope_indicator(console: Any, scope: _WriteScope) -> None:
-    """One-line "Saving to:" banner with the exact file that will change."""
-    file_hint = _scope_path(scope)
-    if scope == "global":
-        console.print(f"  [dim]Saving to:[/dim] [bold]{scope}[/bold]  [dim]{file_hint}[/dim]")
-    else:
-        console.print(
-            f"  [yellow]Saving to:[/yellow] [bold yellow]{scope}[/bold yellow]"
-            f"  [dim]{file_hint}[/dim]  [yellow]({_SCOPE_NOTES[scope]})[/yellow]"
-        )
 
 
 def _prompt_scope_change(console: Any, current: _WriteScope) -> _WriteScope:
@@ -3206,434 +3194,6 @@ def _prompt_scope_change(console: Any, current: _WriteScope) -> _WriteScope:
             f"  [green]✓ Switched to {chosen} scope. Changes save to {file_hint}.[/green]"
         )
     return chosen
-
-
-def _render_provider_table(console: Any, *, numbered: bool = False):  # noqa: ANN202
-    """The configured-providers table (★ = primary). Returns the row entries."""
-    from rich.table import Table
-
-    from .kernel import setup
-
-    providers = setup.configured_providers()
-    if not providers:
-        console.print("\n  [yellow]No providers configured.[/yellow]")
-        console.print("  [dim]Add one to start real sessions. Demo mode works without one.[/dim]\n")
-        return providers
-    table = Table(title="Configured Providers" if numbered else "Providers")
-    if numbered:
-        table.add_column("#", justify="right", width=3)
-    table.add_column("Name/ID", style="cyan")
-    table.add_column("Type", style="green")
-    table.add_column("Default Model")
-    table.add_column("Priority", justify="right")
-    table.add_column("Source", style="dim")
-    for index, entry in enumerate(providers, start=1):
-        name_col = f"★ {entry.name}" if entry.primary else f"  {entry.name}"
-        ptype = entry.module_id.removeprefix("provider-")
-        row = [name_col, ptype, entry.model or "-", str(entry.priority), entry.scope]
-        if numbered:
-            row.insert(0, str(index))
-        table.add_row(*row)
-    console.print(table)
-    return providers
-
-
-def _render_routing_summary(console: Any, paths: Any) -> None:
-    """Active matrix name + its Role/Model/Provider resolution table."""
-    from rich.table import Table
-
-    from .kernel import routing_admin
-    from .kernel.config import load_merged_settings
-
-    settings = load_merged_settings(paths)
-    active = routing_admin.active_matrix(settings)
-    console.print(f"  Routing: [bold]{active}[/bold]")
-    matrices = routing_admin.load_all_matrices(
-        routing_admin.discover_matrix_files(paths.global_settings.parent)
-    )
-    matrix_data = matrices.get(active)
-    if not matrix_data:
-        return
-    rows = routing_admin.resolve_effective(matrix_data, settings)
-    if not rows:
-        return
-    table = Table(title=f"Routing: {active}")
-    table.add_column("Role", style="cyan")
-    table.add_column("Model", style="green")
-    table.add_column("Provider")
-    for row in rows:
-        if row.model and row.provider:
-            table.add_row(row.role, row.model, row.provider)
-        else:
-            table.add_row(row.role, "[yellow]⚠ (no provider)[/yellow]", "[dim]-[/dim]")
-    console.print(table)
-
-
-def _init_console() -> int:
-    """Combined setup dashboard: providers + routing + actions loop.
-
-    The same menu console as app-cli's ``amplifier init``: render the
-    configured-providers table and the active routing resolution, then loop on
-    \\[p] Manage providers / \\[r] Manage routing / \\[w] Change write scope /
-    \\[d] Done. First run (no providers) drops straight into the provider
-    console, exactly like app-cli.
-    """
-    from rich.console import Console
-
-    from .kernel import bundle_admin, setup
-
-    console = Console()
-    scope: _WriteScope = "global"
-
-    if not setup.configured_providers():
-        console.rule("[bold]Amplifier Setup[/bold]")
-        console.print("  Connect a provider, choose a model, and start a real session.\n")
-        scope = _provider_console(scope)
-
-    while True:
-        paths = bundle_admin.settings_paths(None, None)
-        console.rule("[bold]Amplifier Setup[/bold]")
-        console.print("  Providers and routing for your next session.\n")
-        _print_scope_indicator(console, scope)
-        console.print()
-        _render_provider_table(console)
-        _render_routing_summary(console, paths)
-
-        console.print("\n  Actions:")
-        console.print("    \\[p] Manage providers")
-        console.print("    \\[r] Manage routing")
-        console.print("    \\[w] Change write scope")
-        console.print("    \\[d] Done")
-        console.print()
-        try:
-            choice = click.prompt("  Choice", default="d", show_default=False).strip().lower()
-        except (click.Abort, EOFError):
-            return 0
-        if choice == "d":
-            return 0
-        if choice == "p":
-            scope = _provider_console(scope)
-        elif choice == "r":
-            scope = _routing_console(scope)
-        elif choice == "w":
-            scope = _prompt_scope_change(console, scope)
-        else:
-            console.print("  [yellow]Choose p, r, w, or d.[/yellow]")
-
-
-def _provider_console(scope: _WriteScope) -> _WriteScope:
-    """Interactive provider management loop (app-cli's ``provider manage``).
-
-    Tracks the write scope internally and returns it when done, so the init
-    dashboard and this console stay on the same scope.
-    """
-    from rich.console import Console
-
-    console = Console()
-    while True:
-        console.rule("[bold]Amplifier providers[/bold]")
-        providers = _render_provider_table(console, numbered=True)
-        _print_scope_indicator(console, scope)
-        console.print(
-            "  [dim]Scope applies to new providers. Edits keep their original scope; "
-            "remove/reorder can touch every scope.[/dim]"
-        )
-        console.print("  Actions:")
-        console.print("    \\[a] Add a provider")
-        if providers:
-            console.print("    \\[e] Edit a provider (enter number)")
-            console.print("    \\[r] Remove a provider (enter number)")
-            console.print("    \\[p] Reorder priorities")
-            console.print("    \\[t] Test connections")
-        console.print("    \\[w] Change write scope")
-        console.print("    \\[d] Done")
-        console.print()
-        try:
-            choice = click.prompt("  Choice", default="d", show_default=False).strip().lower()
-        except (click.Abort, EOFError):
-            return scope
-        if choice == "d":
-            return scope
-        if choice == "a":
-            _console_add_provider(console, scope)
-        elif choice.startswith("e"):
-            _console_edit_provider(console, choice, providers)
-        elif choice.startswith("r"):
-            _console_remove_provider(console, choice, providers)
-        elif choice == "p":
-            _console_reorder_providers(console, providers)
-        elif choice == "t":
-            _console_test_providers(console, providers)
-        elif choice == "w":
-            scope = _prompt_scope_change(console, scope)
-        else:
-            valid = "a, e, r, p, t, w, or d" if providers else "a, w, or d"
-            console.print(f"  [yellow]Choose {valid}.[/yellow]")
-
-
-def _parse_choice_number(choice: str, prefix: str, count: int, console: Any) -> int | None:
-    """``e2`` / ``r 3`` → 0-based index; prompts when the number is omitted."""
-    num_str = choice[len(prefix) :].strip()
-    if not num_str:
-        try:
-            num_str = click.prompt("  Enter number", default="", show_default=False).strip()
-        except (click.Abort, EOFError):
-            return None
-    try:
-        num = int(num_str)
-    except ValueError:
-        console.print("  [red]Invalid input. Enter a number.[/red]")
-        return None
-    if not 1 <= num <= count:
-        console.print(f"  [red]Invalid number. Enter 1-{count}.[/red]")
-        return None
-    return num - 1
-
-
-def _choice_label(choice) -> str:  # noqa: ANN001
-    from .kernel import setup
-
-    return choice.display or setup.friendly_provider_name(choice.module_id)
-
-
-def _console_add_provider(console: Any, scope: _WriteScope) -> None:
-    """``[a]``: catalog picker (friendly names) → the shared field wizard."""
-    from .kernel import setup
-
-    choices = asyncio.run(setup.onboarding_choices())
-    if not choices:
-        console.print("  [red]No providers available (is amplifier-core installed?)[/red]")
-        return
-    ordered = sorted(choices, key=lambda c: _choice_label(c).lower())
-    console.print("\n  [bold]Available providers:[/bold]")
-    for index, entry in enumerate(ordered, start=1):
-        suffix = f"  [dim]{entry.availability}[/dim]" if entry.availability else ""
-        console.print(f"    \\[{index}] {_choice_label(entry)}{suffix}")
-    console.print("  [dim]Enter a number or provider name. Press Enter to go back.[/dim]")
-    try:
-        raw = click.prompt("  Provider", default="", show_default=False).strip()
-    except (click.Abort, EOFError):
-        return
-    if not raw:
-        return
-    try:
-        target = ordered[int(raw) - 1]
-    except ValueError:
-        target = _match_provider(ordered, raw)
-        if target is None:
-            console.print(
-                f"  [red]Unknown provider '{raw}'. Enter 1-{len(ordered)} or a listed name.[/red]"
-            )
-            return
-    except IndexError:
-        console.print(f"  [red]Invalid selection. Enter 1-{len(ordered)}.[/red]")
-        return
-    asyncio.run(_interactive_provider_setup(target, scope=scope))
-
-
-def _console_choice_for(entry) -> Any:  # noqa: ANN001
-    """A ProviderChoice for an already-configured entry (edit path)."""
-    from .kernel import setup
-
-    match = _match_provider(asyncio.run(setup.onboarding_choices()), entry.module_id)
-    if match is not None:
-        return match
-    prefix = setup.provider_env_prefix(entry.module_id)
-    return setup.ProviderChoice(
-        module_id=entry.module_id,
-        name=entry.name,
-        key_var=f"{prefix}_API_KEY",
-        base_url_var=f"{prefix}_BASE_URL",
-        installed=setup.load_provider_info(entry.module_id) is not None,
-        source_uri=setup.effective_provider_sources().get(entry.module_id),
-    )
-
-
-def _console_edit_provider(console: Any, choice: str, providers) -> None:  # noqa: ANN001
-    """``[e N]``: re-run the field wizard with stored values as defaults."""
-    from .kernel import bundle_admin, setup
-
-    if not providers:
-        console.print("  [yellow]No providers to edit.[/yellow]")
-        return
-    idx = _parse_choice_number(choice, "e", len(providers), console)
-    if idx is None:
-        return
-    target_entry = providers[idx]
-    target = _console_choice_for(target_entry)
-    paths = bundle_admin.settings_paths(None, None)
-    settings_path = bundle_admin.scope_file(paths, target_entry.scope)  # type: ignore[arg-type]
-    keys_path = setup.keys_file()
-    console.print(
-        f"\n  Editing {target_entry.name}\n"
-        f"  [dim]Settings: {target_entry.scope} · {settings_path}\n"
-        f"  Credentials: {keys_path}[/dim]"
-    )
-    schema = asyncio.run(_resolve_provider_schema(target)) or setup.fallback_provider_fields(
-        target_entry.module_id
-    )
-    if schema is None or not schema.config_fields:
-        console.print(
-            f"  [red]schema unavailable for {target_entry.module_id} — cannot edit; "
-            f"re-add it with \\[a] instead[/red]"
-        )
-        return
-    outcome = asyncio.run(
-        _configure_provider_interactive(
-            target,
-            schema,
-            cli_api_key=None,
-            cli_base_url=None,
-            cli_model=None,
-            instance_id=target_entry.instance_id,
-            keys_path=keys_path,
-            existing_config=target_entry.config,
-        )
-    )
-    if outcome is None:
-        console.print("  [dim]Cancelled · nothing changed.[/dim]")
-        return
-    collected, staged_keys = outcome
-    entry = setup.provider_config_entry(
-        target_entry.module_id,
-        config=collected,
-        priority=target_entry.priority,  # editing must not reshuffle priorities
-        instance_id=target_entry.instance_id,
-        source=target_entry.source,
-    )
-    for name, value in staged_keys.items():
-        setup.write_key(keys_path, name, value)
-    setup.replace_provider_config(paths, target_entry.scope, entry)  # type: ignore[arg-type]
-    model = collected.get("default_model", "")
-    matrix = None
-    if target_entry.primary:
-        matrix = _persist_selected_model_matrix(
-            paths,
-            target_entry.scope,  # type: ignore[arg-type]
-            provider_name=target_entry.name,
-            module_id=target_entry.module_id,
-            model=model,
-        )
-    model_display = f" ({model})" if model else ""
-    console.print(
-        f"\n  [green]✓ Provider updated: {target_entry.name}{model_display}[/green]"
-        f" [dim]({target_entry.scope}: {settings_path})[/dim]"
-    )
-    if staged_keys:
-        console.print(f"  [green]✓ Credentials saved[/green] [dim]({keys_path})[/dim]")
-    if matrix is not None:
-        console.print(f"  [green]✓ Routing matrix updated: {matrix[0]}[/green]")
-
-
-def _console_remove_provider(console: Any, choice: str, providers) -> None:  # noqa: ANN001
-    """``[r N]``: confirm, then drop the entry from every scope."""
-    from .kernel import bundle_admin, setup
-
-    if not providers:
-        console.print("  [yellow]No providers to remove.[/yellow]")
-        return
-    idx = _parse_choice_number(choice, "r", len(providers), console)
-    if idx is None:
-        return
-    target_entry = providers[idx]
-    paths = bundle_admin.settings_paths(None, None)
-    console.print(f"\n  Provider: {target_entry.name} · {target_entry.module_id}")
-    console.print("  Settings entries with this identity will be removed from every scope:")
-    for label, path in (
-        ("global", paths.global_settings),
-        ("project", paths.project_settings),
-        ("local", paths.local_settings),
-    ):
-        console.print(f"    {label:<7} {path}", style="dim")
-    console.print(f"  Credentials stay in {setup.keys_file()}", style="dim")
-    try:
-        if not click.confirm(
-            f"  Remove {target_entry.name} from every settings scope?", default=False
-        ):
-            console.print("  [dim]Cancelled.[/dim]")
-            return
-    except (click.Abort, EOFError):
-        return
-    removed = setup.remove_provider(paths, target_entry.name)
-    if removed is None:
-        console.print(f"  [red]could not remove {target_entry.name}[/red]")
-        return
-    console.print(
-        f"\n  [green]✓ Removed provider: {removed.name}[/green] "
-        "[dim]· stored credentials kept[/dim]"
-    )
-
-
-def _console_reorder_providers(console: Any, providers) -> None:  # noqa: ANN001
-    """``[p]``: re-number priorities from a ``2 1 3`` style answer."""
-    from .kernel import bundle_admin, setup
-
-    if len(providers) < 2:
-        console.print("  [dim]Need at least 2 providers to reorder.[/dim]")
-        return
-    console.print("\n  Current order:")
-    for index, entry in enumerate(providers, start=1):
-        console.print(f"    \\[{index}] {entry.name}")
-    console.print(
-        "  [dim]Priorities are rewritten across every scope; the selected primary's "
-        "routing hint stays in its own scope.[/dim]"
-    )
-    try:
-        order_str = click.prompt(
-            "  Enter new order (e.g., 2 1 3)", default="", show_default=False
-        ).strip()
-    except (click.Abort, EOFError):
-        return
-    try:
-        new_order = [int(x) for x in order_str.split()]
-    except ValueError:
-        console.print("  [red]Invalid input. Enter numbers separated by spaces.[/red]")
-        return
-    if sorted(new_order) != list(range(1, len(providers) + 1)):
-        console.print(f"  [red]Please enter all numbers from 1 to {len(providers)}.[/red]")
-        return
-    priorities = {providers[num - 1].key: pri for pri, num in enumerate(new_order, start=1)}
-    paths = bundle_admin.settings_paths(None, None)
-    setup.set_provider_priorities(paths, priorities)
-    primary = providers[new_order[0] - 1]
-    matrix = _persist_selected_model_matrix(
-        paths,
-        primary.scope,  # type: ignore[arg-type]
-        provider_name=primary.name,
-        module_id=primary.module_id,
-        model=primary.model,
-    )
-    console.print("\n  [green]✓ Priorities updated.[/green]")
-    if matrix is not None:
-        console.print(f"  [green]✓ Routing matrix updated: {matrix[0]}[/green]")
-
-
-def _console_test_providers(console: Any, providers) -> None:  # noqa: ANN001
-    """``[t]``: ping every provider via ``list_models()`` and tabulate ✓/✗."""
-    from rich.table import Table
-
-    from .kernel import setup
-
-    if not providers:
-        console.print("  [yellow]No providers to test.[/yellow]")
-        return
-    table = Table(title="Provider Test Results")
-    table.add_column("Name", style="cyan")
-    table.add_column("Status")
-    table.add_column("Latency", justify="right")
-    table.add_column("Details")
-    for entry in providers:
-        start = monotonic()
-        catalog = asyncio.run(setup.list_provider_models(entry.module_id, entry.config))
-        latency = f"{monotonic() - start:.1f}s"
-        if catalog.error:
-            detail = catalog.error if len(catalog.error) <= 60 else catalog.error[:57] + "..."
-            table.add_row(entry.name, "[red]✗[/red]", latency, detail)
-        else:
-            table.add_row(
-                entry.name, "[green]✓[/green]", latency, f"{len(catalog.models)} model(s) available"
-            )
-    console.print(table)
 
 
 @main.command()
@@ -3672,315 +3232,40 @@ def init(
             f"guided init needs a terminal; use `{_command('init', '--provider', '<type>', '--help')}` "
             f"for automation or `{_command('config', 'show', '--json')}` to inspect setup"
         )
-    raise SystemExit(_run_config_control_center(scope="global", start="providers"))
+    raise SystemExit(_run_settings_panel(section="providers", scope="global"))
 
 
 # --------------------------------------------------------------------------
-# config — one durable-settings control center (interactive + scriptable reads)
+# config — scriptable reads; bare `config` is an alias for the settings panel
 # --------------------------------------------------------------------------
 
 
-def _bundle_console(scope: Literal["global", "project", "local"]):  # noqa: ANN202
-    """Friendly active-bundle picker used by the configuration control center."""
-    from rich.console import Console
-    from rich.table import Table
-
-    from .kernel import bundle_admin
-    from .kernel.config import DEFAULT_BUNDLE
-
-    console = Console(highlight=False)
-    while True:
-        entries = bundle_admin.list_bundles()
-        active = bundle_admin.current_bundle() or DEFAULT_BUNDLE
-        table = Table(title="Bundles", title_justify="center", header_style="bold cyan")
-        table.add_column("#", justify="right", width=3)
-        table.add_column("", width=1)
-        table.add_column("Name", style="green")
-        table.add_column("Location", style="dim", overflow="fold")
-        for index, entry in enumerate(entries, start=1):
-            table.add_row(
-                str(index),
-                "●" if entry.name == active else "",
-                entry.name,
-                entry.uri or "(built in)",
-            )
-        console.print(table)
-        console.print(f"[dim]Active: {active} · write scope: {scope}[/dim]")
-        console.print(
-            "  Enter a bundle number/name · [c] use default · [s] scope · [q] back",
-            markup=False,
-        )
-        try:
-            raw = click.prompt("Bundle", default="q", show_default=False).strip()
-        except (click.Abort, EOFError):
-            return scope
-        folded = raw.casefold()
-        if folded in ("", "q", "quit", "back", "done"):
-            return scope
-        if folded in ("s", "scope"):
-            scope = _prompt_scope_change(console, scope)
-            continue
-        if folded in ("c", "clear", "default"):
-            changed = bundle_admin.clear_active_bundle(
-                bundle_admin.settings_paths(None, None), scope
-            )
-            message = "reverted to the built-in default" if changed else "already using the default"
-            console.print(f"[green]✓ {message}[/green] [dim]({scope})[/dim]")
-            continue
-        try:
-            selected = entries[int(raw) - 1].name
-        except ValueError:
-            matches = [entry.name for entry in entries if entry.name.casefold() == folded]
-            if len(matches) != 1:
-                console.print(
-                    f"[yellow]Enter 1-{len(entries)}, a listed name, c, s, or q.[/yellow]"
-                )
-                continue
-            selected = matches[0]
-        except IndexError:
-            console.print(f"[yellow]Enter a number from 1-{len(entries)}.[/yellow]")
-            continue
-        path = bundle_admin.set_active_bundle(
-            bundle_admin.settings_paths(None, None), selected, scope
-        )
-        console.print(f"[green]✓ Active bundle → {selected}[/green] [dim]({scope}: {path})[/dim]")
-
-
-def _directory_console(scope: Literal["global", "project", "local"]):  # noqa: ANN202
-    """Allowed/denied directory editor; it changes policy, never filesystem data."""
-    from rich.console import Console
-
-    from .kernel import bundle_admin, directory_permissions
-
-    console = Console(highlight=False)
-    paths = bundle_admin.settings_paths(None, None)
-    actions: dict[
-        str,
-        tuple[Literal["allowed", "denied"], Literal["add", "remove"]],
-    ] = {
-        "1": ("allowed", "add"),
-        "allow": ("allowed", "add"),
-        "2": ("denied", "add"),
-        "deny": ("denied", "add"),
-        "3": ("allowed", "remove"),
-        "remove allowed": ("allowed", "remove"),
-        "4": ("denied", "remove"),
-        "remove denied": ("denied", "remove"),
-    }
-    while True:
-        allowed = directory_permissions.configured_entries(paths, "allowed")
-        denied = directory_permissions.configured_entries(paths, "denied")
-        console.print("\n[bold]Directory access[/bold]")
-        console.print(f"  Project default  {Path.cwd().resolve()}")
-        console.print(
-            "  Allowed          "
-            + (", ".join(f"{entry.path} ({entry.scope})" for entry in allowed) or "none added")
-        )
-        console.print(
-            "  Denied           "
-            + (", ".join(f"{entry.path} ({entry.scope})" for entry in denied) or "none added")
-        )
-        console.print(f"  [dim]Write scope: {scope}[/dim]")
-        console.print(
-            "\n  [1] Allow directory     [2] Deny directory\n"
-            "  [3] Remove allowed      [4] Remove denied\n"
-            "  [s] Change scope        [q] Back",
-            markup=False,
-        )
-        try:
-            raw = click.prompt("Action", default="q", show_default=False).strip().casefold()
-        except (click.Abort, EOFError):
-            return scope
-        if raw in ("", "q", "quit", "back", "done"):
-            return scope
-        if raw in ("s", "scope"):
-            scope = _prompt_scope_change(console, scope)
-            continue
-        operation = actions.get(raw)
-        if operation is None:
-            console.print("[yellow]Choose 1-4, s, or q.[/yellow]")
-            continue
-        try:
-            path_text = click.prompt("Directory path", default="", show_default=False).strip()
-        except (click.Abort, EOFError):
-            continue
-        if not path_text:
-            console.print("[dim]Cancelled · no policy changed.[/dim]")
-            continue
-        kind, verb = operation
-        changed, resolved, settings_path = directory_permissions.update_configured_path(
-            paths, kind, verb, path_text, scope
-        )
-        if not changed:
-            console.print(f"[yellow]No matching policy entry: {resolved}[/yellow]")
-            continue
-        label = "allowed" if kind == "allowed" else "denied"
-        if verb == "remove":
-            label = f"removed from {label}"
-        console.print(f"[green]✓ {label}: {resolved}[/green] [dim]({scope}: {settings_path})[/dim]")
-
-
-def _notification_console(scope: Literal["global", "project", "local"]):  # noqa: ANN202
-    """Notification controls with secret-safe topic handling."""
-    from rich.console import Console
-
-    from .kernel import bundle_admin, notify_admin, setup
-
-    console = Console(highlight=False)
-    while True:
-        status = notify_admin.load_status()
-        console.print("\n[bold]Notifications[/bold]")
-        console.print(
-            f"  Ceiling {status.ceiling} · desktop {status.desktop_gate} · "
-            f"push {status.push_enabled if status.push_enabled is not None else 'default'} · "
-            f"topic {'configured' if status.topic else 'not set'}"
-        )
-        console.print(
-            f"  [dim]Write scope: {scope} for switches · private topic: {setup.keys_file()}[/dim]"
-        )
-        console.print(
-            "\n  [1] Enable desktop  [2] Disable desktop  "
-            "[3] Enable push  [4] Disable push\n"
-            "  [5] Set private push topic  [6] Test locally  [s] Scope  [q] Back",
-            markup=False,
-        )
-        try:
-            raw = click.prompt("Action", default="q", show_default=False).strip().casefold()
-        except (click.Abort, EOFError):
-            return scope
-        if raw in ("", "q", "quit", "back", "done"):
-            return scope
-        if raw in ("s", "scope"):
-            scope = _prompt_scope_change(console, scope)
-            continue
-        channel_actions: dict[str, tuple[Literal["desktop", "push"], bool]] = {
-            "1": ("desktop", True),
-            "enable desktop": ("desktop", True),
-            "2": ("desktop", False),
-            "disable desktop": ("desktop", False),
-            "3": ("push", True),
-            "enable push": ("push", True),
-            "4": ("push", False),
-            "disable push": ("push", False),
-        }
-        channel = channel_actions.get(raw)
-        if channel is not None:
-            target, enabled = channel
-            result = notify_admin.set_enabled(
-                bundle_admin.settings_paths(None, None),
-                target,
-                enabled,
-                scope,  # type: ignore[arg-type]
-            )
-            label = "enabled" if enabled else "disabled"
-            console.print(
-                f"[green]✓ {target} notifications {label}[/green] "
-                f"[dim]({scope}: {result.path})[/dim]"
-            )
-            continue
-        if raw in ("5", "topic", "set topic"):
-            try:
-                topic = click.prompt(
-                    "Private ntfy topic", hide_input=True, default="", show_default=False
-                ).strip()
-            except (click.Abort, EOFError):
-                continue
-            if not topic:
-                console.print("[dim]Cancelled · topic unchanged.[/dim]")
-                continue
-            result = notify_admin.set_key(
-                bundle_admin.settings_paths(None, None), "topic", topic, scope
-            )
-            console.print(f"[green]✓ Push topic saved privately[/green] [dim]({result.path})[/dim]")
-            continue
-        if raw in ("6", "test"):
-            _notify_test()
-            continue
-        console.print("[yellow]Choose 1-6, s, or q.[/yellow]")
-
-
-def _maintenance_console() -> None:
-    """Read-only first maintenance hub; every action is an explicit preview."""
-    from rich.console import Console
-
-    console = Console(highlight=False)
-    while True:
-        console.print("\n[bold]Maintenance previews[/bold]")
-        console.print(
-            "  [1] Diagnose readiness (may contact your configured provider)\n"
-            "  [2] Check for an app update\n"
-            "  [3] Check bundle/module sources\n"
-            "  [4] Preview safe reset and repair\n"
-            "  [q] Back",
-            markup=False,
-        )
-        try:
-            raw = click.prompt("Preview", default="q", show_default=False).strip().casefold()
-        except (click.Abort, EOFError):
-            return
-        if raw in ("", "q", "quit", "back", "done"):
-            return
-        if raw in ("1", "doctor", "diagnose"):
-            try:
-                click.get_current_context().invoke(doctor)
-            except SystemExit as error:
-                console.print(f"[dim]Doctor exit: {error.code}[/dim]")
-        elif raw in ("2", "update", "app update"):
-            _app_update(check_only=True, yes=False, force=False, verbose=False)
-        elif raw in ("3", "bundle", "sources"):
-            asyncio.run(_bundle_refresh(check_only=True, yes=False, force=False, verbose=False))
-        elif raw in ("4", "reset", "repair"):
-            click.get_current_context().invoke(
-                reset,
-                categories=(),
-                dry_run=True,
-                yes=False,
-                home_override=None,
-                list_only=False,
-                reinstall=False,
-                no_reinstall=False,
-                install_source=None,
-            )
-        else:
-            console.print("[yellow]Choose 1-4 or q.[/yellow]")
-
-
-def _run_config_control_center(
+def _run_settings_panel(
     *,
-    scope: Literal["global", "project", "local"],
-    start: Literal["dashboard", "providers"] = "dashboard",
+    section: str | None = None,
+    scope: Literal["global", "project", "local"] = "global",
 ) -> int:
-    from .cli.config_console import ConfigActions, run_control_center
+    """Single seam to the full-screen settings panel (monkeypatched in tests)."""
 
-    return run_control_center(
-        ConfigActions(
-            providers=_provider_console,
-            routing=_routing_console,
-            bundles=_bundle_console,
-            directories=_directory_console,
-            notifications=_notification_console,
-            maintenance=_maintenance_console,
-            change_scope=_prompt_scope_change,
-        ),
-        scope=scope,
-        start=start,
-    )
+    from .ui.settings_panel import run_settings_panel
+
+    return run_settings_panel(section=section, scope=scope)
 
 
-@main.group("config", invoke_without_command=True)
+@main.group("config", invoke_without_command=True, hidden=True)
 @click.option(
     "--scope",
     type=click.Choice(["global", "project", "local"]),
     default="global",
     show_default=True,
-    help="Initial write scope for interactive changes.",
+    help="Initial write scope for the settings panel.",
 )
 @click.pass_context
 def config(ctx: click.Context, scope: str) -> None:
-    """Open the settings control center, or inspect config for scripts.
+    """Open the settings panel (alias of `settings`), or inspect config for scripts.
 
-    The interactive menu manages durable app setup. The in-session /config
-    command is different: it edits the currently mounted session.
+    The panel manages durable app setup. The in-session /config command is
+    different: it edits the currently mounted session.
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -3989,11 +3274,11 @@ def config(ctx: click.Context, scope: str) -> None:
             f"interactive config needs a terminal; use `{_command('config', 'show', '--json')}` "
             f"or direct commands such as `{_command('provider', 'add', '--help')}`"
         )
-    raise SystemExit(
-        _run_config_control_center(
-            scope=cast(Literal["global", "project", "local"], scope), start="dashboard"
-        )
+    click.echo(
+        f"`{_command('config')}` opens the settings panel — same as bare `{_command('settings')}`.",
+        err=True,
     )
+    raise SystemExit(_run_settings_panel(scope=cast(Literal["global", "project", "local"], scope)))
 
 
 @config.command("show")
@@ -4015,16 +3300,88 @@ def config_paths(as_json: bool) -> None:
 
 
 # --------------------------------------------------------------------------
-# settings group — the scriptable get/set/unset trio over the settings schema
+# settings group — full-screen panel (bare) + scriptable get/set/unset trio
 # --------------------------------------------------------------------------
 
 
-@main.group("settings", invoke_without_command=True)
+def _settings_panel_sections() -> tuple[str, ...]:
+    """Schema section ids plus the panel's read-only maintenance tab.
+
+    Lazily derived so ``settings get`` never pays for the panel (or Textual).
+    The ``maintenance`` literal mirrors ``panel.MAINTENANCE_SECTION_ID``;
+    importing it here would drag Textual into every scriptable read.
+    """
+
+    from .model import settings_schema
+
+    return tuple(section.id for section in settings_schema.SECTIONS) + ("maintenance",)
+
+
+def _settings_section_command(section: str) -> click.Command:
+    """Synthesize the deep-link command behind ``settings <section>``."""
+
+    def _open(scope: str) -> None:
+        if not _is_interactive_terminal():
+            raise click.UsageError(
+                f"the settings panel needs a terminal; use `{_command('settings', 'get', section)}` "
+                f"or `{_command('settings', 'set', '<path>', '<value>')}` for scripts"
+            )
+        raise SystemExit(_run_settings_panel(section=section, scope=cast(_WriteScope, scope)))
+
+    _open.__name__ = f"open_{section.replace('-', '_')}"
+    return click.Command(
+        section,
+        callback=_open,
+        params=[
+            click.Option(
+                ["--scope"],
+                type=click.Choice(["global", "project", "local"]),
+                default="global",
+                show_default=True,
+                help="Initial write scope for the settings panel.",
+            )
+        ],
+        help=f"Open the settings panel at the '{section}' section.",
+    )
+
+
+class _SettingsGroup(click.Group):
+    """Adds ``settings <section-id>`` deep links on top of get/set/unset."""
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        command = super().get_command(ctx, cmd_name)
+        if command is not None:
+            return command
+        if cmd_name in _settings_panel_sections():
+            return _settings_section_command(cmd_name)
+        return None
+
+
+@main.group("settings", cls=_SettingsGroup, invoke_without_command=True)
+@click.option(
+    "--scope",
+    type=click.Choice(["global", "project", "local"]),
+    default="global",
+    show_default=True,
+    help="Initial write scope for the settings panel.",
+)
 @click.pass_context
-def settings(ctx: click.Context) -> None:
-    """Read and write durable settings: get, set, unset."""
-    if ctx.invoked_subcommand is None:
-        click.echo(ctx.get_help())
+def settings(ctx: click.Context, scope: str) -> None:
+    """Open the settings panel, or script durable settings: get, set, unset.
+
+    Bare `settings` opens the full-screen panel; `settings <section>` deep-
+    links into one section (providers, models-routing, bundles,
+    directory-access, notifications, behavior, maintenance).
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    if not _is_interactive_terminal():
+        raise click.UsageError(
+            f"the settings panel needs a terminal; use `{_command('settings', 'get')}`, "
+            f"`{_command('settings', 'set', '<path>', '<value>')}`, or "
+            f"`{_command('config', 'show', '--json')}` for scripts"
+        )
+    raise SystemExit(_run_settings_panel(scope=cast(_WriteScope, scope)))
 
 
 @settings.command("get")

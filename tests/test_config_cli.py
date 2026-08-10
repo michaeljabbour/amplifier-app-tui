@@ -1,8 +1,9 @@
-"""The durable ``config`` control center and its scriptable read surfaces."""
+"""``config`` (hidden panel alias) and ``settings`` CLI wiring contracts."""
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -43,7 +44,9 @@ def test_root_help_groups_commands_by_job() -> None:
         "Automation and advanced",
     ):
         assert heading in result.output
-    assert "config" in result.output
+    assert re.search(r"^\s+settings\s", result.output, re.MULTILINE)
+    # `config` keeps working as a compatibility alias but stays out of help.
+    assert not re.search(r"^\s+config\s", result.output, re.MULTILINE)
 
 
 def test_config_without_tty_fails_fast_with_script_alternatives(
@@ -86,66 +89,86 @@ def test_config_paths_json_names_locations_without_reading_secrets(
     assert "local_settings" in payload
 
 
-def test_config_routes_number_to_existing_provider_console(
-    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: True)
-    monkeypatch.setattr(
-        main_mod,
-        "_provider_console",
-        lambda scope: calls.append(scope) or scope,
-    )
+def _capture_panel(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    captured: dict[str, object] = {}
 
-    result = CliRunner().invoke(main, ["config"], input="1\nq\nq\n")
-
-    assert result.exit_code == 0, result.output
-    assert calls == ["global"]
-    assert "Amplifier control center" in result.output
-    assert "Configuration complete" in result.output
-
-
-def test_config_accepts_action_name_and_recovers_from_invalid_choice(
-    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: True)
-    monkeypatch.setattr(
-        main_mod,
-        "_routing_console",
-        lambda scope: calls.append(scope) or scope,
-    )
-
-    result = CliRunner().invoke(main, ["config"], input="wat\nmodels and routing\nq\nq\n")
-
-    assert result.exit_code == 0, result.output
-    assert "Choose 1-7" in result.output
-    assert calls == ["global"]
-
-
-def test_config_quit_writes_nothing(isolated_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: True)
-    result = CliRunner().invoke(main, ["config"], input="q\n")
-    assert result.exit_code == 0, result.output
-    assert not (isolated_config / "settings.yaml").exists()
-    assert "Configuration complete" in result.output
-    assert f"Write target: global · {isolated_config / 'settings.yaml'}" in result.output
-
-
-def test_init_no_flags_enters_provider_first_control_center(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, str] = {}
-
-    def fake_control_center(*, scope: str, start: str) -> int:
-        captured.update(scope=scope, start=start)
+    def fake_panel(*, section: str | None = None, scope: str = "global") -> int:
+        captured.update(section=section, scope=scope)
         return 0
 
-    monkeypatch.setattr(main_mod, "_run_config_control_center", fake_control_center)
+    monkeypatch.setattr(main_mod, "_run_settings_panel", fake_panel)
     monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: True)
+    return captured
+
+
+def test_config_without_args_opens_the_settings_panel(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bare `config` is the hidden alias: stderr pointer, then the panel."""
+    captured = _capture_panel(monkeypatch)
+    result = CliRunner().invoke(main, ["config", "--scope", "project"])
+    assert result.exit_code == 0, result.output
+    assert captured == {"section": None, "scope": "project"}
+    assert "opens the settings panel" in result.output
+    assert not (isolated_config / "settings.yaml").exists()
+
+
+def test_settings_without_args_opens_the_panel(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured = _capture_panel(monkeypatch)
+    result = CliRunner().invoke(main, ["settings"])
+    assert result.exit_code == 0, result.output
+    assert captured == {"section": None, "scope": "global"}
+    assert not (isolated_config / "settings.yaml").exists()
+
+
+def test_settings_section_deep_link(isolated_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _capture_panel(monkeypatch)
+    result = CliRunner().invoke(main, ["settings", "notifications"])
+    assert result.exit_code == 0, result.output
+    assert captured == {"section": "notifications", "scope": "global"}
+
+    result = CliRunner().invoke(main, ["settings", "providers", "--scope", "local"])
+    assert result.exit_code == 0, result.output
+    assert captured == {"section": "providers", "scope": "local"}
+
+
+def test_settings_unknown_section_errors(isolated_config: Path) -> None:
+    result = CliRunner().invoke(main, ["settings", "bogus"])
+    assert result.exit_code == 2
+    assert "No such command" in result.output
+
+
+def test_settings_section_without_tty_fails_fast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: False)
+    result = CliRunner().invoke(main, ["settings", "behavior"])
+    assert result.exit_code == 2
+    assert "the settings panel needs a terminal" in result.output
+    assert "settings get" in result.output
+
+
+def test_settings_without_tty_points_at_scriptable_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main_mod, "_is_interactive_terminal", lambda: False)
+    result = CliRunner().invoke(main, ["settings"])
+    assert result.exit_code == 2
+    assert "the settings panel needs a terminal" in result.output
+    assert "settings get" in result.output
+    assert "settings set" in result.output
+    assert "config show --json" in result.output
+
+
+def test_init_no_flags_opens_the_panel_at_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_panel(monkeypatch)
     result = CliRunner().invoke(main, ["init"])
     assert result.exit_code == 0, result.output
-    assert captured == {"scope": "global", "start": "providers"}
+    assert captured == {"section": "providers", "scope": "global"}
 
 
 def test_init_without_tty_fails_fast_with_automation_alternatives(
