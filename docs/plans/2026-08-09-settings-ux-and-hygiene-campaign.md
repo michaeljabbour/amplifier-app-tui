@@ -1,7 +1,9 @@
 # Settings UX campaign + architecture hygiene (2026-08-09)
 
-**Status:** 📋 Proposed — awaiting review. Nothing here is implemented; workstream
-sequencing and file-level maps are the proposal.
+**Status:** 🔧 In progress (2026-08-09) — WS0, WS1 step 1 (strip_manager), WS2
+(schema/service/trio), WS6 (drift CI + BACKLOG notes), and WS8 phase 1
+(classification at the events boundary) implemented pending commit. Remaining:
+WS1 steps 2–4, WS3 (panel), WS4, WS5, WS8 phase 2 (ErrorBlock), WS7 (separate).
 
 Two halves, one campaign:
 
