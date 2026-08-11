@@ -135,9 +135,11 @@ class ProviderVerification:
 _DIAGNOSE_REMEDIATION = f"run `{EXECUTABLE_NAME} doctor` for a full diagnosis"
 
 _MODULE_MISSING_REMEDIATION = (
-    "the provider's module source is not installed (a cold install or fetch "
-    f"hiccup) — re-fetch it with `{EXECUTABLE_NAME} bundle refresh --force`, then retry"
-    f"; if it persists, run `{EXECUTABLE_NAME} doctor`"
+    "the provider's module isn't installed in this environment (a fresh/rebuilt "
+    f"venv, a cold install, or a fetch hiccup) — run `{EXECUTABLE_NAME}` once so "
+    "normal startup can re-provision it; if it persists, re-fetch its source with "
+    f"`{EXECUTABLE_NAME} bundle refresh --force`; if it still persists, run "
+    f"`{EXECUTABLE_NAME} doctor`"
 )
 
 
@@ -415,9 +417,11 @@ async def verify_provider(
             ok=False,
             error=f"provider '{module_id}' module failed to import: {error}",
             remediation=(
-                # The module itself was never fetched: remediation must name
-                # the repair command, not `doctor` -- doctor re-runs this same
-                # resolution and would print this same error (a dead end).
+                # The module isn't importable right now -- often the venv
+                # lost its install, not that the source was never fetched --
+                # so remediation must lead with the repair, not `doctor`:
+                # doctor re-runs this same resolution and prints this same
+                # error (a dead end) rather than fixing anything.
                 _MODULE_MISSING_REMEDIATION
                 if _is_missing_bundle_module(module_id, error)
                 else _DIAGNOSE_REMEDIATION
