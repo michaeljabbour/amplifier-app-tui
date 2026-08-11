@@ -177,19 +177,38 @@ async def test_bundle_module_never_resolved_fails_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_missing_bundle_module_remediation_repairs_the_cache() -> None:
-    """The cold-install shape (provider package absent from sys.path after a
-    fetch hiccup) must LEAD with cache repair -- leading with `doctor` is a
-    dead end, since doctor re-runs this same resolution and prints the same
-    error. `doctor` may still appear as a trailing fallback for when the
-    re-fetch itself doesn't resolve it (stale network, permissions); what
-    must never come back is doctor as the first thing the user is sent to."""
+    """The cold-install shape (provider package absent from sys.path -- a
+    fetch hiccup, a venv that lost its install, or a genuinely never-fetched
+    source) must escalate CHEAPEST FIRST: normal startup, THEN a forced
+    source re-fetch, THEN `doctor` -- never any other order, and leading
+    with `doctor` least of all.
+
+    Why normal startup leads (not `bundle refresh --force`, which used to
+    lead): empirically, `bundle refresh --force` only re-fetches bundle
+    SOURCE caches -- it does not reinstall a module into the current tool
+    venv. The common real-world trigger for this whole error is a venv that
+    lost its install (e.g. `uv tool install --reinstall` builds a fresh venv
+    and drops every previously-installed provider package while their source
+    clones survive untouched on disk -- see `kernel.setup.cached_module_path`
+    for the same phenomenon documented independently), and only one ordinary
+    launch (which provisions with ``install_deps=True``) repairs THAT case.
+    A forced refresh remains right as the SECOND step, for the rarer case
+    where the source itself was never cached at all. `doctor` stays last:
+    it re-runs this same resolution and prints the same error, so leading
+    with it (the original defect this test guarded against) is still a dead
+    end -- it may only ever be a trailing fallback for when neither repair
+    above resolves it (stale network, permissions)."""
     result = await verify_provider(module_id="provider-totally-never-exists", config={}, model="")
     assert result.ok is False
     assert result.remediation is not None
-    assert "bundle refresh --force" in result.remediation
-    refresh_at = result.remediation.index("bundle refresh --force")
-    doctor_at = result.remediation.index("doctor")
-    assert refresh_at < doctor_at
+    remediation = result.remediation
+    assert "normal startup" in remediation
+    assert "bundle refresh --force" in remediation
+    assert "doctor" in remediation
+    startup_at = remediation.index("normal startup")
+    refresh_at = remediation.index("bundle refresh --force")
+    doctor_at = remediation.index("doctor")
+    assert startup_at < refresh_at < doctor_at
 
 
 @pytest.mark.asyncio

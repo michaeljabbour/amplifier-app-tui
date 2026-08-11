@@ -122,23 +122,34 @@ credentials are not the problem — the module is. Run `{{ site.data.product.com
 
 ```text
 ✗ cannot launch: provider '<id>' module failed to import: No module named 'amplifier_module_<id>'
-→ the provider's module source is not installed (a cold install or fetch hiccup) — re-fetch it with `{{ site.data.product.command }} bundle refresh --force`, then retry; if it persists, run `{{ site.data.product.command }} doctor`
+→ the provider's module isn't installed in this environment (a fresh/rebuilt venv, a cold install, or a fetch hiccup) — run `{{ site.data.product.command }}` once so normal startup can re-provision it; if it persists, re-fetch its source with `{{ site.data.product.command }} bundle refresh --force`; if it still persists, run `{{ site.data.product.command }} doctor`
 ```
 
-**Cause.** The provider's source was never fetched into the local cache, so nothing could be
-imported. This is the cold-install shape — a first boot that was interrupted, or a fetch that
-hiccuped — not a defect in the module itself. `doctor` cannot help here: it re-runs the same
-resolution and prints the same error.
+**Cause.** The provider's module isn't importable in this environment right now. Most often this
+is a venv that lost its install — `uv tool install --reinstall` builds a fresh venv and drops
+every previously-installed provider package, while their source clones stay on disk untouched —
+which ordinary startup repairs on its own. Less often, the source itself was never fetched into
+the local cache (a first boot that was interrupted, or a fetch that hiccuped). Either way it is
+not a defect in the module's own code, and leading with `doctor` is still a dead end: it re-runs
+this same resolution and prints the same error.
 
-**Fix.** Re-fetch the bundle sources, then launch again:
+**Fix.** Launch normally first — this is what actually repairs the common case, because startup's
+own provisioning pass reinstalls the module into the current environment:
+
+```sh
+{{ site.data.product.command }}
+```
+
+If the same error comes back, the source itself may genuinely be missing from the cache — force a
+re-fetch:
 
 ```sh
 {{ site.data.product.command }} bundle refresh --force
 ```
 
 `--force` cleans uv's cache first, so a source pinned to a floating ref (`@main`) cannot resolve
-back to the same absent copy. If the error survives a forced refresh, the module genuinely is
-broken — run `{{ site.data.product.command }} doctor` for the full diagnosis.
+back to the same absent copy. If the error still survives that, run
+`{{ site.data.product.command }} doctor` for the full diagnosis.
 
 ## Wrong provider selected, or an unexpected Anthropic error
 
