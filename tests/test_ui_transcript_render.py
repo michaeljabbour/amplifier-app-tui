@@ -630,6 +630,101 @@ def test_escape_content_never_crashes_the_markup_parser(_name: str, text: str) -
     assert content.plain == text
 
 
+@pytest.mark.parametrize(
+    ("_name", "text"),
+    [
+        # -- PR #241's own cases: must never regress --
+        ("unpaired bracket (#241's motivating case)", 'node [style="filled,rounded", fontsize=10,'),
+        ("no backslash", "list[str] and [INFO] ok"),
+        ("windows path", r"C:\Users\name"),
+        # -- corrupted by #241's parity-based doubling (this regression) --
+        ("shell continuation", "echo hello \\"),
+        ("makefile continuation", "  gcc -o out \\"),
+        ("pre-escaped bracket", "already \\[esc] bracket"),
+        ("latex", "x = \\[a+b\\]"),
+        # -- additional backslash-run shapes the fix must also cover --
+        ("empty string", ""),
+        ("single trailing backslash, nothing else", "\\"),
+        ("even-length trailing backslash run", "tail \\\\"),
+        ("odd-length trailing backslash run of 3", "tail \\\\\\"),
+        ("backslash runs with no bracket anywhere nearby", "a \\ b \\\\ c"),
+        ("two separate escaped-bracket runs, different lengths", "a\\[b\\\\[c"),
+        ("literal bracket at the very end, zero backslashes", "value["),
+        ("literal bracket at the very end, one backslash", "value\\["),
+        ("literal bracket at the very end, two backslashes", "value\\\\["),
+    ],
+)
+def test_segment_markup_backslash_bracket_round_trips_exactly(_name: str, text: str) -> None:
+    r"""Regression: PR #241's ``escape_content`` modeled Textual's unescaping
+    as PARITY-based -- doubling a backslash run before ``[`` and adding one,
+    like a Python/Rich string literal would need. Textual's real tokenizer
+    (``textual/markup.py``) has no notion of parity: it decides whether a
+    ``[`` opens a tag with a SINGLE-CHARACTER negative lookbehind
+    (``open_tag = r"(?<!\\)\["``) that only ever asks whether the ONE
+    character right before it is a backslash, and its unescape step
+    (``token.value.replace("\\[", "[")``) removes exactly ONE backslash from
+    the front of that bracket -- regardless of how many preceded it. A run
+    of N backslashes before ``[`` therefore needs N+1 backslashes to
+    round-trip, never #241's ``2N+1``. The two formulas coincide only at
+    N=0, which is exactly why #241's own (backslash-free) test table passed
+    while ordinary fenced code content -- a shell/Makefile line
+    continuation, an already-escaped bracket, LaTeX -- silently corrupted in
+    the shipped renderer: not a crash, wrong bytes on screen.
+
+    Goes through the REAL production path end to end, the exact seam that
+    corrupted: ``Segment`` -> ``segment_markup()`` -> ``Content.from_markup``.
+    """
+    from amplifier_app_tui.model.blocks import Segment
+    from amplifier_app_tui.ui.segments import segment_markup
+
+    markup = segment_markup(Segment(text=text, style_token="fg"))
+    content = Content.from_markup(markup)
+    assert content.plain == text
+
+
+def test_segment_markup_link_survives_trailing_backslash() -> None:
+    r"""A segment's own ``[/]`` isn't the only tag ``append_closing_tag``
+    must protect: a linked segment nests ``[link="..."]body[/link]`` INSIDE
+    the outer ``[$style]...[/]`` (see :func:`segment_markup`), so a trailing
+    backslash run has to survive being immediately followed by ``[/link]``
+    AND (once that's closed) by the outer ``[/]`` right after it. Both
+    close correctly and ``.plain`` still matches exactly.
+    """
+    from amplifier_app_tui.model.blocks import Segment
+    from amplifier_app_tui.ui.segments import segment_markup
+
+    text = "see the Makefile rule \\"
+    markup = segment_markup(
+        Segment(text=text, style_token="teal", link="https://example.com/Makefile")
+    )
+    assert Content.from_markup(markup).plain == text
+
+
+def test_line_markup_trailing_backslash_does_not_corrupt_next_segment() -> None:
+    r"""``append_closing_tag`` only protects a segment's OWN closing tag --
+    it has no way to know whether ANOTHER segment's markup is concatenated
+    right after (``line_markup`` joins segments with no separator). A
+    segment whose text ends in a raw backslash run sitting directly before
+    the next segment's own opening ``[`` tag hides that ``[`` exactly like
+    it would a closing tag -- confirmed via the naive
+    ``"".join(segment_markup(s) for s in line)`` this replaced: it raised
+    ``MarkupError: auto closing tag ('[/]') has nothing to close`` for the
+    case below. ``line_markup`` must hand a trailing backslash run off to
+    the next segment instead, so multi-segment lines (mixed-style
+    streaming answer spans, DESIGN-SPEC syntax coloring, etc.) never
+    reintroduce this as a crash.
+    """
+    from amplifier_app_tui.ui.segments import line_markup
+
+    line = (
+        Segment(text="echo hello \\", style_token="fg"),
+        Segment(text=" # comment", style_token="dim"),
+    )
+    markup = line_markup(line)
+    content = Content.from_markup(markup)  # must not raise
+    assert content.plain == "echo hello \\ # comment"
+
+
 @pytest.mark.parametrize("name", tuple(GOLDEN_MARKERS))
 def test_markup_roundtrip_matches_plain(name: str) -> None:
     lines = render_block(_blocks()[name], 80)

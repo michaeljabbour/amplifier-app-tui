@@ -37,7 +37,7 @@ from ..model.blocks import (
     Segment,
 )
 from ..model.evidence import EvidenceLink
-from .segments import escape_content, segment_markup
+from .segments import append_closing_tag, escape_content, line_markup
 
 THROTTLE_SECONDS = 1 / 30
 """Minimum interval between tail repaints (30Hz — inside the 30–60Hz budget)."""
@@ -422,7 +422,7 @@ def lane_tail_markup(text: str) -> str:
     if not lines:
         return ""
     body = "\n".join(f"┆ {escape_content(line)}" for line in lines)
-    return f"[$dim]{body}[/]"
+    return f"[$dim]{append_closing_tag(body, '[/]')}"
 
 
 class LiveTail(Static):
@@ -687,14 +687,14 @@ class LiveTail(Static):
         body = ""
         if visible and block_type == "thinking":
             text = _last_lines(visible, max_lines)
-            body = f"[italic $dim]{escape_content(text)}[/]"
+            body = f"[italic $dim]{append_closing_tag(escape_content(text), '[/]')}"
         elif visible:
             render_source = _last_lines(source, max_lines) if max_lines is not None else source
-            body = "".join(segment_markup(segment) for segment in streaming_spans(render_source))
+            body = line_markup(streaming_spans(render_source))
         identity = f"{producer.strip()} · t{turn}" if producer.strip() and turn > 0 else ""
         if not identity:
             return body
-        label = f"[$dimmer]{escape_content(identity)}[/]"
+        label = f"[$dimmer]{append_closing_tag(escape_content(identity), '[/]')}"
         return f"{label}\n{body}" if body else label
 
 
