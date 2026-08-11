@@ -134,6 +134,12 @@ class ProviderVerification:
 
 _DIAGNOSE_REMEDIATION = f"run `{EXECUTABLE_NAME} doctor` for a full diagnosis"
 
+_MODULE_MISSING_REMEDIATION = (
+    "the provider's module source is not installed (a cold install or fetch "
+    f"hiccup) — re-fetch it with `{EXECUTABLE_NAME} bundle refresh --force`, then retry"
+    f"; if it persists, run `{EXECUTABLE_NAME} doctor`"
+)
+
 
 def _secret_values(config: dict[str, Any]) -> tuple[str, ...]:
     """Config values that look like secrets (see module docstring)."""
@@ -203,16 +209,30 @@ def _import_provider_module(module_id: str) -> Any:
     return importlib.import_module(name)
 
 
-def _degrades_gracefully(module_id: str, error: BaseException) -> bool:
-    """See module docstring "The import-failure boundary"."""
+def _is_missing_bundle_module(module_id: str, error: BaseException) -> bool:
+    """True when the import failed on the provider's OWN top-level package.
+
+    That is the cold-install shape -- the provider's source fetch hiccuped,
+    so nothing was grafted onto ``sys.path`` and a cache repair can fix it
+    outright. Anything else (a non-ImportError, or a failure inside the
+    module's own code) is a genuine defect, not a missing file.
+    """
     if not isinstance(error, ImportError):
         return False
     expected = f"amplifier_module_{module_id.replace('-', '_')}"
     missing = getattr(error, "name", None)
     if not missing:
+        return False
+    return missing == expected or missing.startswith(f"{expected}.")
+
+
+def _degrades_gracefully(module_id: str, error: BaseException) -> bool:
+    """See module docstring "The import-failure boundary"."""
+    if not isinstance(error, ImportError):
+        return False
+    if not getattr(error, "name", None):
         return False  # can't attribute the failure -- surface it, don't guess
-    is_the_bundle_module_itself = missing == expected or missing.startswith(f"{expected}.")
-    return not is_the_bundle_module_itself
+    return not _is_missing_bundle_module(module_id, error)
 
 
 def _mounted_provider_instance(coordinator: Any, mount_result: Any) -> Any | None:
@@ -394,7 +414,14 @@ async def verify_provider(
         return ProviderVerification(
             ok=False,
             error=f"provider '{module_id}' module failed to import: {error}",
-            remediation=_DIAGNOSE_REMEDIATION,
+            remediation=(
+                # The module itself was never fetched: remediation must name
+                # the repair command, not `doctor` -- doctor re-runs this same
+                # resolution and would print this same error (a dead end).
+                _MODULE_MISSING_REMEDIATION
+                if _is_missing_bundle_module(module_id, error)
+                else _DIAGNOSE_REMEDIATION
+            ),
         )
 
     mount_fn = getattr(module, "mount", None)

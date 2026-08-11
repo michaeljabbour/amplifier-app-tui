@@ -116,6 +116,30 @@ setup and writes the key to `keys.env` in the app home.
 If the message instead reads `provider '<id>' mounted but does not satisfy the Provider protocol`,
 credentials are not the problem — the module is. Run `{{ site.data.product.command }} doctor` for the full diagnosis.
 
+## Provider module failed to import
+
+**Symptom.** The launch preflight stops with:
+
+```text
+✗ cannot launch: provider '<id>' module failed to import: No module named 'amplifier_module_<id>'
+→ the provider's module source is not installed (a cold install or fetch hiccup) — re-fetch it with `{{ site.data.product.command }} bundle refresh --force`, then retry; if it persists, run `{{ site.data.product.command }} doctor`
+```
+
+**Cause.** The provider's source was never fetched into the local cache, so nothing could be
+imported. This is the cold-install shape — a first boot that was interrupted, or a fetch that
+hiccuped — not a defect in the module itself. `doctor` cannot help here: it re-runs the same
+resolution and prints the same error.
+
+**Fix.** Re-fetch the bundle sources, then launch again:
+
+```sh
+{{ site.data.product.command }} bundle refresh --force
+```
+
+`--force` cleans uv's cache first, so a source pinned to a floating ref (`@main`) cannot resolve
+back to the same absent copy. If the error survives a forced refresh, the module genuinely is
+broken — run `{{ site.data.product.command }} doctor` for the full diagnosis.
+
 ## Wrong provider selected, or an unexpected Anthropic error
 
 This is the one that most often sends people down the wrong path.
