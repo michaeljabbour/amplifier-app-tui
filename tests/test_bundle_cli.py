@@ -8,6 +8,7 @@ with settings redirected to ``tmp_path`` (never the real ~/.amplifier).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -55,6 +56,38 @@ def test_bundle_list_all_is_superset_of_default() -> None:
     assert default.exit_code == 0 and every.exit_code == 0
     assert "Use --all" in default.output
     assert "Use --all" not in every.output
+
+
+def test_bundle_list_json_is_a_stable_machine_contract(monkeypatch) -> None:
+    monkeypatch.setattr(
+        bundle_admin,
+        "list_bundles",
+        lambda **_kwargs: (
+            bundle_admin.BundleEntry("demo", False, "added", "git+https://example/demo"),
+            bundle_admin.BundleEntry("tui", True, "app", "/tmp/tui.md"),
+        ),
+    )
+    monkeypatch.setattr(bundle_admin, "current_bundle", lambda: "tui")
+
+    result = CliRunner().invoke(main, ["bundle", "list", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == [
+        {
+            "active": False,
+            "location": "git+https://example/demo",
+            "name": "demo",
+            "source": "added",
+            "status": "",
+        },
+        {
+            "active": True,
+            "location": "/tmp/tui.md",
+            "name": "tui",
+            "source": "app",
+            "status": "app",
+        },
+    ]
 
 
 def test_bundle_show_packaged_tui_offline() -> None:

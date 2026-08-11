@@ -88,6 +88,9 @@ async def test_build_mode_asks_for_writes_with_standard_options() -> None:
     assert detail.tool_name == "write_file"
     assert detail.capability == "write"
     assert detail.rule == "ask write"
+    assert detail.session_id == ROOT
+    assert detail.parent_id is None
+    assert detail.tool_call_id == "call-1"
 
 
 @pytest.mark.asyncio

@@ -1309,11 +1309,15 @@ def test_broker_approval_provider_adapts_native_requests() -> None:
 
     async def run() -> None:
         broker = ApprovalBroker()
-        provider = _BrokerApprovalProvider(broker)
+        provider = _BrokerApprovalProvider(broker, "root-session")
         request = SimpleNamespace(
             tool_name="bash",
             action="rm tui-native-test.txt",
-            details={"command": "rm tui-native-test.txt"},
+            details={
+                "command": "rm tui-native-test.txt",
+                "parent_id": "parent-session",
+                "tool_call_id": "call-native-1",
+            },
             risk_level="high",
             timeout=None,
         )
@@ -1326,6 +1330,9 @@ def test_broker_approval_provider_adapts_native_requests() -> None:
         assert head is not None
         assert head.prompt == "Allow rm tui-native-test.txt?"
         assert head.detail.tool_name == "bash"
+        assert head.detail.session_id == "root-session"
+        assert head.detail.parent_id == "parent-session"
+        assert head.detail.tool_call_id == "call-native-1"
         broker.answer(head.ticket_id, ALLOW_ALWAYS)
         response = await task
         assert response.approved is True

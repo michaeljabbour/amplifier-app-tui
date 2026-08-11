@@ -595,6 +595,7 @@ async def test_offline_recipe_gate_raises_bar_and_answer_resumes(recipes_env) ->
         assert head is not None, "gate did not raise an approval ticket"
         assert head.prompt == required[0].prompt
         assert head.detail.tool_name == "recipes"
+        assert head.detail.session_id == required[0].session_id
 
         runtime.broker.answer(head.ticket_id, ALLOW_ONCE)
 

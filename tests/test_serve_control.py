@@ -27,6 +27,9 @@ from typing import IO, Any, cast
 
 import pytest
 
+from amplifier_app_tui.kernel.approval import ALLOW_ONCE, ApprovalBroker, ApprovalDetail
+from amplifier_app_tui.kernel.events import Notification
+from amplifier_app_tui.kernel.goal import GoalCommandResult
 from amplifier_app_tui.kernel.persistence import SessionStore
 from amplifier_app_tui.kernel.serve import serve_loop
 from amplifier_app_tui.kernel.session_control import (
@@ -116,10 +119,16 @@ class _ControlRuntime:
         self.bundle_name = "tui"
         self.model_name = "test-model"
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
-        self.broker = _NoBroker()
+        self.broker: Any = _NoBroker()
         self.steering = SteeringQueue()
         self.submits: list[str] = []
         self.interrupts = 0
+        self.goal_calls: list[str] = []
+        self.goal_started = asyncio.Event()
+        self.goal_release = asyncio.Event()
+        self.block_submit = False
+        self.submit_started = asyncio.Event()
+        self.submit_release = asyncio.Event()
 
     async def submit(self, text: str) -> str:
         self.submits.append(text)
@@ -127,10 +136,47 @@ class _ControlRuntime:
             self.session_id,
             {"kind": "prompt_submit", "session_id": self.session_id, "ts": 1.0, "text": text},
         )
+        if self.block_submit:
+            self.submit_started.set()
+            await self.submit_release.wait()
         return f"ok:{text}"
 
     async def interrupt(self) -> None:
         self.interrupts += 1
+
+    async def configure_goal(self, args: str) -> GoalCommandResult:
+        self.goal_calls.append(args)
+        if not args:
+            return GoalCommandResult(
+                True,
+                "status",
+                "Goal: all checks pass",
+                condition="all checks pass",
+                cap=3,
+            )
+        if args == "clear":
+            self.goal_release.set()
+            return GoalCommandResult(True, "cleared", "Goal cleared: all checks pass")
+        parts = args.split(maxsplit=2)
+        cap = int(parts[1]) if parts[:1] == ["--max-turns"] else None
+        condition = parts[2] if cap is not None and len(parts) == 3 else args
+        return GoalCommandResult(
+            True,
+            "set",
+            f"Goal set (max {cap} turns)." if cap else "Goal set (unlimited turns).",
+            raw_condition=condition,
+            condition=condition,
+            cap=cap,
+        )
+
+    async def manage_goal(self, args: str, *, _on_configured: Any = None) -> GoalCommandResult:
+        result = await self.configure_goal(args)
+        if result.ok and result.action == "set":
+            self.goal_started.set()
+            if _on_configured is not None:
+                _on_configured(result)
+            await self.goal_release.wait()
+        return result
 
     async def cleanup(self) -> None:
         pass
@@ -187,6 +233,135 @@ def runtime(store: SessionStore) -> _ControlRuntime:
 
 def _session_dir(runtime: _ControlRuntime) -> Path:
     return runtime.store.session_dir(runtime.session_id)
+
+
+async def test_control_record_does_not_shadow_jsonl_event_encoder(
+    runtime: _ControlRuntime,
+) -> None:
+    """A control reply must not replace the JsonlRecords captured by _pump.
+
+    This is the exact regression: after the first control op, the next runtime
+    event used to call ``runtime_event`` on the control handler's list and kill
+    the pump task.
+    """
+
+    conn = _Connection(runtime)
+    conn.send(op="lease.status")
+    await conn.wait(lambda: conn.out.find("lease.state") is not None)
+
+    runtime.queue.put_nowait(
+        Notification(
+            session_id=runtime.session_id,
+            message="pump still alive",
+            source="regression-test",
+        )
+    )
+    await conn.wait(lambda: conn.out.find("runtime.event") is not None)
+
+    record = conn.out.find("runtime.event")
+    assert record is not None
+    assert record["event"]["kind"] == "notification"
+    assert record["event"]["message"] == "pump still alive"
+    assert not conn.task.done()
+    assert await conn.drop() == 0
+
+
+async def test_approval_record_carries_structural_lane_identity(
+    runtime: _ControlRuntime,
+) -> None:
+    runtime.broker = ApprovalBroker()
+    conn = _Connection(runtime)
+    await conn.wait(lambda: conn.out.find("session.started") is not None)
+    runtime.broker.stage_detail(
+        "Allow child write?",
+        ApprovalDetail(
+            tool_name="write_file",
+            session_id="child-session",
+            parent_id=runtime.session_id,
+            tool_call_id="call-child-7",
+        ),
+    )
+    request = asyncio.create_task(
+        runtime.broker.request_approval("Allow child write?", [], timeout=3600)
+    )
+
+    await conn.wait(lambda: conn.out.find("approval.required") is not None)
+    approval = conn.out.find("approval.required")
+    assert approval is not None
+    assert approval["session_id"] == "child-session"
+    assert approval["parent_id"] == runtime.session_id
+    assert approval["tool_call_id"] == "call-child-7"
+
+    conn.send(op="approve", ticket_id=approval["ticket_id"], choice=ALLOW_ONCE)
+    assert await asyncio.wait_for(request, timeout=1) == ALLOW_ONCE
+    assert await conn.drop() == 0
+
+
+async def test_goal_ops_use_native_runtime_and_share_the_turn_slot(
+    runtime: _ControlRuntime,
+) -> None:
+    conn = _Connection(runtime)
+    conn.send(op="goal.set", condition="all checks pass", max_turns=3)
+    await asyncio.wait_for(runtime.goal_started.wait(), timeout=1)
+    assert conn.out.find("goal.result") is None
+    await conn.wait(lambda: len(conn.out.all("goal.state")) == 1)
+    armed = conn.out.all("goal.state")[0]
+    assert armed["action"] == "set"
+    assert armed["active"] is True
+
+    # A goal run owns the ordinary turn slot: a competing submit is not
+    # admitted, while status and clear remain serviceable on the ops lane.
+    conn.send(op="submit", text="must not interleave")
+    conn.send(op="goal.status")
+    await conn.wait(lambda: len(conn.out.all("goal.state")) == 2)
+    status = conn.out.all("goal.state")[1]
+    assert status["ok"] is True
+    assert status["action"] == "status"
+    assert status["condition"] == "all checks pass"
+    assert status["max_turns"] == 3
+    assert status["active"] is True
+
+    conn.send(op="goal.clear")
+    await conn.wait(lambda: len(conn.out.all("goal.state")) == 3)
+    await conn.wait(lambda: conn.out.find("goal.result") is not None)
+    cleared = conn.out.all("goal.state")[2]
+    result = conn.out.find("goal.result")
+    assert cleared["action"] == "cleared"
+    assert cleared["active"] is False
+    assert result is not None and result["action"] == "set"
+    assert runtime.submits == []
+    assert runtime.goal_calls == ["--max-turns 3 all checks pass", "", "clear"]
+
+    # Once goal.result closes the native run, the slot is reusable.
+    conn.send(op="submit", text="after goal")
+    await conn.wait(lambda: conn.out.find("turn.completed") is not None)
+    assert runtime.submits == ["after goal"]
+    assert await conn.drop() == 0
+
+
+async def test_goal_set_arms_the_native_loop_during_an_active_turn(
+    runtime: _ControlRuntime,
+) -> None:
+    runtime.block_submit = True
+    conn = _Connection(runtime)
+    conn.send(op="submit", text="work already running")
+    await asyncio.wait_for(runtime.submit_started.wait(), timeout=1)
+
+    conn.send(op="goal.set", condition="finish every check", max_turns=4)
+    await conn.wait(lambda: conn.out.find("goal.state") is not None)
+    state = conn.out.find("goal.state")
+    assert state is not None
+    assert state["ok"] is True
+    assert state["active"] is True
+    assert state["condition"] == "finish every check"
+    assert state["max_turns"] == 4
+    assert runtime.goal_calls == ["--max-turns 4 finish every check"]
+    assert not runtime.goal_started.is_set(), "configure-only must not launch a second goal turn"
+
+    runtime.submit_release.set()
+    await conn.wait(lambda: conn.out.find("turn.completed") is not None)
+    assert runtime.submits == ["work already running"]
+    assert await conn.drop() == 0
 
 
 # -- opt-in ------------------------------------------------------------------
@@ -349,6 +524,66 @@ async def test_reattach_replays_the_same_history_without_touching_it(
     assert second.out.all("history.begin")[1]["since"] == 1
     assert second.out.all("history.end")[1]["count"] == 1
     assert ledger.read_bytes() == before, "replay must never write the transcript"
+
+
+async def test_replay_clamps_a_cursor_beyond_the_durable_tail(
+    runtime: _ControlRuntime,
+) -> None:
+    runtime.store.append_event(
+        runtime.session_id,
+        Notification(
+            event_id="durable-one",
+            session_id=runtime.session_id,
+            message="one",
+            source="cursor-test",
+        ),
+    )
+    conn = _Connection(runtime)
+    conn.send(op="history.replay", since=99_999)
+    await conn.wait(lambda: conn.out.find("history.end") is not None)
+
+    assert conn.out.find("history.begin")["since"] == 1  # type: ignore[index]
+    assert conn.out.find("history.end")["cursor"] == 1  # type: ignore[index]
+    assert await conn.drop() == 0
+
+
+async def test_replay_does_not_repeat_an_event_still_waiting_in_the_live_queue(
+    runtime: _ControlRuntime,
+) -> None:
+    class _GatedQueue(asyncio.Queue[Any]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def get(self) -> Any:
+            await self.release.wait()
+            return await super().get()
+
+    pending = Notification(
+        event_id="pending-at-replay",
+        session_id=runtime.session_id,
+        message="exactly once",
+        source="replay-race-test",
+    )
+    runtime.store.append_event(runtime.session_id, pending)
+    gated = _GatedQueue()
+    gated.put_nowait(pending)
+    runtime.queue = gated
+
+    conn = _Connection(runtime)
+    conn.send(op="history.replay", since=0)
+    await conn.wait(lambda: conn.out.find("history.end") is not None)
+    gated.release.set()
+    await asyncio.sleep(0)
+
+    matching = [
+        record
+        for record in conn.out.all("runtime.event")
+        if record.get("event", {}).get("event_id") == pending.event_id
+    ]
+    assert len(matching) == 1
+    assert matching[0]["replay"] is True
+    assert await conn.drop() == 0
 
 
 async def test_an_abandoned_lease_expires_so_the_session_is_never_locked(

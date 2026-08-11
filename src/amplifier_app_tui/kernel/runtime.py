@@ -497,8 +497,9 @@ class _BrokerApprovalProvider:
     ``ApprovalResponse.remember``; this adapter only presents the ask.
     """
 
-    def __init__(self, broker: ApprovalBroker) -> None:
+    def __init__(self, broker: ApprovalBroker, session_id: str = "") -> None:
         self._broker = broker
+        self._session_id = session_id
 
     async def request_approval(self, request: Any) -> Any:
         from amplifier_core import ApprovalResponse
@@ -508,13 +509,22 @@ class _BrokerApprovalProvider:
         action = str(getattr(request, "action", "") or getattr(request, "tool_name", ""))
         prompt = f"Allow {action}?"
         details = getattr(request, "details", None)
+        detail_map = dict(details) if isinstance(details, Mapping) else {}
         self._broker.stage_detail(
             prompt,
             ApprovalDetail(
                 command=action,
                 rule=str(getattr(request, "risk_level", "") or ""),
                 tool_name=str(getattr(request, "tool_name", "") or ""),
-                tool_input=dict(details) if isinstance(details, Mapping) else {},
+                tool_input=detail_map,
+                session_id=str(detail_map.get("session_id") or self._session_id),
+                parent_id=str(detail_map.get("parent_id") or "") or None,
+                tool_call_id=str(
+                    detail_map.get("tool_call_id")
+                    or detail_map.get("tool_use_id")
+                    or detail_map.get("id")
+                    or ""
+                ),
             ),
         )
         choice = await self._broker.request_approval(
@@ -1713,7 +1723,7 @@ class RealRuntime:
         except Exception:  # noqa: BLE001 — capability registry variance
             register = None
         if callable(register):
-            register(_BrokerApprovalProvider(self.broker))
+            register(_BrokerApprovalProvider(self.broker, initialized.session_id))
 
     def _native_safe_tools(self) -> frozenset[str]:
         """Tool names the ACTIVE native mode declares ``safe`` (hooks-mode).
@@ -1870,14 +1880,13 @@ class RealRuntime:
             return (False, 0)
         return await session_ops.clear_context(coord)
 
-    async def manage_goal(self, args: str) -> goal_bridge.GoalCommandResult:
-        """Bridge ``/goal`` into the mounted orchestrator's native loop.
+    async def configure_goal(self, args: str) -> goal_bridge.GoalCommandResult:
+        """Inspect, clear, or arm the mounted orchestrator's native goal state.
 
-        The TUI owns only command parsing and first-turn admission.  Goal
-        evaluation, continuation, stall detection, cancellation, and progress
-        events remain inside ``loop-streaming``.  Mention expansion is snapped
-        once so the evaluator condition and the first model turn see identical
-        content while the transcript keeps the user's original text.
+        Unlike :meth:`manage_goal`, a successful ``set`` does not submit a new
+        turn. This is the safe seam for a controller that enables autopilot
+        while a turn is already executing: loop-streaming observes the state at
+        its next goal boundary and owns every continuation from there.
         """
 
         coord = self._coordinator()
@@ -1887,13 +1896,37 @@ class RealRuntime:
                 "error",
                 "Goal unavailable: session still starting.",
             )
-        result = await goal_bridge.configure_goal(
+        return await goal_bridge.configure_goal(
             coord,
             args,
             expand_mentions=self._expand_mentions,
         )
+
+    async def manage_goal(
+        self,
+        args: str,
+        *,
+        _on_configured: Callable[[goal_bridge.GoalCommandResult], None] | None = None,
+    ) -> goal_bridge.GoalCommandResult:
+        """Bridge ``/goal`` into the mounted orchestrator's native loop.
+
+        The TUI owns only command parsing and first-turn admission.  Goal
+        evaluation, continuation, stall detection, cancellation, and progress
+        events remain inside ``loop-streaming``.  Mention expansion is snapped
+        once so the evaluator condition and the first model turn see identical
+        content while the transcript keeps the user's original text.
+        """
+
+        result = await self.configure_goal(args)
         if not result.ok or result.action != "set":
             return result
+        coord = self._coordinator()
+        if coord is None:  # pragma: no cover - configure_goal just proved it exists
+            return goal_bridge.GoalCommandResult(
+                False,
+                "error",
+                "Goal unavailable: session still starting.",
+            )
 
         admitted = False
 
@@ -1902,6 +1935,8 @@ class RealRuntime:
             admitted = True
 
         try:
+            if _on_configured is not None:
+                _on_configured(result)
             await self.submit(
                 result.raw_condition,
                 _expanded_prompt=result.condition,

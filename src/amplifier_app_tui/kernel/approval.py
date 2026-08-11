@@ -58,8 +58,9 @@ Listener = Callable[[], None]
 class ApprovalDetail(BaseModel):
     """Structured payload behind one approval prompt (ctrl-a detail view).
 
-    Fields mirror the mockup's detail rows: command, cwd, the trust rule
-    that fired, and the capability class.
+    The command/cwd/rule fields back the in-process detail view. The routing
+    identity is carried with the same ticket so out-of-process clients can
+    place approval UI by session and tool call without timing inference.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -70,6 +71,9 @@ class ApprovalDetail(BaseModel):
     capability: str = ""
     tool_name: str = ""
     tool_input: dict[str, Any] = Field(default_factory=dict)
+    session_id: str = ""
+    parent_id: str | None = None
+    tool_call_id: str = ""
 
 
 def is_allow(choice: str) -> bool:

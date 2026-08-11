@@ -29,6 +29,9 @@ Wire (one JSON object per line):
                 {"op": "tag.list",  "session_id": "<id?>"}
                 {"op": "tag.sessions", "tag": "urgent"}
                 {"op": "context.get"}                    (pull the current context.state meter)
+                {"op": "goal.set",    "condition": "all checks pass", "max_turns": 5}
+                {"op": "goal.status"}                    (inspect native loop state)
+                {"op": "goal.clear"}                     (stop native loop continuation)
 
                 -- session control plane (opt-in; see kernel/session_control.py) --
                 {"op": "session.handle"}                 (durable handle + attach ref)
@@ -45,13 +48,17 @@ Wire (one JSON object per line):
                 {"op": "history.replay", "since": 0}     (durable event history for a reattach)
                  any op may carry "actor" (attribution), "lease" (write token) and
                  "idem" (idempotency key); write ops are submit/steer/approve/
-                 decision/interrupt.
+                 decision/interrupt/goal.set/goal.clear.
   OUT (stdout)  {"schema_version": 1, "type": "boot.progress",
                  "action": "preparing", "detail": "tui"}   (before session.started)
                 {"schema_version": 1, "sequence": N, "timestamp": T,
                  "type": "session.started" | "runtime.event" | "turn.completed"}
                 {"schema_version": 1, "type": "approval.required",
-                 "ticket_id": "approval-3", "prompt": "...", "options": [...]}
+                 "ticket_id": "approval-3", "prompt": "...", "options": [...],
+                 "session_id": "...", "parent_id": null, "tool_call_id": "..."}
+                {"schema_version": 1, "type": "goal.state" | "goal.result",
+                 "ok": true, "action": "status" | "set" | "cleared",
+                 "active": true, "detail": "...", "condition": "...", "max_turns": 5}
                 {"schema_version": 1, "type": "effort.state",
                  "effort": "high" | null, "levels": ["none", ..., "xhigh"]}
                  (reply to every effort.* op; set/cycle add "ok"/"detail")
@@ -350,6 +357,7 @@ OP_PERMISSIONS: dict[str, str] = {
     "history.query": READ,
     "history.replay": READ,
     "context.get": READ,
+    "goal.status": READ,
     "effort.get": READ,
     "tag.list": READ,
     "tag.sessions": READ,
@@ -359,6 +367,8 @@ OP_PERMISSIONS: dict[str, str] = {
     "approve": WRITE,
     "decision": WRITE,
     "interrupt": WRITE,
+    "goal.set": WRITE,
+    "goal.clear": WRITE,
     "tag.add": WRITE,
     "tag.remove": WRITE,
     "effort.set": WRITE,
@@ -508,9 +518,11 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
     except (TypeError, ValueError):
         limit = 0
     events: list[dict[str, Any]] = []
+    ledger_cursor = 0
     try:
         store = _serve_store(runtime)
         for index, raw in enumerate(store.read_events(session_id)):
+            ledger_cursor = index + 1
             if index < since:
                 continue
             events.append(
@@ -527,12 +539,17 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
                 break
     except Exception:  # noqa: BLE001 -- replay is best-effort, never fatal
         events = []
-    cursor = since + len(events)
+    # `since` is an untrusted client cursor. Clamp it to the actual ledger tail
+    # so one stale/incorrect wire sequence cannot permanently skip all future
+    # durable events. With a limit, ledger_cursor is the last scanned record;
+    # without one it is the durable tail.
+    effective_since = min(since, ledger_cursor)
+    cursor = int(events[-1]["sequence"]) if events else effective_since
     begin = {
         "schema_version": 1,
         "type": "history.begin",
         "session_id": session_id,
-        "since": since,
+        "since": effective_since,
     }
     end = {
         "schema_version": 1,
@@ -916,7 +933,7 @@ async def serve_loop(
     the seam the multi-process tests use to inject a deterministic clock, so
     lease expiry can be exercised across real processes without racing a real
     timer."""
-    records = JsonlRecords()
+    jsonl_records = JsonlRecords()
     loop = asyncio.get_running_loop()
 
     # stdin is blocking; read it on a thread and marshal ops onto the loop.
@@ -982,7 +999,7 @@ async def serve_loop(
 
     _emit_raw(
         out,
-        records.session_started(
+        jsonl_records.session_started(
             session_id=runtime.session_id,
             bundle=runtime.bundle_name,
             model=runtime.model_name,
@@ -990,15 +1007,18 @@ async def serve_loop(
     )
 
     # Approvals: the broker owns the ticket id the UIEvent lacks. On every queue
-    # change, surface the head ticket once (id + prompt + options) so the UI can
-    # answer it by id. Fires in-loop (RealRuntime runs here, not on a separate
-    # thread), so writing to stdout from the listener is safe.
+    # change, surface the head ticket once (id + prompt + options + structural
+    # routing identity) so the UI can answer it by id and place it in the right
+    # agent lane without correlating by timing. Fires in-loop (RealRuntime runs
+    # here, not on a separate thread), so writing to stdout from the listener is
+    # safe.
     announced: set[str] = set()
 
     def _on_broker_change() -> None:
         head = runtime.broker.head
         if head is not None and head.ticket_id not in announced:
             announced.add(head.ticket_id)
+            detail = head.detail
             _emit_raw(
                 out,
                 {
@@ -1007,6 +1027,9 @@ async def serve_loop(
                     "ticket_id": head.ticket_id,
                     "prompt": head.prompt,
                     "options": list(head.options),
+                    "session_id": str(getattr(detail, "session_id", "") or runtime.session_id),
+                    "parent_id": getattr(detail, "parent_id", None) or None,
+                    "tool_call_id": str(getattr(detail, "tool_call_id", "") or ""),
                 },
             )
 
@@ -1032,14 +1055,31 @@ async def serve_loop(
             ),
         )
 
+    # A replay snapshot can include durable events that are still waiting in
+    # runtime.queue. Remember only the queue prefix that existed at the replay
+    # boundary so the pump does not emit those same event ids live immediately
+    # after history.end. New events arriving after the snapshot remain live.
+    replay_suppression_ids: set[str] = set()
+    replay_suppression_remaining = 0
+
     # One pump drains normalized events for the whole session. The broker
     # listener owns approval_required (with its id), so it is filtered here.
     async def _pump() -> None:
+        nonlocal replay_suppression_remaining
         while True:
             event = await runtime.queue.get()
+            suppress = False
+            if replay_suppression_remaining > 0:
+                replay_suppression_remaining -= 1
+                event_id = str(getattr(event, "event_id", "") or "")
+                suppress = bool(event_id and event_id in replay_suppression_ids)
+                if replay_suppression_remaining == 0:
+                    replay_suppression_ids.clear()
+            if suppress:
+                continue
             if getattr(event, "kind", "") == "approval_required":
                 continue
-            _emit_raw(out, records.runtime_event(event).model_dump(mode="json"))
+            _emit_raw(out, jsonl_records.runtime_event(event).model_dump(mode="json"))
             # Only ROOT telemetry describes this session's context window.
             # Child costs/tokens have their own lanes and must not make the
             # parent HUD look full. Push after either usage or compaction;
@@ -1071,8 +1111,8 @@ async def serve_loop(
             policy = _authz_policy(runtime)
         return policy
 
-    def _emit_all(records: list[dict[str, Any]]) -> None:
-        for record in records:
+    def _emit_all(outbound_records: list[dict[str, Any]]) -> None:
+        for record in outbound_records:
             _emit_raw(out, record)
 
     def _ensure_control() -> SessionControl | None:
@@ -1171,11 +1211,11 @@ async def serve_loop(
                     await _emit_status()
                     continue
                 if kind_str in _CONTROL_OPS:
-                    records = _handle_control_op(control, op, actor=auth.attributed)
+                    control_records = _handle_control_op(control, op, actor=auth.attributed)
 
-                    _emit_all(records)
-                    if idem and records:
-                        control.remember(idem, records)
+                    _emit_all(control_records)
+                    if idem and control_records:
+                        control.remember(idem, control_records)
                     if kind_str == "session.pause" and op.get("interrupt"):
                         # Pause parks the write lane; cancelling the running
                         # turn stays an explicit opt-in.
@@ -1215,6 +1255,18 @@ async def serve_loop(
                     continue  # a turn is already running; ignore re-submit
                 text = str(op.get("text", ""))
                 turn = asyncio.create_task(_run_turn(runtime, out, text))
+            elif kind == "goal.set":
+                if turn is not None and not turn.done():
+                    # Toggle-on during an existing turn: arm the mounted
+                    # orchestrator's native state only. The current execution
+                    # discovers it at its goal boundary and owns subsequent
+                    # continuations; never launch an interleaved second turn.
+                    await _emit_goal_state(runtime, out, _goal_args(op))
+                    continue
+                turn = asyncio.create_task(_run_goal(runtime, out, _goal_args(op)))
+            elif kind in {"goal.status", "goal.clear"}:
+                args = "" if kind == "goal.status" else "clear"
+                await _emit_goal_state(runtime, out, args)
             elif kind == "steer":
                 # Mid-turn course correction (additive op). Lands in the SAME
                 # bounded queue the in-process TUI shares with the runtime
@@ -1291,7 +1343,24 @@ async def serve_loop(
                 # Reattach path (additive READ op): stream the durable UIEvent
                 # ledger so a reconnecting controller or human observes the
                 # same history. Read-only -- it never writes the transcript.
-                _emit_all(_history_replay_records(runtime, op))
+                replay_records = _history_replay_records(runtime, op)
+                # This branch has no await: qsize and the ledger snapshot form
+                # one event-loop boundary. Only the already-queued prefix can
+                # also be present in replay; later events must remain live.
+                replay_suppression_remaining = runtime.queue.qsize()
+                replay_suppression_ids.clear()
+                if replay_suppression_remaining > 0:
+                    replayed_ids = [
+                        str(record.get("event", {}).get("event_id", "") or "")
+                        for record in replay_records
+                        if record.get("type") == "runtime.event"
+                    ]
+                    replay_suppression_ids.update(
+                        event_id
+                        for event_id in replayed_ids[-replay_suppression_remaining:]
+                        if event_id
+                    )
+                _emit_all(replay_records)
             elif kind == "context.get":
                 # On-demand pull of the current meter (additive op): initial
                 # paint / manual refresh without waiting for the next provider
@@ -1357,3 +1426,124 @@ async def _run_turn(runtime: RealRuntime, out: IO[str], text: str) -> str:
         },
     )
     return response
+
+
+def _goal_args(op: dict[str, Any]) -> str:
+    """Translate the structured wire form into ``RealRuntime.manage_goal`` args.
+
+    ``args`` preserves the native ``/goal`` grammar for thin clients. The
+    friendlier ``condition``/``max_turns`` pair lets Studio avoid constructing
+    command text while still delegating all validation and execution to the
+    kernel bridge.
+    """
+
+    if "args" in op:
+        return str(op.get("args") or "")
+    condition = str(op.get("condition") or op.get("text") or "")
+    if "max_turns" not in op:
+        return condition
+    return f"--max-turns {op.get('max_turns')} {condition}".strip()
+
+
+def _goal_record(
+    runtime: RealRuntime,
+    *,
+    record_type: str,
+    ok: bool,
+    action: str,
+    detail: str,
+    condition: str = "",
+    cap: int | None = None,
+    active: bool = False,
+) -> dict[str, Any]:
+    """One stable wire shape for goal inspection and terminal results."""
+
+    return {
+        "schema_version": 1,
+        "type": record_type,
+        "session_id": runtime.session_id,
+        "ok": ok,
+        "action": action,
+        "detail": detail,
+        "condition": condition,
+        "max_turns": cap,
+        "active": active,
+    }
+
+
+def _goal_result_record(
+    runtime: RealRuntime,
+    record_type: str,
+    result: Any,
+    *,
+    active: bool | None = None,
+) -> dict[str, Any]:
+    action = str(getattr(result, "action", "error"))
+    condition = str(getattr(result, "condition", ""))
+    if active is None:
+        active = record_type == "goal.state" and action in {"set", "status"} and bool(condition)
+    return _goal_record(
+        runtime,
+        record_type=record_type,
+        ok=bool(getattr(result, "ok", False)),
+        action=action,
+        detail=str(getattr(result, "detail", "")),
+        condition=condition,
+        cap=getattr(result, "cap", None),
+        active=active,
+    )
+
+
+async def _emit_goal_state(runtime: RealRuntime, out: IO[str], args: str) -> None:
+    """Configure native goal state without launching a turn, then acknowledge."""
+
+    try:
+        result = await runtime.configure_goal(args)
+        record = _goal_result_record(runtime, "goal.state", result)
+    except Exception as caught:  # noqa: BLE001 -- protocol errors are records, not disconnects
+        record = _goal_record(
+            runtime,
+            record_type="goal.state",
+            ok=False,
+            action="error",
+            detail=str(caught),
+        )
+    _emit_raw(out, record)
+
+
+async def _run_goal(runtime: RealRuntime, out: IO[str], args: str) -> str:
+    """Own one native goal run in the same turn slot as ``submit``.
+
+    ``RealRuntime.manage_goal`` arms loop-streaming and sends the first prompt
+    through the ordinary submit path. Its progress remains ordinary
+    ``runtime.event`` traffic; this terminal record only closes the protocol
+    operation so an external client can release its busy/autopilot state.
+    """
+
+    detail = ""
+    try:
+
+        def configured(result: Any) -> None:
+            _emit_raw(
+                out,
+                _goal_result_record(runtime, "goal.state", result, active=True),
+            )
+
+        result = await runtime.manage_goal(args, _on_configured=configured)
+        detail = str(getattr(result, "detail", ""))
+        record = _goal_result_record(runtime, "goal.result", result)
+    except Exception as caught:  # noqa: BLE001 -- a failed goal must not kill serve
+        detail = str(caught)
+        record = _goal_record(
+            runtime,
+            record_type="goal.result",
+            ok=False,
+            action="error",
+            detail=detail,
+        )
+    finally:
+        # Goal execution enters through RealRuntime.submit just like an
+        # ordinary turn, so the same no-cross-turn steer invariant applies.
+        runtime.steering.drain_steers()
+    _emit_raw(out, record)
+    return detail

@@ -2127,7 +2127,15 @@ def bundle() -> None:
 
 @bundle.command("list")
 @click.option("--all", "all_bundles", is_flag=True, help="Include nested dependency bundles.")
-def bundle_list(all_bundles: bool) -> None:
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Machine-readable JSON or the human table.",
+)
+def bundle_list(all_bundles: bool, output_format: str) -> None:
     """List available bundles (● marks the active one)."""
     from rich.console import Console
     from rich.table import Table
@@ -2136,6 +2144,25 @@ def bundle_list(all_bundles: bool) -> None:
     from .kernel.config import DEFAULT_BUNDLE
 
     entries = bundle_admin.list_bundles(all_bundles=all_bundles)
+    active_name = bundle_admin.current_bundle()
+    has_explicit_active = active_name is not None
+    if output_format == "json":
+        payload = []
+        for entry in entries:
+            is_default_active = not has_explicit_active and entry.name == DEFAULT_BUNDLE
+            payload.append(
+                {
+                    "name": entry.name,
+                    "active": entry.active or is_default_active,
+                    "location": entry.uri or ("(on disk)" if entry.source == "local" else ""),
+                    "status": "default"
+                    if is_default_active
+                    else ("app" if entry.source == "app" else ""),
+                    "source": entry.source,
+                }
+            )
+        click.echo(json.dumps(payload, sort_keys=True))
+        return
     console = Console()
     if not entries:
         console.print("no bundles found")
@@ -2146,8 +2173,6 @@ def bundle_list(all_bundles: bool) -> None:
     table.add_column("Name", style="green", no_wrap=True)
     table.add_column("Location", style="dim", overflow="fold")
     table.add_column("Status", no_wrap=True)
-    active_name = bundle_admin.current_bundle()
-    has_explicit_active = active_name is not None
     for entry in entries:
         is_default_active = not has_explicit_active and entry.name == DEFAULT_BUNDLE
         is_active = entry.active or is_default_active
@@ -3425,11 +3450,37 @@ def provider() -> None:
 
 
 @provider.command("list")
-def provider_list() -> None:
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Machine-readable JSON or the human list.",
+)
+def provider_list(output_format: str) -> None:
     """List configured providers (★ marks the primary)."""
     from .kernel import setup
 
     providers = setup.configured_providers()
+    if output_format == "json":
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "name": entry.name,
+                        "module": entry.module_id,
+                        "model": entry.model or "",
+                        "active": entry.primary,
+                        "priority": entry.priority,
+                        "scope": entry.scope,
+                    }
+                    for entry in providers
+                ],
+                sort_keys=True,
+            )
+        )
+        return
     if not providers:
         click.echo("No providers configured.")
         click.echo(f"Add one:       {_command('provider', 'add')}")
@@ -3444,9 +3495,43 @@ def provider_list() -> None:
         )
 
 
+@provider.command("status")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Machine-readable JSON or human-readable status.",
+)
+def provider_status(output_format: str) -> None:
+    """Report whether a session can mount a configured provider."""
+    from .kernel import setup
+
+    configured = setup.has_configured_provider()
+    payload = {
+        "configured": configured,
+        "message": "Provider is configured" if configured else "No provider is configured",
+        "remediation": ""
+        if configured
+        else f"Run {_command('config')} or {_command('provider', 'add')}",
+    }
+    if output_format == "json":
+        click.echo(json.dumps(payload, sort_keys=True))
+        return
+    click.echo(payload["message"])
+    if payload["remediation"]:
+        click.echo(payload["remediation"])
+
+
 @provider.command("add")
 @click.argument("provider_type", required=False)
 @click.option("--api-key", default=None, help="API key (non-interactive; else prompted).")
+@click.option(
+    "--api-key-stdin",
+    is_flag=True,
+    help="Read the API key from stdin (keeps it out of process arguments).",
+)
 @click.option("--base-url", default=None, help="Optional provider base-URL override.")
 @click.option("--model", default=None, help="Default model for the provider.")
 @click.option(
@@ -3465,6 +3550,7 @@ def provider_list() -> None:
 def provider_add(
     provider_type: str | None,
     api_key: str | None,
+    api_key_stdin: bool,
     base_url: str | None,
     model: str | None,
     instance_id: str | None,
@@ -3482,6 +3568,12 @@ def provider_add(
     `--instance-id` for a second instance of the SAME provider type; it gets
     its own credential variable instead of overwriting the first's.
     """
+    if api_key is not None and api_key_stdin:
+        raise click.UsageError("choose either --api-key or --api-key-stdin, not both")
+    if api_key_stdin:
+        api_key = click.get_text_stream("stdin").read().strip()
+        if not api_key:
+            raise click.UsageError("--api-key-stdin received an empty API key")
     if not yes and not _is_interactive_terminal():
         raise click.UsageError(
             f"interactive provider setup needs a terminal; add `--yes` with all required "

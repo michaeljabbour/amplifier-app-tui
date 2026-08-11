@@ -139,7 +139,7 @@ class RecipeApprovalBridge:
         stage = str(data.get("stage_name") or "")
         prompt = recipe_approval_prompt(data)
         try:
-            choice = await self._ask(prompt, recipe, stage)
+            choice = await self._ask(prompt, recipe, stage, data)
             await self._route(choice, recipe, stage)
         except asyncio.CancelledError:  # session teardown
             raise
@@ -151,7 +151,9 @@ class RecipeApprovalBridge:
                 level="error",
             )
 
-    async def _ask(self, prompt: str, recipe: str, stage: str) -> str:
+    async def _ask(
+        self, prompt: str, recipe: str, stage: str, event_data: Mapping[str, Any]
+    ) -> str:
         self._broker.stage_detail(
             prompt,
             ApprovalDetail(
@@ -159,6 +161,14 @@ class RecipeApprovalBridge:
                 rule="recipe approval gate",
                 tool_name="recipes",
                 tool_input={"recipe": recipe, "stage_name": stage},
+                session_id=str(event_data.get("session_id") or ""),
+                parent_id=str(event_data.get("parent_id") or "") or None,
+                tool_call_id=str(
+                    event_data.get("tool_call_id")
+                    or event_data.get("tool_use_id")
+                    or event_data.get("id")
+                    or ""
+                ),
             ),
         )
         # default="deny" only shapes the (practically unreachable) timeout

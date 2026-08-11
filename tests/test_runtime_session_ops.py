@@ -234,7 +234,32 @@ def test_manage_goal_snapshots_mentions_and_submits_through_normal_turn() -> Non
 
     assert result.ok and result.action == "set" and result.cap == 3
     assert submitted == [("all tests pass", "expanded::all tests pass")]
-    assert coordinator.session_state["goal"]["condition"] == "expanded::all tests pass"
+    goal = coordinator.session_state["goal"]
+    assert isinstance(goal, dict)
+    assert goal["condition"] == "expanded::all tests pass"
+
+
+def test_configure_goal_arms_native_state_without_submitting_a_turn() -> None:
+    coordinator = FakeCoordinator()
+    runtime = _runtime(coordinator)
+
+    async def expand(text: str) -> str:
+        return f"expanded::{text}"
+
+    async def submit_must_not_run(*_args: Any, **_kwargs: Any) -> str:
+        raise AssertionError("configure_goal must not launch a second turn")
+
+    runtime._expand_mentions = expand  # type: ignore[method-assign]
+    runtime.submit = submit_must_not_run  # type: ignore[method-assign]
+
+    result = asyncio.run(runtime.configure_goal("--max-turns 4 finish every check"))
+
+    assert result.ok and result.action == "set"
+    assert result.condition == "expanded::finish every check"
+    assert result.cap == 4
+    goal = coordinator.session_state["goal"]
+    assert isinstance(goal, dict)
+    assert goal["condition"] == result.condition
 
 
 @pytest.mark.parametrize("admitted", [False, True])
