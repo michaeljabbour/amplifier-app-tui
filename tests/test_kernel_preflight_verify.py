@@ -39,6 +39,25 @@ def _install_fake_module(
     monkeypatch.delitem(sys.modules, package_name, raising=False)
 
 
+def _add_submodule_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module_id: str, filename: str, source: str
+) -> None:
+    """Write an EXTRA file inside an already-``_install_fake_module``'d
+    package -- e.g. a submodule ``__init__.py`` imports from.
+
+    Also drops the submodule from ``sys.modules`` for the same
+    cross-test-isolation reason ``_install_fake_module`` drops the
+    top-level package.
+    """
+    package_name = f"amplifier_module_{module_id.replace('-', '_')}"
+    submodule_path = tmp_path / package_name / filename
+    submodule_path.parent.mkdir(parents=True, exist_ok=True)
+    submodule_path.write_text(textwrap.dedent(source), encoding="utf-8")
+    dotted = f"{package_name}.{filename[: -len('.py')]}" if filename.endswith(".py") else None
+    if dotted:
+        monkeypatch.delitem(sys.modules, dotted, raising=False)
+
+
 _FLEX_PROVIDER = '''
 """Fake provider module -- behavior driven entirely by config (offline)."""
 
@@ -146,6 +165,26 @@ _BROKEN_PROVIDER = '''
 not a missing file; cache repair cannot fix this."""
 
 raise RuntimeError("boom at import time")
+'''
+
+_SUBMODULE_IMPORTING_PROVIDER = '''
+"""Fake provider whose __init__ imports a name from its OWN submodule --
+either shape below turns this into a dotted ImportError.name."""
+
+from .utils import run_provider  # noqa: F401
+
+
+async def mount(coordinator, config=None):
+    return None
+'''
+
+_UTILS_SUBMODULE_MISSING_SYMBOL = '''
+"""Fake submodule that EXISTS and imports fine on its own, but does not
+define the name __init__.py asked for -- the genuine-defect shape."""
+
+
+def something_else():
+    return None
 '''
 
 
@@ -331,6 +370,115 @@ async def test_cleanup_runs_even_when_a_later_check_fails(
     )
     assert result.ok is False
     assert set(flex_module.CALLS) == {"mount_cleanup", "coordinator_cleanup"}
+
+
+# ---------------------------------------------------------------------------
+# Import-failure classification: cold-install vs genuine module defect.
+#
+# Three failure shapes all reach _import_provider_module() as an ImportError
+# naming the bundle module (top-level, or via a dotted submodule), but only
+# TWO of them are actually fixed by re-fetching the source:
+#
+#   shape                                       | exception type       | .name  | remediation
+#   top-level package never fetched             | ModuleNotFoundError  | top    | cold-install
+#   submodule FILE absent (interrupted clone)   | ModuleNotFoundError  | dotted | cold-install
+#   symbol missing from an EXISTING submodule   | ImportError (plain)  | dotted | genuine defect
+#
+# The third row is the one #248 fixes: a plain ImportError (NOT a
+# ModuleNotFoundError) naming a dotted submodule of the bundle package used
+# to be misclassified as cold-install (`startswith` alone can't tell "file
+# absent" from "file present but broken"), sending users to re-fetch
+# identical, still-broken source.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_shape_top_level_package_never_fetched_is_cold_install() -> None:
+    """Table row 1: nothing was ever grafted onto sys.path for this module
+    id -- ModuleNotFoundError, .name is the top-level package exactly.
+    Cold-install remediation (re-fetching the source genuinely helps)."""
+    result = await verify_provider(
+        module_id="provider-shape-top-level-missing", config={}, model=""
+    )
+    assert result.ok is False
+    assert "failed to import" in (result.error or "")
+    remediation = result.remediation
+    assert remediation is not None
+    assert "bundle refresh --force" in remediation  # _MODULE_MISSING_REMEDIATION shape
+    assert "defect in the module's own code" not in remediation
+
+
+@pytest.mark.asyncio
+async def test_shape_submodule_file_absent_is_still_cold_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Table row 2: __init__.py imports from a submodule whose FILE was
+    never written (a partial/interrupted clone) -- still a
+    ModuleNotFoundError, but .name is now DOTTED
+    (``amplifier_module_<id>.utils``). Must still be cold-install: the
+    submodule genuinely is missing, and a re-fetch genuinely helps."""
+    _install_fake_module(
+        tmp_path,
+        monkeypatch,
+        "provider-shape-submodule-absent",
+        _SUBMODULE_IMPORTING_PROVIDER,
+    )
+    # NOTE: utils.py is deliberately never written for this scenario --
+    # the submodule FILE itself is what's missing.
+    result = await verify_provider(module_id="provider-shape-submodule-absent", config={}, model="")
+    assert result.ok is False
+    assert "failed to import" in (result.error or "")
+    assert "cannot import dependency" not in (result.error or "")  # not the foreign-dependency path
+    remediation = result.remediation
+    assert remediation is not None
+    assert "bundle refresh --force" in remediation  # _MODULE_MISSING_REMEDIATION shape
+    assert "defect in the module's own code" not in remediation
+
+
+@pytest.mark.asyncio
+async def test_shape_symbol_missing_from_existing_submodule_is_a_genuine_defect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Table row 3 -- the shape with NO coverage before #248, and the exact
+    bug it fixes: the submodule FILE exists and imports fine standalone,
+    but doesn't define the symbol __init__.py asks for. That is a plain
+    ImportError (NOT a ModuleNotFoundError) naming a DOTTED submodule of
+    the bundle package -- the old ``startswith`` check alone could not
+    distinguish this from row 2, and misrouted it to the cold-install
+    remediation. It must NOT get that remediation (re-fetching identical,
+    unbroken source cannot fix a real code defect), and must get its own
+    actionable, non-circular remediation instead (not just `doctor`, which
+    would only reprint this same error)."""
+    _install_fake_module(
+        tmp_path,
+        monkeypatch,
+        "provider-shape-genuine-defect",
+        _SUBMODULE_IMPORTING_PROVIDER,
+    )
+    _add_submodule_file(
+        tmp_path,
+        monkeypatch,
+        "provider-shape-genuine-defect",
+        "utils.py",
+        _UTILS_SUBMODULE_MISSING_SYMBOL,
+    )
+    result = await verify_provider(module_id="provider-shape-genuine-defect", config={}, model="")
+    assert result.ok is False
+    assert "failed to import" in (result.error or "")
+    assert "run_provider" in (result.error or "")  # the missing symbol, named in the error
+
+    remediation = result.remediation
+    assert remediation is not None
+    # MUST NOT get the cold-install (re-fetch) remediation or the circular
+    # bare `doctor` pointer -- neither can fix a defect in existing code:
+    assert "bundle refresh" not in remediation
+    assert "re-provision" not in remediation
+    assert "doctor" not in remediation
+    # MUST get an actionable, non-circular remediation instead:
+    assert "defect in the module's own code" in remediation
+    assert "source list" in remediation
+    assert "source show" in remediation
+    assert "report this as a bug" in remediation
 
 
 # ---------------------------------------------------------------------------

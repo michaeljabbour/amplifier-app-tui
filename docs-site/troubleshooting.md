@@ -151,6 +151,33 @@ re-fetch:
 back to the same absent copy. If the error still survives that, run
 `{{ site.data.product.command }} doctor` for the full diagnosis.
 
+## Provider module failed to import: a defect, not a missing file
+
+**Symptom.** The message looks similar to the missing-file case above, but names a
+submodule and complains about a symbol, not a missing package:
+
+```text
+✗ cannot launch: provider '<id>' module failed to import: cannot import name '<Symbol>' from 'amplifier_module_<id>.<submodule>' (<path>)
+→ this looks like a defect in the module's own code, not a missing or unfetched file, so re-fetching its source will not help — check whether a local source override is pinning a broken version with `{{ site.data.product.command }} source list` or `{{ site.data.product.command }} source show <module-id>`; if none applies, please report this as a bug
+```
+
+**Cause.** Python raises `ModuleNotFoundError` (a subclass of `ImportError`) only when a
+module or package genuinely cannot be found on disk — that's the missing-file shape above,
+and a re-fetch fixes it. A plain `ImportError` that is *not* a `ModuleNotFoundError` means
+the named module or submodule **was found and imported successfully**, but something it
+asks for (a symbol, or a name from a sibling submodule) isn't actually defined there. The
+file exists; re-fetching an identical copy of it changes nothing.
+
+**Fix.** Check whether a local source override is pinning a broken version of the module:
+
+```sh
+{{ site.data.product.command }} source list
+{{ site.data.product.command }} source show <module-id>
+```
+
+If no override explains it, this is a genuine defect in the module's code — please report it
+as a bug rather than retrying `bundle refresh` or `doctor` (both leave this error unchanged).
+
 ## Wrong provider selected, or an unexpected Anthropic error
 
 This is the one that most often sends people down the wrong path.
