@@ -60,14 +60,30 @@ look identical from the outside:
   exactly the silent, post-takeover failure this whole feature exists to
   catch.
 
-:func:`_degrades_gracefully` tells these apart using
-``ModuleNotFoundError.name``: only a MISSING TRANSITIVE dependency (not
-the bundle module's own top-level package) degrades. This mirrors
-``kernel.setup.ensure_provider_available``, which resolves the identical
-ambiguity in the onboarding wizard by *not* installing and tolerating
-"not available" rather than blocking ("app-cli shells out to
+:func:`_degrades_gracefully` tells these apart using the failing
+import's ``.name``: only a MISSING TRANSITIVE dependency (not the bundle
+module's own top-level package, nor any of its submodules) degrades. This
+mirrors ``kernel.setup.ensure_provider_available``, which resolves the
+identical ambiguity in the onboarding wizard by *not* installing and
+tolerating "not available" rather than blocking ("app-cli shells out to
 ``uv pip install -e``; persisting ``source:`` ... is enough, because the
 next session boot has foundation install it properly").
+
+A THIRD shape hides inside "the module ... is simply broken/
+misconfigured": the bundle module's own top-level package, or one of its
+submodules, can exist on disk and import successfully on its own, yet the
+bundle module still fails because it asks that submodule for a name it
+doesn't define (e.g. ``__init__.py`` doing ``from .utils import Foo`` when
+``utils.py`` exists but has no ``Foo``). Python raises a plain
+``ImportError`` for that -- not ``ModuleNotFoundError`` -- because
+``ModuleNotFoundError`` (a subclass of ``ImportError``) is reserved for a
+module/package that cannot be found at all. :func:`_is_missing_bundle_module`
+keys on exactly that split: a ``ModuleNotFoundError`` naming the bundle's
+own package (or a submodule of it) is the cold-install shape
+(``_MODULE_MISSING_REMEDIATION``); a plain ``ImportError`` naming the same
+is a genuine code defect (:func:`_is_genuine_bundle_module_defect`,
+``_GENUINE_DEFECT_REMEDIATION``) that no re-fetch of identical source can
+repair.
 
 That self-healing allowance is intentionally disabled for strict
 diagnostics. ``doctor``/``--dry-run`` must describe what is verifiably
@@ -142,6 +158,14 @@ _MODULE_MISSING_REMEDIATION = (
     f"`{EXECUTABLE_NAME} doctor`"
 )
 
+_GENUINE_DEFECT_REMEDIATION = (
+    "this looks like a defect in the module's own code, not a missing or unfetched "
+    "file, so re-fetching its source will not help — check whether a local source "
+    f"override is pinning a broken version with `{EXECUTABLE_NAME} source list` or "
+    f"`{EXECUTABLE_NAME} source show <module-id>`; if none applies, please report "
+    "this as a bug"
+)
+
 
 def _secret_values(config: dict[str, Any]) -> tuple[str, ...]:
     """Config values that look like secrets (see module docstring)."""
@@ -211,13 +235,19 @@ def _import_provider_module(module_id: str) -> Any:
     return importlib.import_module(name)
 
 
-def _is_missing_bundle_module(module_id: str, error: BaseException) -> bool:
-    """True when the import failed on the provider's OWN top-level package.
+def _targets_bundle_module(module_id: str, error: BaseException) -> bool:
+    """True when *error* is an ``ImportError`` whose ``.name`` is the
+    provider's OWN top-level package, or a submodule of it.
 
-    That is the cold-install shape -- the provider's source fetch hiccuped,
-    so nothing was grafted onto ``sys.path`` and a cache repair can fix it
-    outright. Anything else (a non-ImportError, or a failure inside the
-    module's own code) is a genuine defect, not a missing file.
+    This is the ATTRIBUTION question only -- whether the failure is about
+    the bundle module at all -- independent of *why* it failed. A foreign
+    transitive dependency (e.g. an unrelated SDK package name) fails this
+    check and may still degrade gracefully (see :func:`_degrades_gracefully`);
+    anything that PASSES it (the bundle module's own top-level package or
+    any of its submodules) never degrades, whether the underlying reason
+    turns out to be a missing file (:func:`_is_missing_bundle_module`) or a
+    genuine defect in code that does exist
+    (:func:`_is_genuine_bundle_module_defect`).
     """
     if not isinstance(error, ImportError):
         return False
@@ -228,13 +258,75 @@ def _is_missing_bundle_module(module_id: str, error: BaseException) -> bool:
     return missing == expected or missing.startswith(f"{expected}.")
 
 
+def _is_missing_bundle_module(module_id: str, error: BaseException) -> bool:
+    """True when the import failed because the provider's OWN top-level
+    package, or a submodule FILE of it, is genuinely absent.
+
+    That is the cold-install shape -- the provider's source fetch hiccuped
+    (or a venv lost its install), so nothing was grafted onto ``sys.path``
+    and a cache repair can fix it outright. ``ModuleNotFoundError`` (a
+    subclass of ``ImportError``) is what Python raises when a module or
+    package cannot be found on ``sys.path`` at all -- that is the signal
+    this checks for. A plain ``ImportError`` that is NOT a
+    ``ModuleNotFoundError`` means the named module WAS found and
+    successfully imported, but something requested from it (a symbol, or a
+    further submodule) isn't there; that is a genuine defect in code that
+    does exist, not a missing file (see
+    :func:`_is_genuine_bundle_module_defect`), and no amount of re-fetching
+    identical source will fix it.
+    """
+    return isinstance(error, ModuleNotFoundError) and _targets_bundle_module(module_id, error)
+
+
+def _is_genuine_bundle_module_defect(module_id: str, error: BaseException) -> bool:
+    """True when the import failed on the bundle module's own top-level
+    package or a submodule of it, but NOT because a file is missing (see
+    :func:`_is_missing_bundle_module`).
+
+    Shape: ``__init__.py`` (or a submodule) imports a name that its target
+    submodule exists but does not define -- e.g. ``from .utils import Foo``
+    when ``utils.py`` is present and imports fine on its own, but has no
+    ``Foo``. The module/submodule file exists; something inside it (or
+    something it asks of a sibling) is broken. Re-fetching identical source
+    changes nothing, so this gets its own remediation
+    (``_GENUINE_DEFECT_REMEDIATION``) rather than the cold-install text.
+    """
+    return not isinstance(error, ModuleNotFoundError) and _targets_bundle_module(module_id, error)
+
+
 def _degrades_gracefully(module_id: str, error: BaseException) -> bool:
     """See module docstring "The import-failure boundary"."""
     if not isinstance(error, ImportError):
         return False
     if not getattr(error, "name", None):
         return False  # can't attribute the failure -- surface it, don't guess
-    return not _is_missing_bundle_module(module_id, error)
+    return not _targets_bundle_module(module_id, error)
+
+
+def _import_failure_remediation(module_id: str, error: BaseException) -> str:
+    """Remediation for a hard-fail bundle-module import error -- the final,
+    non-self-healing branch of :func:`verify_provider`'s classification
+    (:func:`_degrades_gracefully` already returned ``False``).
+
+    Three distinct outcomes, most-specific first:
+
+    * genuinely missing (:func:`_is_missing_bundle_module`) -- a cache
+      repair fixes it outright (``_MODULE_MISSING_REMEDIATION``).
+    * a genuine defect in code that does exist
+      (:func:`_is_genuine_bundle_module_defect`) -- re-fetching identical
+      source cannot help, so this gets its own remediation
+      (``_GENUINE_DEFECT_REMEDIATION``) rather than the cold-install text.
+    * unattributable (a non-ImportError, or an ImportError with no
+      ``.name``) -- fall back to the generic diagnose pointer
+      (``_DIAGNOSE_REMEDIATION``); this is the one remaining case where
+      pointing at `doctor` is not circular, because nothing more specific
+      could be determined here for it to just repeat.
+    """
+    if _is_missing_bundle_module(module_id, error):
+        return _MODULE_MISSING_REMEDIATION
+    if _is_genuine_bundle_module_defect(module_id, error):
+        return _GENUINE_DEFECT_REMEDIATION
+    return _DIAGNOSE_REMEDIATION
 
 
 def _mounted_provider_instance(coordinator: Any, mount_result: Any) -> Any | None:
@@ -416,16 +508,13 @@ async def verify_provider(
         return ProviderVerification(
             ok=False,
             error=f"provider '{module_id}' module failed to import: {error}",
-            remediation=(
-                # The module isn't importable right now -- often the venv
-                # lost its install, not that the source was never fetched --
-                # so remediation must lead with the repair, not `doctor`:
-                # doctor re-runs this same resolution and prints this same
-                # error (a dead end) rather than fixing anything.
-                _MODULE_MISSING_REMEDIATION
-                if _is_missing_bundle_module(module_id, error)
-                else _DIAGNOSE_REMEDIATION
-            ),
+            # Genuinely missing (venv lost its install, or the source was
+            # never fetched) leads with the repair, not `doctor`: doctor
+            # re-runs this same resolution and prints this same error (a
+            # dead end). A genuine defect in code that DOES exist gets its
+            # own remediation for the identical reason -- see
+            # _import_failure_remediation.
+            remediation=_import_failure_remediation(module_id, error),
         )
 
     mount_fn = getattr(module, "mount", None)
