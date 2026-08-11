@@ -119,6 +119,12 @@ def test_the_previously_unaudited_mutations_are_now_writes() -> None:
         assert op in _WRITE_OPS
 
 
+def test_goal_control_classifies_observation_and_mutation_separately() -> None:
+    assert OP_PERMISSIONS["goal.status"] == READ
+    assert OP_PERMISSIONS["goal.set"] == WRITE
+    assert OP_PERMISSIONS["goal.clear"] == WRITE
+
+
 def test_transcript_writes_stayed_writes() -> None:
     for op in ("submit", "steer", "approve", "decision", "interrupt"):
         assert OP_PERMISSIONS[op] == WRITE

@@ -492,7 +492,7 @@ class GovernanceHook:
             self._denial_log.record_non_denial()
             return HookResult(action="continue")
         if decision.decision == "ask":
-            return self._ask(decision, tool_name, tool_input, action, target)
+            return self._ask(decision, tool_name, tool_input, action, target, data)
         return self._deny(decision.capability, action, decision.reason)
 
     def _is_native_safe_tool(self, tool_name: str) -> bool:
@@ -590,6 +590,7 @@ class GovernanceHook:
         tool_input: Mapping[str, Any],
         action: str,
         target: str,
+        event_data: Mapping[str, Any],
     ) -> HookResult:
         prompt = f"Allow {action}?"
         if self._broker is not None:
@@ -602,6 +603,14 @@ class GovernanceHook:
                     capability=decision.capability.value,
                     tool_name=tool_name,
                     tool_input=dict(tool_input),
+                    session_id=str(event_data.get("session_id") or self._root_session_id),
+                    parent_id=str(event_data.get("parent_id") or "") or None,
+                    tool_call_id=str(
+                        event_data.get("tool_call_id")
+                        or event_data.get("tool_use_id")
+                        or event_data.get("id")
+                        or ""
+                    ),
                 ),
             )
         return HookResult(

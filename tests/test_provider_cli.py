@@ -8,6 +8,7 @@ run without network. Settings/keys go to an isolated ``$HOME`` under
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -74,6 +75,61 @@ def test_provider_add_then_list_marks_primary(isolated_home: Path) -> None:
     assert any("anthropic" in ln and not ln.startswith("★") for ln in lines)
     # The key landed in the isolated keys.env, not the real one.
     assert setup.read_keys(isolated_home / ".amplifier" / "keys.env")["OPENAI_API_KEY"] == "sk-o"
+
+
+def test_provider_add_reads_secret_from_stdin(isolated_home: Path) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["provider", "add", "anthropic", "--api-key-stdin", "--yes"],
+        input="sk-from-stdin\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "sk-from-stdin" not in result.output
+    assert (
+        setup.read_keys(isolated_home / ".amplifier" / "keys.env")["ANTHROPIC_API_KEY"]
+        == "sk-from-stdin"
+    )
+
+
+def test_provider_list_json_is_a_stable_machine_contract(isolated_home: Path) -> None:
+    _add("anthropic", "sk-a")
+    _add("openai", "sk-o")
+
+    result = CliRunner().invoke(main, ["provider", "list", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    providers = json.loads(result.output)
+    assert [entry["name"] for entry in providers] == ["openai", "anthropic"]
+    assert providers[0] == {
+        "active": True,
+        "model": "",
+        "module": "provider-openai",
+        "name": "openai",
+        "priority": 1,
+        "scope": "global",
+    }
+
+
+def test_provider_list_json_empty_is_an_empty_array(isolated_home: Path) -> None:
+    result = CliRunner().invoke(main, ["provider", "list", "--format", "json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output) == []
+
+
+def test_provider_status_json_reports_readiness_and_remediation(isolated_home: Path) -> None:
+    runner = CliRunner()
+    missing = runner.invoke(main, ["provider", "status", "--format", "json"])
+    assert missing.exit_code == 0
+    assert json.loads(missing.output) == {
+        "configured": False,
+        "message": "No provider is configured",
+        "remediation": "Run amplifier-tui config or amplifier-tui provider add",
+    }
+
+    _add("anthropic", "sk-a")
+    ready = runner.invoke(main, ["provider", "status", "--format", "json"])
+    assert ready.exit_code == 0
+    assert json.loads(ready.output)["configured"] is True
 
 
 def test_provider_use_switches_primary(isolated_home: Path) -> None:
