@@ -16,7 +16,10 @@ that changes versus ``run`` is that stdin carries submissions back.
 
 Wire (one JSON object per line):
 
-  IN  (stdin)   {"op": "submit",    "text": "..."}
+  IN  (stdin)   {"op": "submit",    "text": "...",
+                 "attachments": [{"media_type": "image/png", "data": "<base64>"}]}
+                 (``attachments`` is optional; at most 4 PNG/JPEG/GIF/WebP images,
+                 20 MiB each and 32 MiB total after base64 decoding)
                 {"op": "steer",     "text": "..."}   (mid-turn course correction)
                 {"op": "approve",   "ticket_id": "approval-3", "choice": "Allow once"}
                 {"op": "decision",  "decision_id": "decision-1", "answer": "Allow once"}
@@ -137,15 +140,23 @@ protocol above and no control files are written.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import sys
 import threading
 from collections.abc import Callable
 from contextlib import redirect_stdout
-from typing import IO, Any, cast
-
+from typing import IO, Any, cast, get_args
 
 from . import session_manager
+from .clipboard import (
+    MAX_CLIPBOARD_ATTACHMENTS,
+    MAX_CLIPBOARD_IMAGE_BYTES,
+    MAX_CLIPBOARD_TOTAL_BYTES,
+    ImageAttachment,
+    ImageMediaType,
+)
 from .context_meter import ContextMeter
 from .events import ContextCompacted, ProviderResponseUsage
 from .jsonl import JsonlRecords
@@ -178,6 +189,60 @@ from .session_ops import EFFORT_LEVELS
 def _emit_raw(out: IO[str], obj: dict[str, Any]) -> None:
     out.write(json.dumps(obj, default=str) + "\n")
     out.flush()
+
+
+_IMAGE_MEDIA_TYPES: frozenset[str] = frozenset(get_args(ImageMediaType))
+_MAX_BASE64_IMAGE_CHARS = 4 * ((MAX_CLIPBOARD_IMAGE_BYTES + 2) // 3)
+
+
+def _submit_attachments(op: dict[str, Any]) -> tuple[ImageAttachment, ...]:
+    """Decode and validate optional image attachments on one submit op.
+
+    The wire carries base64 text, but the runtime boundary stays the same typed
+    :class:`ImageAttachment` tuple used by the in-process clipboard path. Bounds
+    are checked before decoding where possible so an oversized wire value cannot
+    cause an avoidable allocation; ``ImageAttachment`` remains authoritative for
+    content signatures and per-image size.
+    """
+
+    if "attachments" not in op:
+        return ()
+    raw = op["attachments"]
+    if not isinstance(raw, list):
+        raise ValueError("submit.attachments must be an array")
+    if len(raw) > MAX_CLIPBOARD_ATTACHMENTS:
+        raise ValueError(
+            f"submit.attachments may contain at most {MAX_CLIPBOARD_ATTACHMENTS} images"
+        )
+
+    attachments: list[ImageAttachment] = []
+    total_bytes = 0
+    for index, item in enumerate(raw):
+        field = f"submit.attachments[{index}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{field} must be an object")
+        media_type = item.get("media_type")
+        if not isinstance(media_type, str) or media_type not in _IMAGE_MEDIA_TYPES:
+            supported = ", ".join(sorted(_IMAGE_MEDIA_TYPES))
+            raise ValueError(f"{field}.media_type must be one of: {supported}")
+        encoded = item.get("data")
+        if not isinstance(encoded, str):
+            raise ValueError(f"{field}.data must be base64 text")
+        if len(encoded) > _MAX_BASE64_IMAGE_CHARS:
+            raise ValueError(f"{field} exceeds the allowed size")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as caught:
+            raise ValueError(f"{field}.data is not valid base64") from caught
+        try:
+            attachment = ImageAttachment(data=data, media_type=cast(ImageMediaType, media_type))
+        except ValueError as caught:
+            raise ValueError(f"{field}: {caught}") from caught
+        total_bytes += len(data)
+        if total_bytes > MAX_CLIPBOARD_TOTAL_BYTES:
+            raise ValueError("submit.attachments exceed the aggregate size limit")
+        attachments.append(attachment)
+    return tuple(attachments)
 
 
 def _next_effort(current: str | None) -> str:
@@ -1254,7 +1319,21 @@ async def serve_loop(
                 if turn is not None and not turn.done():
                     continue  # a turn is already running; ignore re-submit
                 text = str(op.get("text", ""))
-                turn = asyncio.create_task(_run_turn(runtime, out, text))
+                try:
+                    attachments = _submit_attachments(op)
+                except ValueError as caught:
+                    _emit_raw(
+                        out,
+                        {
+                            "schema_version": 1,
+                            "type": "error",
+                            "session_id": runtime.session_id,
+                            "error": str(caught),
+                            "error_type": type(caught).__name__,
+                        },
+                    )
+                    continue
+                turn = asyncio.create_task(_run_turn(runtime, out, text, attachments))
             elif kind == "goal.set":
                 if turn is not None and not turn.done():
                     # Toggle-on during an existing turn: arm the mounted
@@ -1393,10 +1472,20 @@ async def serve_loop(
     return 0
 
 
-async def _run_turn(runtime: RealRuntime, out: IO[str], text: str) -> str:
+async def _run_turn(
+    runtime: RealRuntime,
+    out: IO[str],
+    text: str,
+    attachments: tuple[ImageAttachment, ...] = (),
+) -> str:
     """Execute one turn and emit its terminal record. Events stream via _pump."""
     try:
-        response = await runtime.submit(text)
+        # Preserve the original call shape for text-only clients and test/runtime
+        # adapters that predate attachments. RealRuntime receives the typed tuple
+        # only when images were actually present on the wire.
+        response = (
+            await runtime.submit(text, attachments) if attachments else await runtime.submit(text)
+        )
     except Exception as caught:  # noqa: BLE001 — a failed turn is a structured record, not a crash
         _emit_raw(
             out,

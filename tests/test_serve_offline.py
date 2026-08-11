@@ -14,6 +14,7 @@ a broker ticket id and parks until an ``approve`` submission answers it.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import queue
 import threading
@@ -27,6 +28,7 @@ from amplifier_app_tui.kernel import serve as serve_module
 from amplifier_app_tui.kernel.approval import ALLOW_ONCE, DENY
 from amplifier_app_tui.kernel.compaction import CompactionConfig
 from amplifier_app_tui.kernel.cost import CostTracker, PricingTable
+from amplifier_app_tui.kernel.clipboard import ImageAttachment
 from amplifier_app_tui.kernel.events import (
     ContentBlockEnd,
     ContextCompacted,
@@ -266,6 +268,122 @@ class _FakeSteerRuntime:
 
     async def cleanup(self) -> None:
         pass
+
+
+class _FakeImageRuntime:
+    """Minimal runtime that records the exact positional submit call shape."""
+
+    class _NoBroker:
+        head = None
+
+        def add_listener(self, listener) -> None:  # noqa: D401 — broker shim
+            pass
+
+    def __init__(self) -> None:
+        self.queue: asyncio.Queue[Any] = asyncio.Queue()
+        self.broker = self._NoBroker()
+        self.session_id = "image-01"
+        self.bundle_name = "tui"
+        self.model_name = "test-model"
+        self.steering = SteeringQueue()
+        self.submissions: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def submit(self, text: str, *args: Any) -> str:
+        self.submissions.append((text, args))
+        return "ok"
+
+    async def cleanup(self) -> None:
+        pass
+
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
+async def test_serve_submit_decodes_and_forwards_valid_image_attachments() -> None:
+    runtime = _FakeImageRuntime()
+    stdin, out = _PipeStdin(), _Capture()
+    server = asyncio.create_task(
+        serve_loop(runtime, source=cast("IO[str]", stdin), out=cast("IO[str]", out))  # type: ignore[arg-type]
+    )
+
+    stdin.feed(
+        {
+            "op": "submit",
+            "text": "describe this image",
+            "attachments": [
+                {
+                    "media_type": "image/png",
+                    "data": base64.b64encode(_PNG).decode("ascii"),
+                }
+            ],
+        }
+    )
+    await _wait_until(lambda: out.find("turn.completed") is not None)
+
+    assert len(runtime.submissions) == 1
+    text, positional = runtime.submissions[0]
+    assert text == "describe this image"
+    assert len(positional) == 1
+    attachments = positional[0]
+    assert attachments == (ImageAttachment(data=_PNG, media_type="image/png"),)
+
+    stdin.close()
+    assert await server == 0
+
+
+async def test_invalid_submit_attachments_emit_errors_then_plain_submit_still_runs(
+    monkeypatch,
+) -> None:
+    """Malformed images are rejected without killing the protocol pump.
+
+    The final attachment-free op also pins the legacy call shape: serve calls
+    ``submit(text)`` with no new positional argument when the field is omitted.
+    """
+
+    runtime = _FakeImageRuntime()
+    stdin, out = _PipeStdin(), _Capture()
+    server = asyncio.create_task(
+        serve_loop(runtime, source=cast("IO[str]", stdin), out=cast("IO[str]", out))  # type: ignore[arg-type]
+    )
+
+    encoded_png = base64.b64encode(_PNG).decode("ascii")
+    monkeypatch.setattr(serve_module, "MAX_CLIPBOARD_TOTAL_BYTES", len(_PNG))
+    invalid = [
+        ([{"media_type": "image/tiff", "data": encoded_png}], "media_type must be one of"),
+        (
+            [{"media_type": "image/jpeg", "data": encoded_png}],
+            "type does not match its content",
+        ),
+        ([{"media_type": "image/png", "data": "not-base64!"}], "data is not valid base64"),
+        (
+            [{"media_type": "image/png", "data": encoded_png}]
+            * (serve_module.MAX_CLIPBOARD_ATTACHMENTS + 1),
+            "may contain at most",
+        ),
+        (
+            [{"media_type": "image/png", "data": encoded_png}] * 2,
+            "aggregate size limit",
+        ),
+    ]
+    for expected_count, (attachments, _expected) in enumerate(invalid, start=1):
+        stdin.feed({"op": "submit", "text": "bad image", "attachments": attachments})
+        await _wait_until(
+            lambda: sum(record.get("type") == "error" for record in out.lines) >= expected_count
+        )
+
+    assert runtime.submissions == []
+    errors = [record for record in out.lines if record.get("type") == "error"]
+    assert all(record["error_type"] == "ValueError" for record in errors)
+    assert len(errors) == len(invalid)
+    for record, (_attachments, expected) in zip(errors, invalid, strict=True):
+        assert expected in record["error"]
+
+    stdin.feed({"op": "submit", "text": "plain text still works"})
+    await _wait_until(lambda: out.find("turn.completed") is not None)
+    assert runtime.submissions == [("plain text still works", ())]
+
+    stdin.close()
+    assert await server == 0
 
 
 def _narration_texts(out: _Capture) -> list[str]:
