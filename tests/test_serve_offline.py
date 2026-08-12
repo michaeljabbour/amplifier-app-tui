@@ -331,6 +331,37 @@ async def test_serve_submit_decodes_and_forwards_valid_image_attachments() -> No
     assert await server == 0
 
 
+async def test_serve_submit_forwards_studio_project_plan_policy() -> None:
+    runtime = _FakeImageRuntime()
+    received: list[dict[str, Any]] = []
+
+    async def submit(text: str, attachments=(), **kwargs: Any) -> str:
+        runtime.submissions.append((text, (attachments,)))
+        received.append(kwargs)
+        return "ok"
+
+    runtime.submit = submit  # type: ignore[method-assign]
+    stdin, out = _PipeStdin(), _Capture()
+    server = asyncio.create_task(
+        serve_loop(runtime, source=cast("IO[str]", stdin), out=cast("IO[str]", out))  # type: ignore[arg-type]
+    )
+
+    stdin.feed(
+        {
+            "op": "submit",
+            "text": "implement the release",
+            "manage_project_plan": True,
+        }
+    )
+    await _wait_until(lambda: out.find("turn.completed") is not None)
+
+    assert runtime.submissions[0][0] == "implement the release"
+    assert received == [{"_manage_project_plan": True}]
+
+    stdin.close()
+    assert await server == 0
+
+
 async def test_invalid_submit_attachments_emit_errors_then_plain_submit_still_runs(
     monkeypatch,
 ) -> None:

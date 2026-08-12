@@ -103,6 +103,11 @@ uv run amplifier-tui serve --actor mj --actor-kind human   # stamp the default a
 uv run amplifier-tui serve --attach amplifier-session:SESSION_ID#ho-9a2  # claim a handoff
 ```
 
+A `submit` operation may set `"manage_project_plan": true`. When the active bundle mounts
+Amplifier's `todo` tool, this asks the coordinator to maintain that real checklist during
+substantive multi-step work so external front-ends can render its durable plan events. It
+does not synthesize a plan when the tool is unavailable or the request is only one step.
+
 `--attach` takes the reference a paused controller minted: it opens the SAME session and
 hands you the write lease. Full contract: [SESSION-CONTROL.md](SESSION-CONTROL.md).
 

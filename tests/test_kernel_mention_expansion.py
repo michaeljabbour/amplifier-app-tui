@@ -212,6 +212,61 @@ async def test_submit_expands_for_model_but_echoes_raw(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_studio_managed_plan_is_separate_context_and_keeps_raw_echo(
+    tmp_path: Path,
+) -> None:
+    class Context:
+        def __init__(self) -> None:
+            self.messages: list[dict[str, str]] = []
+
+        async def add_message(self, message: dict[str, str]) -> None:
+            self.messages.append(message)
+
+    context = Context()
+
+    class Coordinator:
+        def get_capability(self, name: str):  # noqa: ANN201 - focused fake
+            del name
+            return None
+
+        def get(self, name: str):  # noqa: ANN201 - focused fake
+            if name == "context":
+                return context
+            if name == "tools":
+                return {"todo": object()}
+            return None
+
+    session = SimpleNamespace(executed=[])
+
+    async def execute(prompt: str) -> str:
+        session.executed.append(prompt)
+        return "done"
+
+    session.execute = execute  # type: ignore[attr-defined]
+    runtime = RealRuntime()
+    runtime._project_dir = tmp_path
+    runtime._initialized = SimpleNamespace(
+        session_id="sid", coordinator=Coordinator(), session=session
+    )
+
+    async def no_diff() -> GitDiffSnapshot:
+        return GitDiffSnapshot(False)
+
+    runtime._capture_diff = no_diff  # type: ignore[method-assign]
+
+    await runtime.submit("implement the release", _manage_project_plan=True)
+
+    assert session.executed == ["implement the release"]
+    assert len(context.messages) == 1
+    assert context.messages[0]["role"] == "user"
+    assert context.messages[0]["content"].startswith(
+        '<system-reminder source="amplifier-studio-project-plan">'
+    )
+    submits = [e for e in _drain(runtime) if isinstance(e, PromptSubmit)]
+    assert submits and submits[0].prompt == "implement the release"
+
+
+@pytest.mark.asyncio
 async def test_submit_notifies_when_size_bounds_skip_a_mention(tmp_path: Path) -> None:
     (tmp_path / "huge.log").write_text("y" * 4000, encoding="utf-8")
     runtime, session = _runtime_with_resolver(tmp_path)
