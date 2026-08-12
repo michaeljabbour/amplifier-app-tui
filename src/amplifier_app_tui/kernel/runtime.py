@@ -127,6 +127,17 @@ have partially completed; verify current state before retrying unfinished work.
 </turn_aborted>"""
 """Model-visible, persisted boundary after an accepted Esc interrupt."""
 
+STUDIO_PROJECT_PLAN_REMINDER = """<system-reminder source="amplifier-studio-project-plan">
+For this request, use the mounted `todo` tool as the authoritative project plan
+when the work requires multiple substantive execution steps. Publish concrete,
+verifiable deliverables before beginning the work, keep exactly one step
+`in_progress`, update the full todo list at material transitions, and mark every
+finished step `completed` before the final response. Do not create a plan for a
+short answer or a genuinely one-step action. The todo state is user-visible in
+Amplifier Studio, so keep it current and factual.
+</system-reminder>"""
+"""Opt-in Studio host guidance for the mounted, session-scoped todo tool."""
+
 
 def _core_version() -> str:
     try:
@@ -1447,6 +1458,7 @@ class RealRuntime:
         *,
         _expanded_prompt: str | None = None,
         _on_admitted: Callable[[], None] | None = None,
+        _manage_project_plan: bool = False,
     ) -> str:
         """Execute one user turn; returns the final response text.
 
@@ -1528,6 +1540,8 @@ class RealRuntime:
                 if _expanded_prompt is not None
                 else await self._expand_mentions(text)
             )
+            if _manage_project_plan:
+                await self._inject_studio_project_plan_reminder()
             response = await self._initialized.session.execute(prompt_for_model)
         finally:
             self._executing = False
@@ -1559,6 +1573,39 @@ class RealRuntime:
             if turn_started:
                 await self._emit_close_out(str(response or ""), starting_diff)
         return str(response or "")
+
+    async def _inject_studio_project_plan_reminder(self) -> None:
+        """Add Studio's plan policy as standalone, replay-filtered context.
+
+        Keeping the reminder separate from the user's prompt preserves the raw
+        ``PromptSubmit`` echo, mention expansion, image matching, and restored
+        transcript. The reminder is only useful when the real ``todo`` tool is
+        mounted; older or custom bundles without it continue unchanged.
+        """
+        initialized = self._initialized
+        if initialized is None:
+            return
+        coordinator = initialized.coordinator
+        try:
+            tools = coordinator.get("tools") or {}
+        except Exception:  # noqa: BLE001 - optional host policy must not block a turn
+            return
+        normalized = {
+            str(name).strip().lower().replace("-", "_")
+            for name in (tools.keys() if isinstance(tools, Mapping) else ())
+        }
+        if not any(name == "todo" or name.endswith(".todo") for name in normalized):
+            return
+        try:
+            context = coordinator.get("context")
+            add_message = getattr(context, "add_message", None)
+            if not callable(add_message):
+                return
+            result = add_message({"role": "user", "content": STUDIO_PROJECT_PLAN_REMINDER})
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:  # noqa: BLE001 - planning help never makes prompt submission fail
+            logger.warning("Studio project-plan reminder injection failed", exc_info=True)
 
     async def _retry_rewind_recovery(self) -> None:
         """Reconcile disk and live context before accepting a later prompt."""

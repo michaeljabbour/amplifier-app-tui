@@ -17,8 +17,10 @@ that changes versus ``run`` is that stdin carries submissions back.
 Wire (one JSON object per line):
 
   IN  (stdin)   {"op": "submit",    "text": "...",
+                 "manage_project_plan": true,
                  "attachments": [{"media_type": "image/png", "data": "<base64>"}]}
-                 (``attachments`` is optional; at most 4 PNG/JPEG/GIF/WebP images,
+                 (``manage_project_plan`` asks the mounted todo tool to manage
+                 multi-step work; ``attachments`` is optional; at most 4 PNG/JPEG/GIF/WebP images,
                  20 MiB each and 32 MiB total after base64 decoding)
                 {"op": "steer",     "text": "..."}   (mid-turn course correction)
                 {"op": "approve",   "ticket_id": "approval-3", "choice": "Allow once"}
@@ -1333,7 +1335,15 @@ async def serve_loop(
                         },
                     )
                     continue
-                turn = asyncio.create_task(_run_turn(runtime, out, text, attachments))
+                turn = asyncio.create_task(
+                    _run_turn(
+                        runtime,
+                        out,
+                        text,
+                        attachments,
+                        manage_project_plan=op.get("manage_project_plan") is True,
+                    )
+                )
             elif kind == "goal.set":
                 if turn is not None and not turn.done():
                     # Toggle-on during an existing turn: arm the mounted
@@ -1477,15 +1487,26 @@ async def _run_turn(
     out: IO[str],
     text: str,
     attachments: tuple[ImageAttachment, ...] = (),
+    *,
+    manage_project_plan: bool = False,
 ) -> str:
     """Execute one turn and emit its terminal record. Events stream via _pump."""
     try:
         # Preserve the original call shape for text-only clients and test/runtime
         # adapters that predate attachments. RealRuntime receives the typed tuple
         # only when images were actually present on the wire.
-        response = (
-            await runtime.submit(text, attachments) if attachments else await runtime.submit(text)
-        )
+        if manage_project_plan:
+            response = await runtime.submit(
+                text,
+                attachments,
+                _manage_project_plan=True,
+            )
+        else:
+            response = (
+                await runtime.submit(text, attachments)
+                if attachments
+                else await runtime.submit(text)
+            )
     except Exception as caught:  # noqa: BLE001 — a failed turn is a structured record, not a crash
         _emit_raw(
             out,
