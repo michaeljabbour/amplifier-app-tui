@@ -20,6 +20,10 @@ from amplifier_app_tui.kernel.events import (
     GoalProgress,
     Notification,
     OrchestratorComplete,
+    PipelineCheckpoint,
+    PipelineComplete,
+    PipelineProgress,
+    PipelineStarted,
     PromptComplete,
     PromptSubmit,
     ProviderNotice,
@@ -223,6 +227,126 @@ def test_goal_progress_terminal_persists_only_last_three_reasons() -> None:
     assert "reason 1" not in persisted
     assert "reason 2" not in persisted
     assert "expanded condition" not in persisted
+
+
+def test_pipeline_start_preserves_inline_dot_source_for_replay() -> None:
+    dot_source = "digraph build { start -> plan -> done }"
+    event = normalize(
+        "pipeline:start",
+        {
+            **SID,
+            "graph_name": "build",
+            "node_count": 3,
+            "edge_count": 2,
+            "goal": "ship safely",
+            "dot_source": dot_source,
+        },
+    )
+
+    assert isinstance(event, PipelineStarted)
+    assert event.graph_name == "build"
+    assert event.node_count == 3
+    assert event.edge_count == 2
+    assert event.goal == "ship safely"
+    assert event.dot_source == dot_source
+
+    # The exact typed record survives the ui-events.jsonl replay boundary;
+    # rebuilding the graph never requires reading Attractor's run directory.
+    from amplifier_app_tui.kernel.events import parse_event
+
+    assert parse_event(event.model_dump(mode="json")) == event
+
+
+def test_pipeline_node_and_edge_payloads_normalize_to_ordered_progress() -> None:
+    started = normalize(
+        "pipeline:node_start",
+        {
+            **SID,
+            "node_id": "implement",
+            "handler_type": "codergen",
+            "attempt": 1,
+            "execution_index": 2,
+            "branch_id": "branch-a",
+            "via_parallel": True,
+        },
+    )
+    assert isinstance(started, PipelineProgress)
+    assert started.phase == "node_started"
+    assert started.node_id == "implement"
+    assert started.handler_type == "codergen"
+    assert started.attempt == 1
+    assert started.execution_index == 2
+    assert started.branch_id == "branch-a"
+    assert started.via_parallel is True
+
+    completed = normalize(
+        "pipeline:node_complete",
+        {
+            "session_id": "child-sess-xyz",
+            "parent_id": "sess-1",
+            "node_id": "implement",
+            "status": "success",
+            "duration_ms": 142.75,
+            "notes": "implementation complete",
+            "failure_reason": None,
+            "execution_index": 2,
+            "failed_step": None,
+            "branch_id": "branch-a",
+            "via_parallel": True,
+        },
+    )
+    assert isinstance(completed, PipelineProgress)
+    assert completed.phase == "node_completed"
+    assert completed.node_id == "implement"
+    assert completed.status == "success"
+    assert completed.duration_ms == 142.75
+    assert completed.notes == "implementation complete"
+    assert completed.failure_reason == ""
+    assert completed.node_session_id == "child-sess-xyz"
+    assert completed.session_id == "child-sess-xyz"
+    assert completed.execution_index == 2
+
+    from amplifier_app_tui.kernel.events import parse_event
+
+    assert parse_event(completed.model_dump(mode="json")) == completed
+
+    edge = normalize(
+        "pipeline:edge_selected",
+        {**SID, "from_node": "implement", "to_node": "verify", "edge_label": "success"},
+    )
+    assert isinstance(edge, PipelineProgress)
+    assert edge.phase == "edge_selected"
+    assert edge.from_node == "implement"
+    assert edge.to_node == "verify"
+    assert edge.edge_label == "success"
+
+
+def test_pipeline_checkpoint_and_complete_preserve_restart_and_terminal_state() -> None:
+    checkpoint = normalize(
+        "pipeline:checkpoint",
+        {
+            **SID,
+            "node_id": "verify",
+            "checkpoint_path": "/tmp/run/checkpoint.json",
+        },
+    )
+    assert isinstance(checkpoint, PipelineCheckpoint)
+    assert checkpoint.node_id == "verify"
+    assert checkpoint.checkpoint_path == "/tmp/run/checkpoint.json"
+
+    complete = normalize(
+        "pipeline:complete",
+        {**SID, "status": "success", "total_nodes_executed": 3, "duration_ms": 912.5},
+    )
+    assert isinstance(complete, PipelineComplete)
+    assert complete.status == "success"
+    assert complete.total_nodes_executed == 3
+    assert complete.duration_ms == 912.5
+
+    from amplifier_app_tui.kernel.events import parse_event
+
+    assert parse_event(checkpoint.model_dump(mode="json")) == checkpoint
+    assert parse_event(complete.model_dump(mode="json")) == complete
 
 
 def test_turn_lifecycle_events() -> None:
