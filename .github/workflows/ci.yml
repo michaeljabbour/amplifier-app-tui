@@ -43,11 +43,10 @@ jobs:
         env:
           AMPLIFIER_TUI_REPO_URL: file://${{ github.workspace }}
           AMPLIFIER_TUI_UPDATE_SHELL: "0"
-          AMPLIFIER_TUI_INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           sh -n scripts/install.sh
           bash -n scripts/install.sh
-          sh scripts/install.sh --ref "$AMPLIFIER_TUI_INSTALL_REF" --no-update-shell
+          sh scripts/install.sh --ref "$GITHUB_SHA" --no-update-shell
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       # A new Actions step is a new shell: this proves the bare executable, not
       # merely the absolute path the installer used for its own verification.
@@ -55,14 +54,13 @@ jobs:
         env:
           AMPLIFIER_TUI_REPO_URL: file://${{ github.workspace }}
           AMPLIFIER_TUI_UPDATE_SHELL: "0"
-          AMPLIFIER_TUI_INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           amplifier-tui --help >/dev/null
           amplifier-tui version
           doctor_status=0
           amplifier-tui doctor || doctor_status=$?
           test "$doctor_status" -le 1
-          sh scripts/install.sh --ref "$AMPLIFIER_TUI_INSTALL_REF" --no-update-shell
+          sh scripts/install.sh --ref "$GITHUB_SHA" --no-update-shell
           amplifier-tui --help >/dev/null
       - name: Uninstall the app only
         run: |
