@@ -43,10 +43,11 @@ jobs:
         env:
           AMPLIFIER_TUI_REPO_URL: file://${{ github.workspace }}
           AMPLIFIER_TUI_UPDATE_SHELL: "0"
+          AMPLIFIER_TUI_INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           sh -n scripts/install.sh
           bash -n scripts/install.sh
-          sh scripts/install.sh --ref "$GITHUB_SHA" --no-update-shell
+          sh scripts/install.sh --ref "$AMPLIFIER_TUI_INSTALL_REF" --no-update-shell
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       # A new Actions step is a new shell: this proves the bare executable, not
       # merely the absolute path the installer used for its own verification.
@@ -54,13 +55,14 @@ jobs:
         env:
           AMPLIFIER_TUI_REPO_URL: file://${{ github.workspace }}
           AMPLIFIER_TUI_UPDATE_SHELL: "0"
+          AMPLIFIER_TUI_INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           amplifier-tui --help >/dev/null
           amplifier-tui version
           doctor_status=0
           amplifier-tui doctor || doctor_status=$?
           test "$doctor_status" -le 1
-          sh scripts/install.sh --ref "$GITHUB_SHA" --no-update-shell
+          sh scripts/install.sh --ref "$AMPLIFIER_TUI_INSTALL_REF" --no-update-shell
           amplifier-tui --help >/dev/null
       - name: Uninstall the app only
         run: |
@@ -79,7 +81,8 @@ jobs:
       - name: Parse and install the checked-out commit
         shell: pwsh
         env:
-          AMPLIFIER_TUI_REPO_URL: https://github.com/${{ github.repository }}.git
+          AMPLIFIER_TUI_REPO_URL: ${{ github.event.pull_request.head.repo.clone_url || format('{0}/{1}.git', github.server_url, github.repository) }}
+          AMPLIFIER_TUI_INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           $tokens = $null
           $errors = $null
@@ -89,7 +92,7 @@ jobs:
             [ref]$errors
           )
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
-          & scripts/install.ps1 -Ref $env:GITHUB_SHA -NoUpdateShell
+          & scripts/install.ps1 -Ref $env:AMPLIFIER_TUI_INSTALL_REF -NoUpdateShell
           $binDir = (& uv tool dir --bin).Trim()
           $app = Join-Path $binDir "amplifier-tui.exe"
           if (-not (Test-Path -LiteralPath $app -PathType Leaf)) {
@@ -97,7 +100,7 @@ jobs:
           }
           & $app --help | Out-Null
           & $app version
-          & scripts/install.ps1 -Ref $env:GITHUB_SHA -NoUpdateShell
+          & scripts/install.ps1 -Ref $env:AMPLIFIER_TUI_INSTALL_REF -NoUpdateShell
           & $app --help | Out-Null
       - name: Uninstall the app only
         shell: pwsh
