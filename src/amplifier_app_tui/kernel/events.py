@@ -6,7 +6,8 @@ All amplifier-core events are normalized at exactly this one boundary
 - **Channel A** (live deltas, ad-hoc provider events):
   ``llm:stream_block_start/delta/end``, ``llm:stream_aborted``.
 - **Channel B** (durable records, orchestrator events): ``tool:pre/post/
-  error``, ``content_block:start/end``, ``orchestrator:complete``.
+  error``, ``content_block:start/end``, ``orchestrator:complete``, and the
+  Attractor ``pipeline:*`` graph lifecycle.
 
 Never reconstruct one channel from the other. Tool correlation is by
 ``tool_call_id`` only — never ``tool_name`` (parallel calls of the same
@@ -199,6 +200,75 @@ class GoalProgress(_Envelope):
     stall_verdict: str | None = None
     condition: str | None = None
     schema_version: int = 0
+
+
+# --------------------------------------------------------------------------
+# Pipeline lifecycle (Attractor graph execution)
+# --------------------------------------------------------------------------
+
+
+class PipelineStarted(_Envelope):
+    """A DOT pipeline began (``pipeline:start``).
+
+    ``dot_source`` deliberately rides inline: it is the immutable graph
+    definition needed to rebuild a visual pipeline after ``history.replay``;
+    later progress records only mutate node/edge state.
+    """
+
+    kind: Literal["pipeline_started"] = "pipeline_started"
+    graph_name: str = ""
+    node_count: int = 0
+    edge_count: int = 0
+    goal: str = ""
+    dot_source: str = ""
+
+
+PipelineProgressPhase = Literal["node_started", "node_completed", "edge_selected"]
+
+
+class PipelineProgress(_Envelope):
+    """One durable node or edge transition in a running DOT pipeline.
+
+    Attractor publishes three raw event names for graph mutation. They share
+    this typed record so protocol clients can fold one ordered stream into
+    graph state without retaining upstream hook payloads.
+    """
+
+    kind: Literal["pipeline_progress"] = "pipeline_progress"
+    phase: PipelineProgressPhase
+    node_id: str = ""
+    handler_type: str = ""
+    status: str = ""
+    attempt: int = 0
+    execution_index: int = 0
+    duration_ms: float = 0.0
+    notes: str = ""
+    failure_reason: str = ""
+    node_session_id: str = ""
+    from_node: str = ""
+    to_node: str = ""
+    edge_label: str = ""
+    branch_id: str = ""
+    via_parallel: bool = False
+
+
+class PipelineCheckpoint(_Envelope):
+    """Attractor persisted restart state after a node (``pipeline:checkpoint``)."""
+
+    kind: Literal["pipeline_checkpoint"] = "pipeline_checkpoint"
+    node_id: str = ""
+    checkpoint_path: str = ""
+    branch_id: str = ""
+
+
+class PipelineComplete(_Envelope):
+    """A DOT pipeline reached its terminal outcome (``pipeline:complete``)."""
+
+    kind: Literal["pipeline_complete"] = "pipeline_complete"
+    status: str = ""
+    total_nodes_executed: int = 0
+    duration_ms: float = 0.0
+    branch_id: str = ""
 
 
 # --------------------------------------------------------------------------
@@ -519,6 +589,10 @@ UIEvent = Annotated[
     | ContentBlockEnd
     | OrchestratorComplete
     | GoalProgress
+    | PipelineStarted
+    | PipelineProgress
+    | PipelineCheckpoint
+    | PipelineComplete
     | PromptSubmit
     | PromptComplete
     | ExecutionStart
@@ -694,6 +768,18 @@ def _int(data: Mapping[str, Any], *keys: str, default: int = 0) -> int:
             continue
         try:
             return int(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _float(data: Mapping[str, Any], *keys: str, default: float = 0.0) -> float:
+    for key in keys:
+        value = data.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            return float(value)
         except (TypeError, ValueError):
             continue
     return default
@@ -1007,6 +1093,68 @@ def normalize(event_name: str, data: Mapping[str, Any] | None) -> UIEvent | None
                 condition=None,
                 schema_version=_int(payload, "schema_version"),
             )
+        # -- Attractor pipeline lifecycle ----------------------------------
+        case "pipeline:start":
+            return PipelineStarted(
+                **env,
+                graph_name=_str(payload, "graph_name"),
+                node_count=_int(payload, "node_count"),
+                edge_count=_int(payload, "edge_count"),
+                goal=_str(payload, "goal"),
+                dot_source=_str(payload, "dot_source"),
+            )
+        case "pipeline:node_start":
+            return PipelineProgress(
+                **env,
+                phase="node_started",
+                node_id=_str(payload, "node_id"),
+                handler_type=_str(payload, "handler_type"),
+                attempt=_int(payload, "attempt"),
+                execution_index=_int(payload, "execution_index"),
+                branch_id=_str(payload, "branch_id"),
+                via_parallel=payload.get("via_parallel") is True,
+            )
+        case "pipeline:node_complete":
+            return PipelineProgress(
+                **env,
+                phase="node_completed",
+                node_id=_str(payload, "node_id"),
+                status=_str(payload, "status"),
+                execution_index=_int(payload, "execution_index"),
+                duration_ms=_float(payload, "duration_ms"),
+                notes=_str(payload, "notes"),
+                failure_reason=_str(payload, "failure_reason"),
+                # Attractor uses ``session_id`` for the backend child session
+                # on this event. Keep a named copy so clients do not have to
+                # infer that graph-specific meaning from the common envelope.
+                node_session_id=_str(payload, "session_id"),
+                branch_id=_str(payload, "branch_id"),
+                via_parallel=payload.get("via_parallel") is True,
+            )
+        case "pipeline:edge_selected":
+            return PipelineProgress(
+                **env,
+                phase="edge_selected",
+                from_node=_str(payload, "from_node"),
+                to_node=_str(payload, "to_node"),
+                edge_label=_str(payload, "edge_label"),
+                branch_id=_str(payload, "branch_id"),
+            )
+        case "pipeline:checkpoint":
+            return PipelineCheckpoint(
+                **env,
+                node_id=_str(payload, "node_id"),
+                checkpoint_path=_str(payload, "checkpoint_path"),
+                branch_id=_str(payload, "branch_id"),
+            )
+        case "pipeline:complete":
+            return PipelineComplete(
+                **env,
+                status=_str(payload, "status"),
+                total_nodes_executed=_int(payload, "total_nodes_executed"),
+                duration_ms=_float(payload, "duration_ms"),
+                branch_id=_str(payload, "branch_id"),
+            )
         # -- Turn lifecycle --------------------------------------------------
         case "prompt:submit":
             return PromptSubmit(
@@ -1208,6 +1356,11 @@ __all__ = [
     "Notification",
     "OrchestratorComplete",
     "ParsedEvent",
+    "PipelineCheckpoint",
+    "PipelineComplete",
+    "PipelineProgress",
+    "PipelineProgressPhase",
+    "PipelineStarted",
     "PromptComplete",
     "PromptSubmit",
     "ProviderErrorCategory",

@@ -105,6 +105,73 @@ def test_consumed_kind_never_canaries() -> None:
     assert [event.kind for event in events] == ["tool_pre"]
 
 
+def test_attractor_events_are_deliberately_consumed_or_ignored() -> None:
+    """Pin the event inventory published by Attractor's observability hooks.
+
+    Graph-state records cross the typed bridge; redundant operational detail
+    is intentionally ignored. No known pipeline event becomes canary noise.
+    """
+
+    graph_state = {
+        "pipeline:start",
+        "pipeline:node_start",
+        "pipeline:node_complete",
+        "pipeline:edge_selected",
+        "pipeline:checkpoint",
+        "pipeline:complete",
+    }
+    operational_detail = {
+        "pipeline:goal_gate_check",
+        "pipeline:error",
+        "pipeline:parallel_started",
+        "pipeline:parallel_branch_started",
+        "pipeline:parallel_branch_completed",
+        "pipeline:parallel_completed",
+        "pipeline:interview_started",
+        "pipeline:interview_completed",
+        "pipeline:interview_timeout",
+        "pipeline:stage_retrying",
+        "pipeline:stage_failed",
+    }
+
+    assert graph_state <= set(CONSUMED_EVENTS)
+    assert operational_detail <= IGNORED_EVENTS
+    assert graph_state.isdisjoint(IGNORED_EVENTS)
+
+
+def test_pipeline_graph_lifecycle_crosses_queue_bridge_in_order() -> None:
+    async def run() -> list[UIEvent]:
+        queue: asyncio.Queue[UIEvent] = asyncio.Queue()
+        bridge = QueueBridge(queue)
+        await bridge.handle_event(
+            "pipeline:start",
+            {"session_id": "root", "dot_source": "digraph { start -> done }"},
+        )
+        await bridge.handle_event("pipeline:node_start", {"session_id": "root", "node_id": "start"})
+        await bridge.handle_event(
+            "pipeline:node_complete",
+            {"session_id": "root", "node_id": "start", "status": "success"},
+        )
+        await bridge.handle_event(
+            "pipeline:edge_selected",
+            {"session_id": "root", "from_node": "start", "to_node": "done"},
+        )
+        await bridge.handle_event("pipeline:checkpoint", {"session_id": "root", "node_id": "done"})
+        await bridge.handle_event("pipeline:complete", {"session_id": "root", "status": "success"})
+        return _drain(queue)
+
+    events = asyncio.run(run())
+    assert [event.kind for event in events] == [
+        "pipeline_started",
+        "pipeline_progress",
+        "pipeline_progress",
+        "pipeline_progress",
+        "pipeline_checkpoint",
+        "pipeline_complete",
+    ]
+    assert _canary_notices(events) == []
+
+
 def test_register_canary_observes_published_and_contributed_names() -> None:
     async def run() -> tuple[FakeCoordinator, list[UIEvent], Any]:
         queue: asyncio.Queue[UIEvent] = asyncio.Queue()

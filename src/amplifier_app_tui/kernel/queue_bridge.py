@@ -41,6 +41,15 @@ CONSUMED_EVENTS: tuple[str, ...] = (
     "content_block:end",
     "orchestrator:complete",
     "orchestrator:goal_progress",
+    # Attractor pipeline graph lifecycle. These six records are sufficient
+    # for a protocol client to reconstruct the immutable DOT graph and fold
+    # ordered node/edge/checkpoint/terminal state during live use or replay.
+    "pipeline:start",
+    "pipeline:node_start",
+    "pipeline:node_complete",
+    "pipeline:edge_selected",
+    "pipeline:checkpoint",
+    "pipeline:complete",
     # Turn / execution lifecycle
     "prompt:submit",
     "prompt:complete",
@@ -105,6 +114,30 @@ IGNORED_EVENTS: frozenset[str] = frozenset(
         "memory:drawer_filed",
         "memory:interject_skipped",
         "mentions:resolved",
+        # Attractor publishes additional operational detail alongside the
+        # durable graph lifecycle consumed above. These records either
+        # duplicate node transitions (parallel/retry/subgraph wrappers), are
+        # handled by existing approval/tool channels (interview/tool wrapper),
+        # or are summarized by node/complete state (gate/error). Classify them
+        # explicitly so the drift canary does not turn known pipeline traffic
+        # into end-user "unbridged event" notices.
+        "pipeline:goal_gate_check",
+        "pipeline:error",
+        "pipeline:parallel_started",
+        "pipeline:parallel_branch_started",
+        "pipeline:parallel_branch_completed",
+        "pipeline:parallel_completed",
+        "pipeline:interview_started",
+        "pipeline:interview_completed",
+        "pipeline:interview_timeout",
+        "pipeline:stage_retrying",
+        "pipeline:stage_failed",
+        "pipeline:subgraph_start",
+        "pipeline:subgraph_complete",
+        "pipeline:tool:start",
+        "pipeline:tool:complete",
+        "PIPELINE_NODE_SKIPPED",
+        "PIPELINE_NODE_CONTRACT_VIOLATION",
     }
 )
 """Hook events the app deliberately leaves unbridged — exempt from the
