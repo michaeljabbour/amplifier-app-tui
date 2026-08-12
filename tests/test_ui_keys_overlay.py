@@ -51,7 +51,9 @@ async def test_show_opens_with_the_anytime_table() -> None:
         plain = _plain(overlay)
         assert "Keys" in plain
         assert "ctrl+j" in plain
-        assert "add a newline without sending" in plain
+        # Rich's final ellipsis point differs by one cell between macOS and
+        # Linux, but the visible semantic label must survive on both.
+        assert "add a newline without" in plain
         assert "f1 keys" in plain, "the overlay teaches its own toggle"
         assert "idle:" not in plain, "idle has no context hint line (empty table entry)"
 

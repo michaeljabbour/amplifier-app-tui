@@ -44,7 +44,11 @@ from .file_mentions import FileMentionIntent
 from .keymap import COMPOSER_PLACEHOLDER, hint_label
 
 MAX_INPUT_HEIGHT = 6
-"""Cap on the auto-growing input, in lines."""
+"""Cap on the auto-growing input's editable rows.
+
+The TextArea adds one row of vertical padding on each edge, so its CSS
+``max-height`` is this six-row content budget plus two rows of breathing room.
+"""
 
 MAX_PROMPT_HISTORY = 500
 """Bound the in-memory prompt ring without truncating individual prompts."""
@@ -131,6 +135,7 @@ class ModeBadge(Static):
     ModeBadge {
         width: auto;
         height: 1;
+        margin-top: 1;
         padding: 0 1 0 0;
     }
     ModeBadge.mode-chat { color: $dim; }
@@ -172,9 +177,10 @@ class ComposerInput(TextArea):
     ComposerInput {
         width: 1fr;
         height: auto;
-        max-height: 6;
+        min-height: 3;
+        max-height: 8;
         border: none;
-        padding: 0;
+        padding: 1 0;
         background: transparent;
     }
     ComposerInput:focus { border: none; }
@@ -251,7 +257,8 @@ class ComposerInput(TextArea):
         elif event.key in ("ctrl+j", "ctrl+enter"):
             # Multi-line input, amplifier-app-cli parity (its banner:
             # "Multi-line: Ctrl-J"). Ctrl+Enter is a terminal-supported
-            # alternate; the TextArea grows to max-height 6.
+            # alternate; the TextArea grows to six editable rows inside its
+            # vertically padded surface.
             # Ignored while empty: automation that sends Enter as CRLF
             # (e.g. node-pty key helpers) must not leave a phantom
             # newline in the just-cleared composer.
@@ -386,6 +393,7 @@ class Composer(Horizontal):
     Composer > .composer-prompt {
         width: auto;
         height: 1;
+        margin-top: 1;
         color: $green;
         text-style: bold;
         padding: 0 1 0 0;

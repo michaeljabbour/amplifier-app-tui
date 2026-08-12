@@ -178,6 +178,8 @@ continues to scroll inside the bounded panel without covering the composer.
 
 Things worth knowing:
 
+- **The composer keeps breathing room.** Its one-line draft opens in a padded three-row
+  surface, then grows with multiline input up to six editable rows before scrolling.
 - **The full shortcut list** is one command away: run **/keys** any time. The footer's
   right side stays empty at rest on purpose (item D4) — it only fills in with hints once
   something needs them (a running turn, an open overlay).

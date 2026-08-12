@@ -81,6 +81,27 @@ def test_placeholder_is_exact_spec_string() -> None:
 
 
 @pytest.mark.asyncio
+async def test_padded_composer_aligns_chrome_with_first_editable_row() -> None:
+    app = ComposerApp()
+    async with app.run_test(size=(100, 20)) as pilot:
+        composer = app.query_one(Composer)
+        composer_input = app.query_one(ComposerInput)
+        badge = app.query_one(ModeBadge)
+        prompt = composer.query_one(".composer-prompt")
+        await pilot.pause()
+
+        assert composer_input.region.height == 3
+        assert badge.region.y == composer_input.region.y + 1
+        assert prompt.region.y == composer_input.region.y + 1
+
+        composer.set_draft("first\nsecond\nthird")
+        await pilot.pause()
+        assert composer_input.region.height == 5
+        assert badge.region.y == composer_input.region.y + 1
+        assert prompt.region.y == composer_input.region.y + 1
+
+
+@pytest.mark.asyncio
 async def test_idle_enter_posts_submit_and_clears() -> None:
     app = ComposerApp()
     async with app.run_test() as pilot:
