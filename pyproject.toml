@@ -63,6 +63,17 @@ markers = [
     "forge: real-PTY capability tier via amplifier-skill-forge (opt-in; needs a PTY + forge daemon; excluded from the default gate)",
 ]
 
+[tool.coverage.run]
+# These compatibility trees are deliberately disabled by their package
+# ``__path__`` shims: every kernel/model module executes from the separately
+# tested amplifier-runtime distribution. Keep TUI coverage scoped to code this
+# repository actually owns instead of counting the inert migration copies as
+# uncovered client code.
+omit = [
+    "src/amplifier_app_tui/kernel/*",
+    "src/amplifier_app_tui/model/*",
+]
+
 [tool.pyright]
 include = ["src", "tests", "sdk/python/src"]
 extraPaths = ["sdk/python/src"]
