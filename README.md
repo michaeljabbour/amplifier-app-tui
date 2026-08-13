@@ -210,8 +210,9 @@ the command does not silently scan bundle/module caches. `amplifier-tui bundle r
 bundle/module cache updates without changing anything; `--force` runs `uv cache clean` first so
 `@main` sources genuinely re-fetch.
 Every successful update re-reads the installed package metadata and refuses to report success if
-the resulting commit does not match the target. The package version can remain `0.1.0` across
-source builds, so the displayed commit transition is the authoritative update boundary.
+the resulting commit does not match the target. Every user-visible source release increments the
+package version; the updater shows that target version before confirmation when channel metadata
+is available and verifies both the version and immutable source commit after installation.
 `amplifier-tui version` shows the same verified identity on demand.
 
 ## Providers

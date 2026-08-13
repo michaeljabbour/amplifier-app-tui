@@ -1836,8 +1836,8 @@ def version() -> None:
     actually took effect (see ``update``'s upgrade guidance): the top line is
     the VERIFIED installed identity (``importlib.metadata`` + PEP 610, not
     the hardcoded ``__version__`` alone), including the commit for a
-    git-sourced install -- this project doesn't bump the semantic version on
-    every commit, so the commit is the signal that actually changes.
+    git-sourced install. User-visible source releases increment the semantic
+    version, while the commit remains the immutable build identity.
     """
     from .kernel import updater
 
@@ -4107,6 +4107,7 @@ def bundle_refresh(check_only: bool, yes: bool, force: bool, verbose: bool) -> N
 def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
     from rich.console import Console
 
+    from . import update_channel
     from .kernel import updater
 
     console = Console(highlight=False)
@@ -4125,31 +4126,38 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
     with console.status("[cyan]Resolving the latest source revision...[/cyan]", spinner="dots"):
         status = updater.check_app_update(identity)
 
+    target_commit = status.remote_commit if status.has_update is True else None
+    target_version = update_channel.target_release_version(target_commit) if target_commit else None
+
     if status.has_update is True:
-        console.print(
-            f"[yellow]●[/yellow] Available  source revision "
-            f"{(status.remote_commit or 'unknown')[:7]}"
+        target_label = (
+            f"{target_version} (source {(target_commit or 'unknown')[:7]})"
+            if target_version
+            else f"source revision {(target_commit or 'unknown')[:7]}"
         )
-        console.print(
-            "  The target package version is verified after installation; the commit identifies "
-            "this source update.",
-            style="dim",
-        )
+        console.print(f"[yellow]●[/yellow] Available  {target_label}")
+        if target_version is None:
+            console.print(
+                "  Target version metadata was unavailable; the immutable commit will be verified.",
+                style="dim",
+            )
     elif status.has_update is False:
         console.print(f"[green]✓[/green] {status.describe()}")
     else:
         console.print(f"[yellow]?[/yellow] {status.describe()}")
 
-    target_commit = status.remote_commit if status.has_update is True else None
     cmd = updater.app_self_update_command(identity, target_commit=target_commit)
     command_text = " ".join(cmd or [])
     if check_only:
         if status.has_update is True:
             console.print("\nUpdate plan")
             console.print(f"  Installed  {identity.label()}", style="dim")
-            console.print(
-                f"  Target     source revision {(target_commit or 'unknown')[:7]}", style="dim"
+            target_label = (
+                f"{target_version} (source {(target_commit or 'unknown')[:7]})"
+                if target_version
+                else f"source revision {(target_commit or 'unknown')[:7]}"
             )
+            console.print(f"  Target     {target_label}", style="dim")
             console.print(f"Run [cyan]{_command('update')}[/cyan] to install.")
         elif status.has_update is None:
             console.print(f"Run [cyan]{_command('update', '--force')}[/cyan] to repair.")
@@ -4166,7 +4174,12 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
     console.print("\nUpdate plan")
     console.print(f"  Installed  {identity.label()}")
     if target_commit:
-        console.print(f"  Target     source revision {target_commit[:7]}")
+        target_label = (
+            f"{target_version} (source {target_commit[:7]})"
+            if target_version
+            else f"source revision {target_commit[:7]}"
+        )
+        console.print(f"  Target     {target_label}")
     else:
         console.print("  Target     reinstall current source channel")
     console.print("  Method     verified source installer", style="dim")
@@ -4196,6 +4209,13 @@ def _app_update(check_only: bool, yes: bool, force: bool, verbose: bool) -> int:
         actual = (updated_identity.commit or "unknown")[:7]
         console.print(
             f"[red]✗ Verification failed[/red] — expected {target_commit[:7]}, found {actual}"
+        )
+        console.print(f"Run [cyan]{_command('version')}[/cyan] before trying again.", style="dim")
+        return 1
+    if target_version and updated_identity.version != target_version:
+        actual = updated_identity.version or "unknown"
+        console.print(
+            f"[red]✗ Verification failed[/red] — expected version {target_version}, found {actual}"
         )
         console.print(f"Run [cyan]{_command('version')}[/cyan] before trying again.", style="dim")
         return 1
