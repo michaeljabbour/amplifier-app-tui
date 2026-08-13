@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 from click.testing import CliRunner
 
+from amplifier_app_tui import update_channel
 from amplifier_app_tui.install_contract import PUBLIC_SOURCE_INSTALL_COMMAND
 from amplifier_app_tui.kernel import updater
 from amplifier_app_tui.main import main
@@ -27,7 +28,7 @@ def test_top_level_update_git_install_runs_source_installer(monkeypatch) -> None
     old_commit = "a" * 40
     new_commit = "b" * 40
     identity = updater.AppIdentity(version="0.1.0", commit=old_commit, source="git")
-    updated_identity = updater.AppIdentity(version="0.1.0", commit=new_commit, source="git")
+    updated_identity = updater.AppIdentity(version="0.1.1", commit=new_commit, source="git")
     calls: list[updater.AppIdentity] = []
     identities = iter((identity, updated_identity))
 
@@ -51,18 +52,19 @@ def test_top_level_update_git_install_runs_source_installer(monkeypatch) -> None
         lambda ident=None: updater.AppUpdateStatus(identity, new_commit, True),
     )
     monkeypatch.setattr(updater, "run_app_self_update", fake_self_update)
+    monkeypatch.setattr(update_channel, "target_release_version", lambda commit: "0.1.1")
 
     result = CliRunner().invoke(main, ["update", "-y"])
 
     assert result.exit_code == 0
     assert calls == [identity]
     assert "Installed  0.1.0 (aaaaaaa)" in result.output
-    assert "Available  source revision bbbbbbb" in result.output
-    assert "Target     source revision bbbbbbb" in result.output
+    assert "Available  0.1.1 (source bbbbbbb)" in result.output
+    assert "Target     0.1.1 (source bbbbbbb)" in result.output
     assert "Installing source revision" in result.output
-    assert "Verified   0.1.0 (bbbbbbb)" in result.output
+    assert "Verified   0.1.1 (bbbbbbb)" in result.output
     assert "✓ Updated" in result.output
-    assert "Package version remained 0.1.0; source revision changed." in result.output
+    assert "0.1.0 (aaaaaaa) → 0.1.1 (bbbbbbb)" in result.output
 
 
 def test_top_level_update_confirmation_defaults_to_no(monkeypatch) -> None:
@@ -80,6 +82,7 @@ def test_top_level_update_confirmation_defaults_to_no(monkeypatch) -> None:
         "run_app_self_update",
         lambda ident=None, **kwargs: calls.append(ident) or (True, "updated"),
     )
+    monkeypatch.setattr(update_channel, "target_release_version", lambda commit: "0.1.1")
 
     result = CliRunner().invoke(main, ["update"], input="\n")
 
@@ -130,12 +133,39 @@ def test_top_level_update_verification_mismatch_fails(monkeypatch) -> None:
         "run_app_self_update",
         lambda ident=None, **kwargs: (True, "installed"),
     )
+    monkeypatch.setattr(update_channel, "target_release_version", lambda commit: "0.1.1")
 
     result = CliRunner().invoke(main, ["update", "-y"])
 
     assert result.exit_code == 1
     assert "Verification failed" in result.output
     assert "expected bbbbbbb, found ccccccc" in result.output
+
+
+def test_top_level_update_version_mismatch_fails(monkeypatch) -> None:
+    old_commit = "a" * 40
+    target_commit = "b" * 40
+    before = updater.AppIdentity("0.1.0", old_commit, "git")
+    after = updater.AppIdentity("0.1.0", target_commit, "git")
+    identities = iter((before, after))
+    monkeypatch.setattr(updater, "app_identity", lambda *a, **k: next(identities))
+    monkeypatch.setattr(
+        updater,
+        "check_app_update",
+        lambda ident=None: updater.AppUpdateStatus(before, target_commit, True),
+    )
+    monkeypatch.setattr(
+        updater,
+        "run_app_self_update",
+        lambda ident=None, **kwargs: (True, "installed"),
+    )
+    monkeypatch.setattr(update_channel, "target_release_version", lambda commit: "0.1.1")
+
+    result = CliRunner().invoke(main, ["update", "-y"])
+
+    assert result.exit_code == 1
+    assert "Verification failed" in result.output
+    assert "expected version 0.1.1, found 0.1.0" in result.output
 
 
 def test_run_app_self_update_streams_output_and_pins_target(monkeypatch) -> None:
@@ -239,10 +269,10 @@ def test_app_identity_editable_dev_checkout() -> None:
     editable dist with no vcs_info -- must classify as "editable", not
     silently fall through to "unknown" or "pypi"."""
     identity = updater.app_identity("amplifier-app-tui")
-    assert identity.version == "0.1.0"
+    assert identity.version == "0.1.1"
     assert identity.source == "editable"
     assert identity.commit is None
-    assert identity.label() == "0.1.0 (dev checkout)"
+    assert identity.label() == "0.1.1 (dev checkout)"
 
 
 def test_app_identity_unknown_package_degrades_gracefully() -> None:
