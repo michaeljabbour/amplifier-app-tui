@@ -62,9 +62,11 @@ trial then — don't flip `typeCheckingMode` until that number is small.
 These are the [ADR-0007](decisions/ADR-0007-tui-ground-up-architecture.md) invariants
 reviewers will hold your PR to (details in [ARCHITECTURE.md §1](ARCHITECTURE.md)):
 
-1. **Layering** — `ui/` → `model/` → `kernel/`. `kernel/` never imports Textual; `model/`
-   imports neither Textual nor amplifier-core; `commands/` never imports Textual,
+1. **Layering** — `ui/` → runtime-owned `model/` → runtime-owned `kernel/`. `kernel/`
+   never imports Textual; `model/` imports neither Textual nor amplifier-core; `commands/` never imports Textual,
    amplifier-*, or `kernel/`. Enforced by `tests/test_layering_contract.py`.
+   `tests/test_runtime_package_boundary.py` additionally proves every compatibility import
+   resolves to the installed `amplifier-runtime`, with no local implementation fallback.
 2. **One normalization boundary** — raw hook payloads become `UIEvent`s in
    `kernel/events.py` and nowhere else.
 3. **Reducer never touches widgets** — it acts through the `ReducerHost` protocol; widgets

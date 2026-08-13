@@ -18,11 +18,12 @@ the stack choice, see [RESEARCH-BRIEF.md](RESEARCH-BRIEF.md).
 
 ## 1. System overview
 
-The app is a **thin Textual front-end over amplifier-core**. A bundle mounts the real
-capabilities (orchestrator, provider, tools, agents); the app attaches as in-process hook
-handlers, normalizes everything that happens into typed events, and renders those events.
-Nothing amplifier-specific leaks past the kernel package, and nothing Textual-specific leaks
-into it.
+The app is a **thin Textual front-end over the shared
+[`amplifier-runtime`](https://github.com/michaeljabbour/amplifier-runtime)**. A bundle mounts
+the real capabilities (orchestrator, provider, tools, agents); the runtime attaches as
+in-process hook handlers, normalizes everything that happens into typed events, and the TUI
+renders those events. Nothing Amplifier-specific leaks past the runtime boundary, and nothing
+Textual-specific leaks into it.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -31,15 +32,14 @@ into it.
 ├────────────────────────────────────────────────────────────────────────┤
 │ commands/      slash commands as data (pure logic; no Textual/kernel)  │
 ├────────────────────────────────────────────────────────────────────────┤
-│ model/         pure domain: blocks, lanes, queues, modes, trust,       │
-│                turns, evidence (no Textual, no amplifier-core)         │
+│ model/         runtime-owned pure domain: blocks, lanes, queues,      │
+│                modes, trust, turns, evidence (no Textual/core)       │
 ├────────────────────────────────────────────────────────────────────────┤
-│ kernel/        the amplifier adapter: config, session factory,        │
-│                event normalization, governance, approvals, steering,   │
-│                spawner, rewind, cost, persistence (never imports       │
-│                Textual)                                                │
+│ kernel/        runtime-owned host: config, sessions, JSONL protocol, │
+│                replay, normalization, approvals, steering, spawning,│
+│                persistence, leases (never imports Textual)           │
 ├────────────────────────────────────────────────────────────────────────┤
-│ amplifier-core / amplifier-foundation + the mounted bundle             │
+│ amplifier-runtime → amplifier-core/foundation + mounted bundle     │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -73,8 +73,8 @@ These are the rules the whole design hangs on. Every one is enforced by tests an
 
 1. **One normalization boundary.** All raw hook payloads become a frozen pydantic `UIEvent`
    union in `kernel/events.py` — nowhere else. The UI never sees a raw hook payload.
-2. **Strict layering.** `kernel/` never imports Textual; `model/` imports neither Textual nor
-   amplifier-core; `commands/` stays pure command logic (stdlib, third-party, `model/`,
+2. **Strict layering.** Runtime-owned `kernel/` never imports Textual; runtime-owned `model/`
+   imports neither Textual nor amplifier-core; `commands/` stays pure command logic (stdlib, third-party, `model/`,
    top-level package modules) — never Textual, amplifier-*, or `kernel/`. Enforced by
    `tests/test_layering_contract.py` (a stdlib-AST walk; ADR-0007 named import-linter, but
    no such contract ever shipped — see the ADR's 2026-08-09 status note).
@@ -102,7 +102,7 @@ src/amplifier_app_tui/
 │                       and thin wiring for config/init/update/reset/bundle administration
 ├── product.py         explicit product/command/package/repository identity constants
 ├── cli/               plain-terminal control-center presentation and orchestration
-├── kernel/            amplifier adapter layer (no Textual)
+├── kernel/            compatibility path; modules load only from amplifier-runtime
 │   ├── config.py          resolve_config(): keys.env → settings merge → bundle lifecycle
 │   │                       (+ mode search-path & routing-config injection)
 │   ├── session_factory.py create_initialized_session(): canonical session bring-up
@@ -137,7 +137,7 @@ src/amplifier_app_tui/
 │   ├── directory_permissions.py  shared path policy + protected defaults
 │   ├── file_mentions.py   bounded workspace-file discovery and ranking
 │   └── trackers/          task_status, stream_status, runtime_status
-├── model/             pure domain state (no Textual, no amplifier-core)
+├── model/             compatibility path; modules load only from amplifier-runtime
 │   ├── blocks.py          TranscriptBlock discriminated union (19 kinds) + id allocator
 │   ├── lanes.py           LaneRegistry / LaneRecord / LaneState
 │   ├── queues.py          SteeringQueue + NeedsYouQueue (bounded)

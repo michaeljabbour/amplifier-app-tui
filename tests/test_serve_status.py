@@ -79,6 +79,9 @@ class _Ticket:
     ticket_id = "approval-3"
     prompt = "Run `rm -rf build`?"
     options = ("Allow once", "Deny")
+    timeout = 300.0
+    default = "deny"
+    created_at = 0.0
 
 
 class _Broker:
@@ -227,13 +230,22 @@ async def test_status_surfaces_a_blocking_approval(runtime: _StatusRuntime) -> N
         "ticket_id": "approval-3",
         "prompt": "Run `rm -rf build`?",
         "options": ["Allow once", "Deny"],
+        "timeout_seconds": 300.0,
+        "expires_in_seconds": 300.0,
+        "default_choice": "Deny",
     }
 
 
 async def test_status_surfaces_deferred_decisions(runtime: _StatusRuntime) -> None:
     """A deferral has no live approval ticket, so it is invisible to every
     other channel -- ``{"op":"approve"}`` can never reach it."""
-    runtime.needs_you.defer("Which region?", choices=("eu", "us"))
+    runtime.needs_you.defer(
+        "Which region?",
+        reason="Latency target",
+        choices=("eu (Recommended)", "us"),
+        descriptions=("Nearest to users", "More spare capacity"),
+        custom=True,
+    )
 
     conn = _Connection(runtime)
     record = await conn.status()
@@ -241,7 +253,17 @@ async def test_status_surfaces_deferred_decisions(runtime: _StatusRuntime) -> No
 
     assert record["state"] == "awaiting_decision"
     assert record["pending"]["decision_count"] == 1
-    assert record["pending"]["decisions"][0]["question"] == "Which region?"
+    assert record["pending"]["decisions"][0] == {
+        "decision_id": "decision-1",
+        "question": "Which region?",
+        "reason": "Latency target",
+        "choices": ["eu (Recommended)", "us"],
+        "descriptions": ["Nearest to users", "More spare capacity"],
+        "multiple": False,
+        "custom": True,
+        "highlight": "",
+        "action": "",
+    }
 
 
 async def test_status_reports_queued_input(runtime: _StatusRuntime) -> None:

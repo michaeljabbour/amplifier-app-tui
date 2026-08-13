@@ -129,8 +129,7 @@ name = "amplifier-app-tui"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "amplifier-core" },
-    { name = "amplifier-foundation" },
+    { name = "amplifier-runtime" },
     { name = "click" },
     { name = "filelock" },
     { name = "httpx", extra = ["socks"] },
@@ -153,8 +152,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "amplifier-core", specifier = ">=1.6.0" },
-    { name = "amplifier-foundation", git = "https://github.com/microsoft/amplifier-foundation?rev=dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134" },
+    { name = "amplifier-runtime", git = "https://github.com/michaeljabbour/amplifier-runtime.git?rev=c00f94d80e8118dd5b78775725457660608689ca" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "filelock", specifier = ">=3.29.6" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.28.1" },
@@ -198,9 +196,23 @@ wheels = [
 [[package]]
 name = "amplifier-foundation"
 version = "1.0.0"
-source = { git = "https://github.com/microsoft/amplifier-foundation?rev=dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134#dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134" }
+source = { git = "https://github.com/microsoft/amplifier-foundation.git?rev=dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134#dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134" }
 dependencies = [
     { name = "amplifier-core" },
+    { name = "pyyaml" },
+]
+
+[[package]]
+name = "amplifier-runtime"
+version = "0.1.0"
+source = { git = "https://github.com/michaeljabbour/amplifier-runtime.git?rev=c00f94d80e8118dd5b78775725457660608689ca#c00f94d80e8118dd5b78775725457660608689ca" }
+dependencies = [
+    { name = "amplifier-core" },
+    { name = "amplifier-foundation" },
+    { name = "click" },
+    { name = "filelock" },
+    { name = "httpx", extra = ["socks"] },
+    { name = "pydantic" },
     { name = "pyyaml" },
 ]
 

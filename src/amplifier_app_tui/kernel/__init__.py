@@ -1,7 +1,27 @@
-"""Kernel layer: every amplifier-core/foundation touchpoint lives here.
+"""Compatibility import surface for the neutral Amplifier runtime.
 
-Modules in this package may import amplifier-core and amplifier-foundation
-but must NEVER import Textual. The UI consumes the kernel exclusively
-through the normalized :class:`~amplifier_app_tui.kernel.events.UIEvent`
-union and typed queues — no raw hook payload ever crosses this boundary.
+Runtime behavior is owned by the sibling ``amplifier-runtime`` distribution.
+Using only its kernel source directory for this package's search path preserves
+the established ``amplifier_app_tui.kernel.*`` imports while ensuring they
+execute runtime-owned files. The duplicate local modules are intentionally
+disabled and cannot act as a silent fallback.
 """
+
+from __future__ import annotations
+
+from importlib.util import find_spec
+
+
+def _use_runtime_kernel() -> None:
+    spec = find_spec("amplifier_runtime.kernel")
+    locations = list(spec.submodule_search_locations or ()) if spec is not None else []
+    if not locations:
+        raise ImportError("amplifier-runtime is required; run `uv sync` in amplifier-app-tui")
+    # Do not append this package's original local path. That fallback would
+    # reactivate the duplicate TUI implementation when a runtime file is absent.
+    __path__[:] = locations
+
+
+_use_runtime_kernel()
+
+del _use_runtime_kernel
