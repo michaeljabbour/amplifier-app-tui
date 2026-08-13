@@ -1,6 +1,6 @@
 # Amplifier TUI
 
-A full-screen terminal UI for [Amplifier](https://github.com/microsoft/amplifier) — modes, steering, live subagent lanes, rewind, and cost tracking — built directly on amplifier-core and amplifier-foundation.
+A full-screen terminal UI for [Amplifier](https://github.com/microsoft/amplifier) — modes, steering, live subagent lanes, rewind, and cost tracking — built on the shared [Amplifier Runtime](https://github.com/michaeljabbour/amplifier-runtime).
 
 ![The TUI running its built-in demo session](docs/images/demo-session.svg)
 
@@ -59,7 +59,7 @@ plain `amplifier` TUI would be.
 ```sh
 git clone https://github.com/michaeljabbour/amplifier-app-tui
 cd amplifier-app-tui
-uv sync                       # installs everything, incl. pinned amplifier-core / amplifier-foundation
+uv sync                       # installs the pinned shared runtime and TUI dependencies
 uv run amplifier-tui doctor   # verify: install, PATH, settings health; exit 0 = ready
 uv run amplifier-tui --demo   # try it offline
 ```
@@ -268,7 +268,7 @@ and partial-restore warnings.
 ## Layout
 
 ```
-src/amplifier_app_tui/   the installable app (kernel / model / ui / commands)
+src/amplifier_app_tui/   the installable app (Textual UI, commands, runtime compatibility imports)
 tests/                      offline test suite (no credentials required)
 docs/                       user guide, architecture, design spec, ADRs (docs/notes/ is local scratch, gitignored)
 scripts/                    maintenance utilities (README screenshot regen)
@@ -301,7 +301,7 @@ Engineering documentation in this repository:
 
 ## Architecture
 
-Four strictly-layered packages ([ADR-0007](docs/decisions/ADR-0007-tui-ground-up-architecture.md)): `ui/` and `commands/` depend on `model/`; `kernel/` is the **only** package that touches amplifier-core/foundation and never imports Textual; the UI sees the kernel exclusively through normalized `UIEvent`s. The full walk-through — boot, event pipeline, governance, subagents, persistence — is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The Textual UI and commands consume runtime-owned `model/` and `kernel/` modules from the pinned `amplifier-runtime` distribution. Runtime owns the Amplifier Core/Foundation integration, session host, protocol, replay, approvals, persistence, leases, and normalized `UIEvent` boundary; the TUI owns terminal presentation and interaction. Compatibility package paths preserve existing imports but cannot fall back to the duplicate local implementation. The full walk-through is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ![tui architecture and topology](docs/diagrams/tui-architecture.png)
 

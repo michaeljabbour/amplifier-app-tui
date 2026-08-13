@@ -149,6 +149,7 @@ import sys
 import threading
 from collections.abc import Callable
 from contextlib import redirect_stdout
+from time import monotonic
 from typing import IO, Any, cast, get_args
 
 from . import session_manager
@@ -669,10 +670,17 @@ def _pending_approval(runtime: Any) -> dict[str, Any] | None:
     head = getattr(getattr(runtime, "broker", None), "head", None)
     if head is None:
         return None
+    timeout = max(0.0, float(getattr(head, "timeout", 0.0) or 0.0))
+    created_at = float(getattr(head, "created_at", 0.0) or 0.0)
+    elapsed = max(0.0, monotonic() - created_at) if created_at else 0.0
+    default = str(getattr(head, "default", "deny") or "deny")
     return {
         "ticket_id": getattr(head, "ticket_id", ""),
         "prompt": getattr(head, "prompt", ""),
         "options": list(getattr(head, "options", ()) or ()),
+        "timeout_seconds": timeout,
+        "expires_in_seconds": max(0.0, timeout - elapsed) if timeout else None,
+        "default_choice": "Allow once" if default == "allow" else "Deny",
     }
 
 
@@ -683,6 +691,13 @@ def _pending_decisions(runtime: Any) -> list[dict[str, Any]]:
         {
             "decision_id": getattr(item, "decision_id", ""),
             "question": getattr(item, "question", ""),
+            "reason": getattr(item, "reason", ""),
+            "choices": list(getattr(item, "choices", ()) or ()),
+            "descriptions": list(getattr(item, "descriptions", ()) or ()),
+            "multiple": bool(getattr(item, "multiple", False)),
+            "custom": bool(getattr(item, "custom", False)),
+            "highlight": getattr(item, "highlight", ""),
+            "action": getattr(item, "action", ""),
         }
         for item in pending
     ]
@@ -1094,6 +1109,15 @@ async def serve_loop(
                     "ticket_id": head.ticket_id,
                     "prompt": head.prompt,
                     "options": list(head.options),
+                    "timeout_seconds": max(0.0, float(getattr(head, "timeout", 0.0) or 0.0)),
+                    "expires_in_seconds": max(
+                        0.0,
+                        float(getattr(head, "timeout", 0.0) or 0.0)
+                        - max(0.0, monotonic() - float(getattr(head, "created_at", 0.0) or 0.0)),
+                    ),
+                    "default_choice": (
+                        "Allow once" if getattr(head, "default", "deny") == "allow" else "Deny"
+                    ),
                     "session_id": str(getattr(detail, "session_id", "") or runtime.session_id),
                     "parent_id": getattr(detail, "parent_id", None) or None,
                     "tool_call_id": str(getattr(detail, "tool_call_id", "") or ""),

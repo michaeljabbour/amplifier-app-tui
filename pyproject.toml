@@ -8,8 +8,7 @@ requires-python = ">=3.12"
 authors = [{ name = "Microsoft MADE:Explorations Team" }]
 dependencies = [
     "textual~=8.2",
-    "amplifier-core>=1.6.0",
-    "amplifier-foundation",
+    "amplifier-runtime @ git+https://github.com/michaeljabbour/amplifier-runtime.git@c00f94d80e8118dd5b78775725457660608689ca",
     # team_pulse_lib is the unpublished peer that tool-team-pulse (composed by
     # the packaged tui bundle) imports at mount(). The bundle installs it via
     # a root shim; tui pulls only the module subdir, so we install the lib
@@ -51,10 +50,6 @@ dev = [
 ]
 
 [tool.uv.sources]
-# Keep this at or after foundation 1a408839: the default bundle deliberately
-# pins modules to full commit SHAs, which older source handlers passed to
-# `git clone --branch` and therefore could not install from a cold cache.
-amplifier-foundation = { git = "https://github.com/microsoft/amplifier-foundation", rev = "dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134" }
 team-pulse-lib = { git = "https://github.com/microsoft/amplifier-bundle-team-pulse", rev = "e89574d2b90814a0c10a2164aa7d5c9cc43bd3ce", subdirectory = "team-pulse-lib" }
 
 [tool.pytest.ini_options]
@@ -66,6 +61,17 @@ addopts = "--import-mode=importlib -m 'not forge'"
 asyncio_mode = "strict"
 markers = [
     "forge: real-PTY capability tier via amplifier-skill-forge (opt-in; needs a PTY + forge daemon; excluded from the default gate)",
+]
+
+[tool.coverage.run]
+# These compatibility trees are deliberately disabled by their package
+# ``__path__`` shims: every kernel/model module executes from the separately
+# tested amplifier-runtime distribution. Keep TUI coverage scoped to code this
+# repository actually owns instead of counting the inert migration copies as
+# uncovered client code.
+omit = [
+    "src/amplifier_app_tui/kernel/*",
+    "src/amplifier_app_tui/model/*",
 ]
 
 [tool.pyright]
