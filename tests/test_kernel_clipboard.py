@@ -10,9 +10,57 @@ from amplifier_app_tui.kernel.clipboard import (
     ClipboardImageInjector,
     ImageAttachment,
     build_image_message,
+    pasted_image_attachments,
 )
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
+
+
+def test_pasted_image_attachments_raw_path(tmp_path) -> None:
+    png = tmp_path / "shot.png"
+    png.write_bytes(_PNG)
+    (attachments,) = pasted_image_attachments(str(png))
+    assert attachments.data == _PNG
+
+
+def test_pasted_image_attachments_backslash_escaped_space(tmp_path) -> None:
+    # A drop whose path contains a space arrives backslash-escaped (`\ `).
+    png = tmp_path / "shot one.png"
+    png.write_bytes(_PNG)
+    (attachments,) = pasted_image_attachments(str(png).replace(" ", "\\ "))
+    assert attachments.data == _PNG
+
+
+def test_pasted_image_attachments_file_uri(tmp_path) -> None:
+    png = tmp_path / "shot.png"
+    png.write_bytes(_PNG)
+    (attachments,) = pasted_image_attachments(png.as_uri())
+    assert attachments.data == _PNG
+
+
+def test_pasted_image_attachments_percent_encoded_file_uri(tmp_path) -> None:
+    png = tmp_path / "shot one.png"
+    png.write_bytes(_PNG)
+    uri = png.as_uri().replace(" ", "%20")
+    (attachments,) = pasted_image_attachments(uri)
+    assert attachments.data == _PNG
+
+
+def test_pasted_image_attachments_trailing_newline(tmp_path) -> None:
+    # Some terminals append a trailing CR/LF to a drop payload.
+    png = tmp_path / "shot.png"
+    png.write_bytes(_PNG)
+    (attachments,) = pasted_image_attachments(str(png) + "\n")
+    assert attachments.data == _PNG
+
+
+def test_pasted_image_attachments_unescaped_apostrophe_falls_back(tmp_path) -> None:
+    # An unescaped apostrophe in a path makes shlex.split raise ValueError;
+    # the backslash-unescape fallback must still resolve the single candidate.
+    png = tmp_path / "o'brien.png"
+    png.write_bytes(_PNG)
+    (attachments,) = pasted_image_attachments(str(png))
+    assert attachments.data == _PNG
 
 
 def test_image_attachment_validates_content_type() -> None:

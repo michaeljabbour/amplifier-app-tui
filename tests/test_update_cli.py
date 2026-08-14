@@ -269,10 +269,10 @@ def test_app_identity_editable_dev_checkout() -> None:
     editable dist with no vcs_info -- must classify as "editable", not
     silently fall through to "unknown" or "pypi"."""
     identity = updater.app_identity("amplifier-app-tui")
-    assert identity.version == "0.1.2"
+    assert identity.version == "0.1.3"
     assert identity.source == "editable"
     assert identity.commit is None
-    assert identity.label() == "0.1.2 (dev checkout)"
+    assert identity.label() == "0.1.3 (dev checkout)"
 
 
 def test_app_identity_unknown_package_degrades_gracefully() -> None:

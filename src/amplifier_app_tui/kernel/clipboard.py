@@ -297,7 +297,9 @@ def pasted_image_attachments(text: str) -> tuple[ImageAttachment, ...]:
     Cmd+V of an image file and drag-and-drop both arrive as a bracketed
     text paste of the file path (the terminal can't deliver image bytes to
     a TTY), so the composer routes pasted text through here first."""
-    value = text.strip()
+    # Strip whitespace plus any trailing newline/CR some terminals append to a
+    # drop, and any wrapping blanks around a single path.
+    value = text.strip(" \t\r\n\v\f")
     if not value:
         return ()
     direct = _read_image_path(value.strip("'\""))
@@ -306,7 +308,13 @@ def pasted_image_attachments(text: str) -> tuple[ImageAttachment, ...]:
     try:
         tokens = shlex.split(value)
     except ValueError:
-        return ()
+        # Unbalanced quote (e.g. a path containing an unescaped apostrophe)
+        # makes shlex.split raise.  Manually unescape backslash-escaped
+        # characters on the whole payload and retry the single candidate
+        # before giving up.
+        candidate = _unescape_backslashes(value)
+        attachment = _read_image_path(candidate)
+        return (attachment,) if attachment is not None else ()
     if not 1 <= len(tokens) <= MAX_CLIPBOARD_ATTACHMENTS:
         return ()
     attachments: list[ImageAttachment] = []
@@ -320,6 +328,17 @@ def pasted_image_attachments(text: str) -> tuple[ImageAttachment, ...]:
             return ()
         attachments.append(attachment)
     return tuple(attachments)
+
+
+def _unescape_backslashes(value: str) -> str:
+    """Decode ``\\<char>`` backslash escapes into a literal ``<char>``.
+
+    Used as the fallback when ``shlex.split`` fails on an unbalanced quote
+    (e.g. a path containing an unescaped apostrophe): the terminal escapes
+    spaces and other characters with a backslash, so unescaping the whole
+    payload yields the single path candidate.
+    """
+    return re.sub(r"\\(.)", r"\1", value)
 
 
 def _read_image_path(value: str) -> ImageAttachment | None:

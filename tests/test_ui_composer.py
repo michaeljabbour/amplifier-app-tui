@@ -509,6 +509,120 @@ async def test_pasting_an_image_file_path_attaches_it(tmp_path) -> None:
         assert len(submits) == 1 and len(submits[0].attachments) == 1
 
 
+def _post_keystroke_burst(composer: Composer, text: str) -> None:
+    """Post a rapid machine-speed run of printable ``events.Key`` per character.
+
+    Apple Terminal injects a dropped file path as a burst of ordinary
+    keystrokes (no bracketed paste), so this is the drop we are simulating.
+    Every key is queued up front so the whole run is processed in one pass with
+    effective inter-key gaps of ~0 — far under ``DROP_BURST_MAX_GAP_SECONDS``.
+    """
+    from textual import events
+
+    for ch in text:
+        composer._input.post_message(events.Key(key=ch, character=ch))
+
+
+@pytest.mark.asyncio
+async def test_keystroke_burst_of_image_path_attaches_it(tmp_path) -> None:
+    # Apple Terminal does NOT wrap a drag-and-drop in bracketed paste; it
+    # injects the path as an ordinary keystroke burst.  That burst must attach
+    # as an image exactly like a Cmd+V paste would.
+    from amplifier_app_tui.ui.composer import DROP_BURST_SETTLE_SECONDS
+
+    png = tmp_path / "shot.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        _post_keystroke_burst(composer, str(png))
+        await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)  # let the burst settle
+
+        assert "[Image #1]" in composer.text
+        assert str(png) not in composer.text  # raw path not left as literal text
+        assert len(composer._staged_attachments(composer.text)) == 1
+
+
+@pytest.mark.asyncio
+async def test_keystroke_burst_of_backslash_escaped_space_attaches_it(tmp_path) -> None:
+    # A drop whose path contains a space arrives backslash-escaped (`\ `),
+    # which shlex must decode back to the real path.
+    from amplifier_app_tui.ui.composer import DROP_BURST_SETTLE_SECONDS
+
+    png = tmp_path / "shot one.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
+    escaped = str(png).replace(" ", "\\ ")
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        _post_keystroke_burst(composer, escaped)
+        await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)
+
+        assert "[Image #1]" in composer.text
+        assert len(composer._staged_attachments(composer.text)) == 1
+
+
+@pytest.mark.asyncio
+async def test_human_speed_typing_of_image_path_stays_literal(tmp_path) -> None:
+    # The critical false-positive guard: a real person typing the same path at
+    # human speed (gaps > DROP_BURST_MAX_GAP_SECONDS) must NOT auto-attach.
+    from textual import events
+
+    from amplifier_app_tui.ui.composer import DROP_BURST_SETTLE_SECONDS
+
+    png = tmp_path / "shot.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        for ch in str(png):
+            composer._input.post_message(events.Key(key=ch, character=ch))
+            await pilot.pause(0.05)  # human gap, well above the 15 ms burst cap
+        await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)
+
+        assert str(png) in composer.text  # stays literal text
+        assert "[Image" not in composer.text
+
+
+@pytest.mark.asyncio
+async def test_rapid_burst_of_prose_stays_literal() -> None:
+    # A fast burst of ordinary prose (not a path) must not be treated as a drop.
+    from amplifier_app_tui.ui.composer import DROP_BURST_SETTLE_SECONDS
+
+    prose = "look at this note thanks"
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        _post_keystroke_burst(composer, prose)
+        await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)
+
+        assert composer.text == prose
+        assert "[Image" not in composer.text
+
+
+@pytest.mark.asyncio
+async def test_keystroke_burst_followed_by_enter_submits_attachment(tmp_path) -> None:
+    # Apple Terminal can terminate a drop with a newline: Enter arrives before
+    # the settle timer.  The burst must resolve into a chip synchronously so
+    # the submitted message carries the attachment, not the raw path.
+    from textual import events
+
+    png = tmp_path / "shot.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        _post_keystroke_burst(composer, str(png))
+        composer._input.post_message(events.Key(key="enter", character=None))
+        await pilot.pause()
+
+        submits = _of(app, Composer.Submit)
+        assert len(submits) == 1
+        assert len(submits[0].attachments) == 1
+        assert str(png) not in submits[0].text  # raw path never submitted
+        assert submits[0].text == "[Image #1]"
+
+
 @pytest.mark.asyncio
 async def test_paste_event_collapses_long_block_and_submits_full_text() -> None:
     from textual import events
