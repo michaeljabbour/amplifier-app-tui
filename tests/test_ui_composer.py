@@ -581,7 +581,7 @@ async def test_human_speed_typing_of_image_path_stays_literal(tmp_path) -> None:
         composer = app.query_one("#composer", Composer)
         for ch in str(png):
             composer._input.post_message(events.Key(key=ch, character=ch))
-            await pilot.pause(0.05)  # human gap, well above the 15 ms burst cap
+            await pilot.pause(0.05)  # human gap, above the 40 ms burst cap
         await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)
 
         assert str(png) in composer.text  # stays literal text

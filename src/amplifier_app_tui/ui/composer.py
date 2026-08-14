@@ -76,7 +76,7 @@ composer text and cursor to be unchanged since the first insertion, so a
 later intentional repeat or any intervening edit still works normally.
 """
 
-DROP_BURST_MAX_GAP_SECONDS = 0.015  # machine-speed input; human typing is >=50ms
+DROP_BURST_MAX_GAP_SECONDS = 0.04  # machine-injected input; human typing is >=50ms
 DROP_BURST_SETTLE_SECONDS = 0.05  # quiet period before evaluating a burst
 DROP_BURST_MIN_LENGTH = 4
 """Apple Terminal drag-and-drop detection (see ``ComposerInput``).
