@@ -10,6 +10,7 @@ from textual.message import Message
 
 from amplifier_app_tui.model.modes import get_mode
 from amplifier_app_tui.ui.composer import (
+    AttachFilesButton,
     Composer,
     ComposerInput,
     ModeBadge,
@@ -62,6 +63,9 @@ class ComposerApp(App[None]):
         self.messages.append(message)
 
     def on_composer_cycle_mode_requested(self, message: Composer.CycleModeRequested) -> None:
+        self.messages.append(message)
+
+    def on_composer_pick_files(self, message: Composer.PickFiles) -> None:
         self.messages.append(message)
 
 
@@ -621,6 +625,35 @@ async def test_keystroke_burst_followed_by_enter_submits_attachment(tmp_path) ->
         assert len(submits[0].attachments) == 1
         assert str(png) not in submits[0].text  # raw path never submitted
         assert submits[0].text == "[Image #1]"
+
+
+@pytest.mark.asyncio
+async def test_document_path_paste_becomes_visible_file_reference(tmp_path) -> None:
+    from textual import events
+
+    document = tmp_path / "project brief.pdf"
+    document.write_bytes(b"%PDF example")
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        composer._input.post_message(events.Paste(str(document)))
+        await pilot.pause()
+
+        assert composer.text == f"Attached file: {document.resolve()}\n"
+        await pilot.press("enter")
+        (submit,) = _of(app, Composer.Submit)
+        assert submit.text == f"Attached file: {document.resolve()}"
+        assert submit.attachments == ()
+
+
+@pytest.mark.asyncio
+async def test_attach_control_requests_native_picker() -> None:
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        await pilot.click(AttachFilesButton)
+        await pilot.pause()
+
+        assert len(_of(app, Composer.PickFiles)) == 1
 
 
 @pytest.mark.asyncio

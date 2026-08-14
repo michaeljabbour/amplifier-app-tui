@@ -1,6 +1,6 @@
 [project]
 name = "amplifier-app-tui"
-version = "0.1.3"
+version = "0.1.4"
 description = "Full-screen Textual TUI for the Amplifier AI development platform (v3 Cohesive)"
 license = "MIT"
 readme = "README.md"
@@ -8,7 +8,7 @@ requires-python = ">=3.12"
 authors = [{ name = "Microsoft MADE:Explorations Team" }]
 dependencies = [
     "textual~=8.2",
-    "amplifier-runtime @ git+https://github.com/michaeljabbour/amplifier-runtime.git@c590aa7ac15f067adbcc46a25e7b666d3d1a59e7",
+    "amplifier-runtime @ git+https://github.com/michaeljabbour/amplifier-runtime.git@75243f74cd1785c492f7197c05b2e5aff2ea6c6c",
     # team_pulse_lib is the unpublished peer that tool-team-pulse (composed by
     # the packaged tui bundle) imports at mount(). The bundle installs it via
     # a root shim; tui pulls only the module subdir, so we install the lib

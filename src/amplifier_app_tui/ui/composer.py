@@ -30,6 +30,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from time import monotonic
 
 from textual import events
@@ -38,7 +39,11 @@ from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import Static, TextArea
 
-from ..kernel.clipboard import ImageAttachment, pasted_image_attachments
+from amplifier_runtime.kernel.clipboard import (
+    ImageAttachment,
+    pasted_local_file_paths,
+    read_image_file,
+)
 from ..kernel.frecency import suggest_completion
 from ..model.modes import DEFAULT_MODE, ModeProfile, get_mode
 from .file_mentions import FileMentionIntent
@@ -165,6 +170,28 @@ class ModeBadge(Static):
     def on_click(self, event: events.Click) -> None:
         event.stop()
         self.post_message(Composer.CycleModeRequested())
+
+
+class AttachFilesButton(Static):
+    """Visible fallback when a terminal swallows desktop file drops."""
+
+    DEFAULT_CSS = """
+    AttachFilesButton {
+        width: auto;
+        height: 1;
+        margin-top: 1;
+        padding: 0 0 0 1;
+        color: $dim;
+    }
+    AttachFilesButton:hover { color: $text; text-style: underline; }
+    """
+
+    def __init__(self) -> None:
+        super().__init__("+ attach", markup=False)
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.post_message(Composer.PickFiles())
 
 
 class ComposerInput(TextArea):
@@ -396,13 +423,13 @@ class ComposerInput(TextArea):
             # Something else moved the cursor/document since the burst began —
             # never delete text we don't own.
             return
-        images = pasted_image_attachments(payload)
-        if not images:
-            # Prose, or a path to a non-image file: the typed text stays as-is.
+        paths = pasted_local_file_paths(payload)
+        if not paths:
+            # Ordinary prose stays exactly as typed.
             return
         self.delete(anchor, end, maintain_selection_offset=False)
-        for image in images:
-            composer.add_image(image)
+        for path in paths:
+            composer.add_local_file(path)
 
     async def _on_paste(self, event: events.Paste) -> None:
         # Own the paste so a big block collapses to a stub instead of
@@ -419,14 +446,15 @@ class ComposerInput(TextArea):
             event.prevent_default()
             return
         composer.end_history_navigation()
-        # Cmd+V of an image file and drag-and-drop both arrive here as a
-        # bracketed paste of the file path — attach them, don't insert text.
-        images = pasted_image_attachments(event.text)
-        if images:
+        # File paste and drag-and-drop can arrive here as a bracketed paste of
+        # one or more paths. Images become typed attachments; other documents
+        # become visible local-file references the agent can open with tools.
+        paths = pasted_local_file_paths(event.text)
+        if paths:
             event.stop()
             event.prevent_default()
-            for image in images:
-                composer.add_image(image)
+            for path in paths:
+                composer.add_local_file(path)
             self._remember_paste(event.text)
             return
         stub = composer.register_paste(event.text)
@@ -510,6 +538,9 @@ class Composer(Horizontal):
 
     class PasteImage(Message):
         """Ctrl+V: the app reads the system clipboard image off-thread."""
+
+    class PickFiles(Message):
+        """Open the OS-native file picker for images or documents."""
 
     class Steer(Message):
         """Running Enter: steer the current turn with *text*."""
@@ -616,6 +647,7 @@ class Composer(Horizontal):
         self._badge = ModeBadge()
         self._prompt = Static("❯", classes="composer-prompt")
         self._input = ComposerInput()
+        self._attach_button = AttachFilesButton()
         self._pastes: dict[str, str] = {}  # stub → full retained payload
         self._paste_seq = 0
         self._attachments: list[tuple[str, ImageAttachment]] = []  # (placeholder, image)
@@ -631,6 +663,7 @@ class Composer(Horizontal):
         yield self._badge
         yield self._prompt
         yield self._input
+        yield self._attach_button
 
     def on_mount(self) -> None:
         self._apply_mode()
@@ -687,6 +720,27 @@ class Composer(Horizontal):
         self._attachments.append((placeholder, attachment))
         prefix = "" if not self._input.text or self._input.text.endswith((" ", "\n")) else " "
         self._input.insert(f"{prefix}{placeholder} ")
+
+    def add_local_file(self, path: str | Path) -> None:
+        """Add a picker/drop result to the visible draft.
+
+        Images use the runtime's typed multimodal attachment protocol. Other
+        files remain local and are represented by an explicit absolute path so
+        Amplifier can inspect them with its ordinary filesystem tools.
+        """
+        try:
+            local_path = Path(path).expanduser().resolve(strict=True)
+        except OSError:
+            return
+        if not local_path.is_file():
+            return
+        image = read_image_file(local_path)
+        if image is not None:
+            self.add_image(image)
+            return
+        self.end_history_navigation()
+        prefix = "" if not self._input.text else ("" if self._input.text.endswith("\n") else "\n")
+        self._input.insert(f"{prefix}Attached file: {local_path}\n")
 
     def _staged_attachments(self, text: str) -> tuple[ImageAttachment, ...]:
         """Images whose placeholder survives in *text* (spec: a deleted

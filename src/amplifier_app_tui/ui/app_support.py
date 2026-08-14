@@ -63,6 +63,7 @@ _GLOBAL_ACTIONS = frozenset(
         "cycle_permission",
         "cycle_effort",
         "cycle_tail",
+        "pick_files",
         "recall_queued",
         "toggle_lanes",
         "toggle_thinking",
@@ -166,6 +167,39 @@ def global_bindings() -> list[BindingType]:
     # while the composer has focus — transcript copies silently no-oped.
     bindings.append(Binding("ctrl+c,super+c", "copy_selection", "copy", show=False, priority=True))
     return bindings
+
+
+async def pick_files(app: TuiApp) -> None:
+    """Open the native picker off-thread and add its files to the composer."""
+    from amplifier_runtime.kernel.native_picker import NativePickerUnavailable, pick_local_files
+
+    try:
+        paths = await asyncio.to_thread(pick_local_files)
+    except NativePickerUnavailable as exc:
+        app.show_notice(str(exc))
+        return
+    for path in paths:
+        app.composer.add_local_file(path)
+    if paths:
+        noun = "file" if len(paths) == 1 else "files"
+        app.show_notice(f"{len(paths)} {noun} attached")
+    app.composer.focus_input()
+
+
+async def paste_clipboard_image(app: TuiApp) -> None:
+    """Read and stage an image without blocking Textual's event loop."""
+    from amplifier_runtime.kernel.clipboard import read_clipboard_image
+
+    try:
+        attachment = await asyncio.to_thread(read_clipboard_image)
+    except Exception:  # noqa: BLE001 -- clipboard reads are best-effort
+        attachment = None
+    if attachment is None:
+        app.show_notice("no image in clipboard")
+        return
+    app.composer.add_image(attachment)
+    kb = len(attachment.data) // 1024
+    app.show_notice(f"image attached · {attachment.media_type.split('/')[-1]} · {kb} KB")
 
 
 def needs_you_display_question(item: NeedsYouItem) -> str:
@@ -1349,6 +1383,8 @@ __all__ = [
     "handle_restore",
     "handle_lane_focus_change",
     "mount_approval",
+    "paste_clipboard_image",
+    "pick_files",
     "needs_you_block",
     "needs_you_display_question",
     "permissions_block",

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 import re
+from pathlib import Path
 from time import monotonic
 
 from amplifier_app_tui.kernel.demo import BRAINSTORM_PROMPT, BUILD_PROMPT
@@ -35,6 +36,16 @@ def _clean_svg(value: str) -> str:
     """Remove Textual's per-process namespace and trailing whitespace."""
     stable_ids = _DYNAMIC_TERMINAL_ID.sub("terminal-SNAPSHOT", value)
     return "\n".join(line.rstrip() for line in stable_ids.splitlines()) + "\n"
+
+
+def _assert_snapshot(actual: str, path: Path) -> None:
+    cleaned = _clean_svg(actual)
+    if os.environ.get("UPDATE_UI_SNAPSHOTS") == "1":
+        path.write_text(cleaned, encoding="utf-8")
+        return
+    expected = path.read_text(encoding="utf-8")
+    assert expected == _clean_svg(expected), "snapshot must remain whitespace-clean"
+    assert cleaned == expected
 
 
 def test_double_esc_rewind_snapshot(monkeypatch) -> None:
@@ -80,9 +91,7 @@ def test_double_esc_rewind_snapshot(monkeypatch) -> None:
         terminal_size=SIZE,
         run_before=interrupt_then_rewind,
     )
-    expected = _SNAPSHOT.read_text(encoding="utf-8")
-    assert expected == _clean_svg(expected), "snapshot must remain whitespace-clean"
-    assert _clean_svg(actual) == expected
+    _assert_snapshot(actual, _SNAPSHOT)
 
 
 def test_plan_panel_bottom_strip_snapshot(monkeypatch) -> None:
@@ -102,9 +111,7 @@ def test_plan_panel_bottom_strip_snapshot(monkeypatch) -> None:
         assert app.plan_panel.plan_lines == ("Plan 3/3",)
 
     actual = take_svg_screenshot(app=app, terminal_size=SIZE, run_before=run_build)
-    expected = _PLAN_SNAPSHOT.read_text(encoding="utf-8")
-    assert expected == _clean_svg(expected), "snapshot must remain whitespace-clean"
-    assert _clean_svg(actual) == expected
+    _assert_snapshot(actual, _PLAN_SNAPSHOT)
 
 
 _TAIL_SNAPSHOT = (

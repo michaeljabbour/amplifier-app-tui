@@ -178,7 +178,7 @@ continues to scroll inside the bounded panel without covering the composer.
 | Queue a **full next turn** while one runs | **shift+enter** (**alt+enter** on legacy terminals — the hint adapts) |
 | Pull the queued turn back to steer now | **alt+↑**, or click its orange `queued next` strip, then press **enter** |
 | Interrupt the running turn | **esc** |
-| Attach an image | paste it (ctrl+v) or paste a path — it becomes an `[Image #N]` chip |
+| Attach images or documents | click **+ attach** or press **alt+a** for the native picker; forwarded drops/pasted paths work too. Images become `[Image #N]`; documents show their local path in the draft and chat. |
 | Mention a workspace file | type `@` after whitespace, then **↑/↓** and **enter** (or **tab**) to insert |
 
 Things worth knowing:
@@ -432,6 +432,7 @@ sandbox around arbitrary interpreter code.
 | shift+enter (alt+enter) | queue next-turn message | any time |
 | alt+↑ | recall queued next-turn text so Enter can steer it now (or send it if the prior turn already ended) | queued message visible |
 | ctrl+j (ctrl+enter) | newline in composer | composing |
+| alt+a | open the OS-native file picker | composing |
 | ↑ / ↓ | older/newer prompt; restore draft | single-line composer |
 | ↑ / ↓ | move file suggestion | `@file` suggestions open |
 | tab | insert selected file path | `@file` suggestions open |

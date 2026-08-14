@@ -1722,25 +1722,11 @@ class TuiApp(App[ResumeSessionRequest]):
 
     def on_composer_paste_image(self, message: Composer.PasteImage) -> None:
         message.stop()
-        self.run_worker(self._paste_clipboard_image(), exclusive=False)
+        self.run_worker(app_support.paste_clipboard_image(self), exclusive=False)
 
-    async def _paste_clipboard_image(self) -> None:
-        """Read the system clipboard image off-thread, stage it on the
-        composer as an ``[Image #N]`` placeholder (amplifier-app-cli parity)."""
-        import asyncio
-
-        from ..kernel.clipboard import read_clipboard_image
-
-        try:
-            attachment = await asyncio.to_thread(read_clipboard_image)
-        except Exception:  # noqa: BLE001 — clipboard read is best-effort
-            attachment = None
-        if attachment is None:
-            self.show_notice("no image in clipboard")
-            return
-        self.composer.add_image(attachment)
-        kb = len(attachment.data) // 1024
-        self.show_notice(f"image attached · {attachment.media_type.split('/')[-1]} · {kb} KB")
+    def on_composer_pick_files(self, message: Composer.PickFiles) -> None:
+        message.stop()
+        self.action_pick_files()
 
     def on_composer_steer(self, message: Composer.Steer) -> None:
         message.stop()
@@ -2272,6 +2258,9 @@ class TuiApp(App[ResumeSessionRequest]):
     def action_cycle_effort(self) -> None:
         """ctrl+e: advance the reasoning-effort tier one step in the ring."""
         self.session_ops.cycle_effort()
+
+    def action_pick_files(self) -> None:
+        self.run_worker(app_support.pick_files(self), exclusive=False)
 
     def action_toggle_lanes(self) -> None:
         if self.lanes_panel.display:

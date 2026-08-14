@@ -45,3 +45,29 @@ async def test_dropped_image_path_reaches_the_transcript(tmp_path) -> None:
                 for block in app.transcript.blocks
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_dropped_document_path_reaches_the_transcript(tmp_path) -> None:
+    document = tmp_path / "research notes.md"
+    document.write_text("evidence", encoding="utf-8")
+    app = TuiApp(DemoRuntimeAdapter(instant=True))
+
+    async with app.run_test(size=(110, 40)) as pilot:
+        assert await wait_for(
+            pilot,
+            lambda: any(block.kind == "session_banner" for block in app.transcript.blocks),
+        )
+        composer = app.query_one("#composer", Composer)
+        composer._input.post_message(events.Paste(str(document)))
+        await pilot.pause()
+        await pilot.press("enter")
+
+        expected = f"Attached file: {document.resolve()}"
+        assert await wait_for(
+            pilot,
+            lambda: any(
+                block.kind == "user_line" and getattr(block, "text", "") == expected
+                for block in app.transcript.blocks
+            ),
+        )
