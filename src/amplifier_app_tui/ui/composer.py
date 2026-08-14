@@ -35,6 +35,7 @@ from time import monotonic
 from textual import events
 from textual.containers import Horizontal
 from textual.message import Message
+from textual.timer import Timer
 from textual.widgets import Static, TextArea
 
 from ..kernel.clipboard import ImageAttachment, pasted_image_attachments
@@ -68,6 +69,18 @@ Some terminal/input stacks occasionally deliver the same bracketed-paste
 sequence twice.  The fence is deliberately narrow and also requires the
 composer text and cursor to be unchanged since the first insertion, so a
 later intentional repeat or any intervening edit still works normally.
+"""
+
+DROP_BURST_MAX_GAP_SECONDS = 0.015  # machine-speed input; human typing is >=50ms
+DROP_BURST_SETTLE_SECONDS = 0.05  # quiet period before evaluating a burst
+DROP_BURST_MIN_LENGTH = 4
+"""Apple Terminal drag-and-drop detection (see ``ComposerInput``).
+
+Apple Terminal does NOT wrap a file drop in bracketed paste — it injects
+the (backslash-escaped) POSIX path as a burst of ordinary keystrokes.  A
+consecutive run of printable keys faster than a human can type is treated
+as a candidate drop and re-routed through the same image-attachment path
+that :meth:`ComposerInput._on_paste` uses.
 """
 
 _MODE_CLASSES = ("mode-chat", "mode-plan", "mode-brainstorm", "mode-build", "mode-auto")
@@ -190,6 +203,13 @@ class ComposerInput(TextArea):
     def __init__(self) -> None:
         super().__init__(placeholder=COMPOSER_PLACEHOLDER, soft_wrap=True)
         self._last_paste: tuple[str, str, tuple[int, int], float] | None = None
+        # Apple Terminal drag-and-drop arrives as a keystroke burst, not a
+        # bracketed paste.  Accumulate the printable keys and, once they settle,
+        # re-route the run through the same image-attachment path _on_paste uses.
+        self._drop_burst_text: list[str] = []
+        self._drop_burst_anchor: tuple[int, int] | None = None
+        self._drop_burst_last = 0.0
+        self._drop_burst_timer: Timer | None = None
 
     def _is_duplicate_paste(self, payload: str) -> bool:
         """True only for an unchanged, immediate replay of *payload*."""
@@ -217,6 +237,15 @@ class ComposerInput(TextArea):
         if composer is None:
             await super()._on_key(event)
             return
+        if self._drop_burst_anchor is not None and not event.is_printable:
+            # A non-printable key (enter, escape, arrows…) terminates a live
+            # drop burst.  Apple Terminal can end a file drop with a newline,
+            # so resolve the pending burst *now* — before the branch cascade
+            # below — rather than waiting out the settle timer (which would
+            # abandon the raw path and submit it as plain text).
+            if self._drop_burst_timer is not None:
+                self._drop_burst_timer.stop()
+            self._settle_drop_burst()
         if event.key != "escape":
             # Double-Esc is a chord, not a loose time window. Any intervening
             # composer activity disarms it before that activity is routed.
@@ -312,12 +341,74 @@ class ComposerInput(TextArea):
             composer.post_message(Composer.EscPressed())
         else:
             composer.end_history_navigation()
+            self._record_burst_key(event)  # Apple Terminal drop detection
             await super()._on_key(event)
+
+    def _record_burst_key(self, event: events.Key) -> None:
+        """Accumulate printable keystrokes as a candidate drop burst.
+
+        Apple Terminal injects a dropped file path as a burst of ordinary
+        keystrokes (no bracketed paste).  A run of printable characters faster
+        than a human can type is a candidate drop: once it settles it is
+        re-routed through the same image-attachment path ``_on_paste`` uses.  The anchor
+        is the cursor BEFORE the character is inserted, so the burst always
+        maps onto a contiguous single-line region of the document.
+        """
+        if not (event.is_printable and event.character and event.character != "\n"):
+            return
+        now = monotonic()
+        if (
+            self._drop_burst_anchor is None
+            or now - self._drop_burst_last > DROP_BURST_MAX_GAP_SECONDS
+        ):
+            self._drop_burst_text = []
+            self._drop_burst_anchor = self.cursor_location
+        self._drop_burst_text.append(event.character)
+        self._drop_burst_last = now
+        if self._drop_burst_timer is not None:
+            self._drop_burst_timer.stop()
+        self._drop_burst_timer = self.set_timer(DROP_BURST_SETTLE_SECONDS, self._settle_drop_burst)
+
+    def _reset_drop_burst(self) -> None:
+        """Drop a pending burst and its settle timer (text was rewritten)."""
+        if self._drop_burst_timer is not None:
+            self._drop_burst_timer.stop()
+            self._drop_burst_timer = None
+        self._drop_burst_text = []
+        self._drop_burst_anchor = None
+
+    def _settle_drop_burst(self) -> None:
+        """Evaluate a settled keystroke burst as a possibly-dropped image path."""
+        self._drop_burst_timer = None
+        payload = "".join(self._drop_burst_text)
+        anchor = self._drop_burst_anchor
+        self._drop_burst_text = []
+        self._drop_burst_anchor = None
+        if anchor is None or len(payload) < DROP_BURST_MIN_LENGTH:
+            return
+        composer = self._composer()
+        if composer is None:
+            return
+        # Paths contain no newlines (we never record one), so the burst is
+        # single-line and its end is a straight column offset from the anchor.
+        end = (anchor[0], anchor[1] + len(payload))
+        if self.get_text_range(anchor, end) != payload:
+            # Something else moved the cursor/document since the burst began —
+            # never delete text we don't own.
+            return
+        images = pasted_image_attachments(payload)
+        if not images:
+            # Prose, or a path to a non-image file: the typed text stays as-is.
+            return
+        self.delete(anchor, end, maintain_selection_offset=False)
+        for image in images:
+            composer.add_image(image)
 
     async def _on_paste(self, event: events.Paste) -> None:
         # Own the paste so a big block collapses to a stub instead of
         # flooding the composer (amplifier-app-cli parity). Small pastes
         # fall through to TextArea's verbatim insert.
+        self._reset_drop_burst()  # a paste rewrites the document; drop any stale burst
         composer = self._composer()
         if composer is None or not event.text:
             await super()._on_paste(event)
@@ -565,6 +656,7 @@ class Composer(Horizontal):
         return self._input.selected_text
 
     def clear(self) -> None:
+        self._input._reset_drop_burst()
         self._input.clear()
         self.end_history_navigation()
         self.mention_open = False
@@ -641,6 +733,7 @@ class Composer(Horizontal):
         """Replace the draft with the editor's normalized content, cursor at
         the end (the composer counterpart of the donor ``input.setText``)."""
         self.end_history_navigation()
+        self._input._reset_drop_burst()
         self._input.load_text(text)
         self._input.cursor_location = _cursor_location(text, len(text))
 
@@ -970,6 +1063,7 @@ class Composer(Horizontal):
             self._paste_seq = 0
             self._attachments = []
             self._image_seq = 0
+        self._input._reset_drop_burst()
         self._input.load_text(text)
         self._input.cursor_location = _cursor_location(text, len(text))
 
