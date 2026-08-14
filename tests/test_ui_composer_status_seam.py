@@ -17,6 +17,7 @@ existing ``test_ui_snapshots.py`` already locks two full-screen states).
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -50,6 +51,9 @@ def _clean_svg(value: str) -> str:
 
 def _assert_matches_snapshot(actual: str, name: str) -> None:
     path = _SNAPSHOT_DIR / f"{name}.raw"
+    if os.environ.get("UPDATE_UI_SNAPSHOTS") == "1":
+        path.write_text(_clean_svg(actual), encoding="utf-8")
+        return
     expected = path.read_text(encoding="utf-8")
     assert expected == _clean_svg(expected), "snapshot must remain whitespace-clean"
     assert _clean_svg(actual) == expected, (

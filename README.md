@@ -304,6 +304,23 @@ Engineering documentation in this repository:
 
 The Textual UI and commands consume runtime-owned `model/` and `kernel/` modules from the pinned `amplifier-runtime` distribution. Runtime owns the Amplifier Core/Foundation integration, session host, protocol, replay, approvals, persistence, leases, and normalized `UIEvent` boundary; the TUI owns terminal presentation and interaction. Compatibility package paths preserve existing imports but cannot fall back to the duplicate local implementation. The full walk-through is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+### Remote Amplifier hosts
+
+Studio and the TUI share the client-side host registry at `~/.amplifier/hosts.yaml`. The file contains named endpoints and secret references, never bearer-token values:
+
+```bash
+amplifier-tui host add sam-lab https://sam.tailnet.ts.net \
+  --name "SAM lab" \
+  --default-project-root /home/sam/dev \
+  --token-env AMPLIFIER_HOST_TOKEN_SAM_LAB
+
+amplifier-tui host status sam-lab
+amplifier-tui host directories sam-lab
+amplifier-tui host sessions sam-lab
+```
+
+Remote HTTP is accepted only on loopback for an SSH tunnel; non-loopback endpoints require HTTPS. Environment references work everywhere, and `keychain:ACCOUNT` references resolve through macOS Keychain. Full interactive TUI work on a remote machine remains intentionally SSH-native for this release (`ssh -t HOST amplifier-tui`); native WebSocket presentation is a later adapter, while Studio already uses the same registry for per-tab remote sessions.
+
 ![tui architecture and topology](docs/diagrams/tui-architecture.png)
 
 ![tui data flow](docs/diagrams/tui-dataflow.png)

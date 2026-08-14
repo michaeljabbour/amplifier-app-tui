@@ -145,6 +145,7 @@ KEYMAP: tuple[Binding, ...] = (
     # taken here by toggle_thinking/cycle_tail). Suspends the TUI, opens a
     # temp .md seeded with the draft, reads it back normalized.
     _b("open_external_editor", ("ctrl+e",), "ctrl-e edit", NO_APPROVAL),
+    _b("pick_files", ("alt+a",), "alt-a attach", NO_APPROVAL),
     # Show/hide the root stream box (thinking/response peek). Advertised
     # only while a turn runs — that is the only time a live box exists.
     _b("toggle_thinking", ("ctrl+g",), "ctrl-g think", _RUNNING),
@@ -364,6 +365,7 @@ HELP_ACTIONS: tuple[str, ...] = (
     "toggle_lanes",
     "cycle_tail",
     "open_external_editor",
+    "pick_files",
     "toggle_thinking",
     "show_timeline",
     "show_ledger",
@@ -400,6 +402,7 @@ ACTION_HELP: dict[str, str] = {
     "toggle_lanes": "toggle the agent lanes panel",
     "cycle_tail": "cycle live-tail focus while agents run",
     "open_external_editor": "compose the draft in $VISUAL/$EDITOR",
+    "pick_files": "attach local files with the native picker",
     "toggle_thinking": "show/hide the live thinking box while a turn runs",
     "show_timeline": "scrub a film strip of past turns (enter keeps the scroll, esc returns to the tail)",
     "show_ledger": "print the session outcome ledger",

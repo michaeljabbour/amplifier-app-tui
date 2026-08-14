@@ -1564,6 +1564,123 @@ def session(ctx: click.Context) -> None:
         click.echo(ctx.get_help())
 
 
+@main.group("host", invoke_without_command=True)
+@click.pass_context
+def host(ctx: click.Context) -> None:
+    """Manage and inspect remote Amplifier session hosts.
+
+    Host metadata is shared with Studio through ``~/.amplifier/hosts.yaml``.
+    Bearer tokens remain outside that file and are resolved through the
+    entry's environment-variable secret reference.
+    """
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@host.command("list")
+@click.option("--json", "as_json", is_flag=True, help="Emit one JSON document.")
+def host_list(as_json: bool) -> None:
+    """List configured remote session hosts without exposing tokens."""
+    from .remote_hosts import load_hosts
+
+    hosts = load_hosts()
+    if as_json:
+        click.echo(json.dumps([host.__dict__ for host in hosts], indent=2))
+        return
+    if not hosts:
+        click.echo("No remote Amplifier hosts are configured.")
+        return
+    for item in hosts:
+        click.echo(f"{item.id:<20} {item.name:<28} {item.url}  [{item.token_ref}]")
+
+
+@host.command("add")
+@click.argument("host_id")
+@click.argument("url")
+@click.option("--name", help="Human-readable machine name; defaults to HOST_ID.")
+@click.option("--token-env", help="Environment variable containing this host's bearer token.")
+@click.option("--default-project-root", help="Default project root on the remote host.")
+def host_add(
+    host_id: str,
+    url: str,
+    name: str | None,
+    token_env: str | None,
+    default_project_root: str | None,
+) -> None:
+    """Register a host endpoint; secret values are never written to hosts.yaml."""
+    from .remote_hosts import add_host
+
+    token_ref = f"env:{token_env.strip()}" if token_env else None
+    item = add_host(
+        host_id=host_id,
+        name=name or host_id,
+        url=url,
+        token_ref=token_ref,
+        default_project_root=default_project_root,
+    )
+    click.echo(f"Added {item.name} ({item.id}) at {item.url}")
+    click.echo(f"Token reference: {item.token_ref}")
+
+
+@host.command("remove")
+@click.argument("host_id")
+def host_remove(host_id: str) -> None:
+    """Remove a host endpoint without touching its external secret."""
+    from .remote_hosts import remove_host
+
+    if not remove_host(host_id):
+        raise click.ClickException(f"Unknown Amplifier host '{host_id}'")
+    click.echo(f"Removed Amplifier host '{host_id}'")
+
+
+@host.command("login")
+@click.argument("host_id")
+@click.password_option("--token", confirmation_prompt=False, help="Host bearer token.")
+def host_login(host_id: str, token: str) -> None:
+    """Store one host token in macOS Keychain and update its secret reference."""
+    from .remote_hosts import store_keychain_token
+
+    try:
+        item = store_keychain_token(host_id, token)
+    except (ValueError, RuntimeError) as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(f"Stored the token for {item.name} in macOS Keychain")
+
+
+def _host_read(host_id: str, route: str, *, params: dict[str, str] | None = None) -> object:
+    from .remote_hosts import find_host, host_get
+
+    try:
+        return host_get(find_host(host_id), route, params=params)
+    except (ValueError, RuntimeError) as error:
+        raise click.ClickException(str(error)) from error
+
+
+@host.command("status")
+@click.argument("host_id")
+def host_status(host_id: str) -> None:
+    """Verify authentication and protocol compatibility with one host."""
+    click.echo(json.dumps(_host_read(host_id, "health"), indent=2, sort_keys=True))
+
+
+@host.command("sessions")
+@click.argument("host_id")
+@click.option("--project-dir", help="Restrict the listing to one host-side project path.")
+def host_sessions(host_id: str, project_dir: str | None) -> None:
+    """List durable sessions owned by a remote host."""
+    params = {"projectDir": project_dir} if project_dir else None
+    click.echo(json.dumps(_host_read(host_id, "stored-sessions", params=params), indent=2))
+
+
+@host.command("directories")
+@click.argument("host_id")
+@click.option("--path", "directory", help="Browse below this allowed host-side path.")
+def host_directories(host_id: str, directory: str | None) -> None:
+    """Browse directories exposed by a remote host's allowlist."""
+    params = {"path": directory} if directory else None
+    click.echo(json.dumps(_host_read(host_id, "directories", params=params), indent=2))
+
+
 @session.command("list")
 @click.option("--limit", "-n", default=20, show_default=True, help="Number of sessions to show.")
 def session_list(limit: int) -> None:

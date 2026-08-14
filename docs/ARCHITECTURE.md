@@ -422,7 +422,7 @@ It **only posts messages; it never executes anything**:
 | Enter (decision capture) | `DecisionAnswer` — outranks submit, steer, queue, and slash commands |
 | Ctrl+J / Ctrl+Enter | literal newline (app-cli parity + terminal alternate) |
 | Large paste (>10 lines / 800 chars) | collapses to a `[Pasted #N · …]` stub, expanded verbatim at submit |
-| Image path paste / Ctrl+V | `[Image #N]` attachment (off-thread clipboard read) |
+| Native picker / dropped or pasted local path | image → typed `[Image #N]`; document → visible absolute-path reference |
 | Text starting with `/` | posts `OpenPalette(filter=…)` on every edit |
 | `@query` after whitespace | posts a ranked workspace-file filter; arrows/enter/tab stay in the composer |
 | ↑/↓ on single-line composer | bounded prompt history; ↓ restores the current draft |
