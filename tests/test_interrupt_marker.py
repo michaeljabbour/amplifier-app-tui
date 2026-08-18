@@ -1,4 +1,17 @@
-"""Model-visible context marker for an accepted Esc interrupt."""
+"""Model-visible context marker for an accepted Esc interrupt.
+
+The marker rides on a **user**-role message, and both halves of that are load
+bearing. Not ``assistant``: an interrupt is a fact about the environment, not
+something the model said, and persisted as assistant speech it becomes the
+model's own last utterance -- a strong pattern to continue, so the next reply
+parrots being interrupted and each interrupt appends another. Not ``system``
+either: the Anthropic provider extracts system-role messages out of the
+conversation into the single top-level system block, so one of these would
+rewrite that block on every interrupt and bust its cache breakpoint.
+
+If this assertion ever fails because the role changed back, read
+``TURN_ABORTED_MARKER``'s docstring in amplifier-runtime before "fixing" it.
+"""
 
 from __future__ import annotations
 
@@ -70,7 +83,7 @@ async def test_interrupt_appends_marker_before_end_of_turn_save() -> None:
     assert await runtime.interrupt()
     assert await turn == ""
 
-    marker = {"role": "assistant", "content": TURN_ABORTED_MARKER}
+    marker = {"role": "user", "content": TURN_ABORTED_MARKER}
     assert context.messages == [marker]
     assert runtime._saver.saved_messages == [marker]
     assert restored_history(context.messages) == ()
