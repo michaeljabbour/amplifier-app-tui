@@ -1,8 +1,21 @@
-"""Resume-time repair for interrupted tool sequences."""
+"""Resume-time repair for interrupted tool sequences.
+
+These import through ``amplifier_app_tui.kernel``, whose ``__path__`` shim
+resolves to the runtime-owned module -- so this file is a client-side contract
+test over ``amplifier-runtime``, not coverage of anything this repo ships. The
+local duplicate was deleted; the shim refuses a local fallback by design.
+
+What is pinned here is the shape tolerance the TUI depends on: calls persisted
+as ``content`` blocks AND as a top-level ``tool_calls`` list, and results that
+arrive as ``role: tool`` records or as ``tool_result`` blocks on another role.
+Real transcripts carry a majority of calls in the block shape, so a repair path
+that only understood the top-level shape would silently miss most interrupted
+work.
+"""
 
 from __future__ import annotations
 
-from amplifier_app_tui.kernel.session_integrity import complete_orphaned_tool_results
+from amplifier_app_tui.kernel.session_integrity import repair_resumed_transcript
 
 
 def test_completes_content_and_top_level_orphans_immediately_after_assistant() -> None:
@@ -27,9 +40,11 @@ def test_completes_content_and_top_level_orphans_immediately_after_assistant() -
         {"role": "user", "content": "resume"},
     ]
 
-    repaired, repairs = complete_orphaned_tool_results(messages)
+    repaired, repair = repair_resumed_transcript(messages)
 
-    assert [(row.tool_call_id, row.tool_name) for row in repairs] == [
+    assert repair is not None
+    assert repair.failure_modes == ("missing_tool_results",)
+    assert [(row.tool_call_id, row.tool_name) for row in repair.tool_results] == [
         ("call-c", "read_file"),
         ("call-d", "todo"),
         ("call-a", "bash"),
@@ -58,6 +73,17 @@ def test_completes_content_and_top_level_orphans_immediately_after_assistant() -
 
 
 def test_preserves_real_results_and_repairs_only_the_missing_parallel_call() -> None:
+    """A real result is never duplicated; only the unmatched sibling is filled.
+
+    The placeholder lands immediately after the message that made the call --
+    the ordering providers require for parallel calls -- so the real result
+    keeps its own later position.
+
+    This transcript also ends without a closing assistant message, which is
+    reported as an unclosed turn but deliberately not written: fabricating an
+    assistant utterance would be read back by the next request as the model's
+    own last words.
+    """
     messages = [
         {
             "role": "assistant",
@@ -69,14 +95,28 @@ def test_preserves_real_results_and_repairs_only_the_missing_parallel_call() -> 
         {"role": "tool", "tool_call_id": "done", "name": "bash", "content": "ok"},
     ]
 
-    repaired, repairs = complete_orphaned_tool_results(messages)
+    repaired, repair = repair_resumed_transcript(messages)
 
-    assert [row.tool_call_id for row in repairs] == ["missing"]
+    assert repair is not None
+    assert [row.tool_call_id for row in repair.tool_results] == ["missing"]
     assert sum(message.get("tool_call_id") == "done" for message in repaired) == 1
     assert sum(message.get("tool_call_id") == "missing" for message in repaired) == 1
+    # The real result survives verbatim, after the placeholder.
+    assert repaired[-1] == {"role": "tool", "tool_call_id": "done", "name": "bash", "content": "ok"}
+
+    assert "incomplete_assistant_turn" in repair.failure_modes
+    assert repair.incomplete_turns == 1
+    assert not any(message.get("role") == "assistant" for message in repaired[1:])
 
 
 def test_tool_result_content_block_counts_as_real_and_repair_is_idempotent() -> None:
+    """A ``tool_result`` block on a non-tool role still counts as a real result.
+
+    Re-running over an already-repaired transcript must be a no-op that copies
+    nothing -- a clean resume should not rewrite the stored conversation, and a
+    repair that found fresh work on its own output would grow the transcript
+    once per resume.
+    """
     messages = [
         {
             "role": "assistant",
@@ -91,9 +131,10 @@ def test_tool_result_content_block_counts_as_real_and_repair_is_idempotent() -> 
         },
     ]
 
-    first, repairs = complete_orphaned_tool_results(messages)
-    second, repeated = complete_orphaned_tool_results(first)
+    first, repair = repair_resumed_transcript(messages)
+    second, repeated = repair_resumed_transcript(first)
 
-    assert [row.tool_call_id for row in repairs] == ["orphan"]
-    assert repeated == ()
-    assert second == first
+    assert repair is not None
+    assert [row.tool_call_id for row in repair.tool_results] == ["orphan"]
+    assert repeated is None
+    assert second is first
