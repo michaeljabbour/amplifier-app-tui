@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TypeVar
 
 import pytest
@@ -527,12 +528,31 @@ def _post_keystroke_burst(composer: Composer, text: str) -> None:
         composer._input.post_message(events.Key(key=ch, character=ch))
 
 
+async def _wait_for(pilot, predicate, timeout: float = 2.0) -> None:
+    """Poll until *predicate* holds, instead of sleeping a fixed margin.
+
+    The burst settle is 50 ms, and these tests used to wait exactly
+    ``DROP_BURST_SETTLE_SECONDS + 0.05`` -- a 100 % margin that is still only
+    100 ms of wall clock. Under full-suite load the event loop routinely misses
+    that, so the assertion fired before the settle callback had run and the test
+    failed for scheduler reasons rather than behavioural ones.
+
+    Polling keeps the failure signal intact (a genuinely broken burst still
+    never satisfies the predicate and the timeout fails the test) while being
+    tolerant of a busy machine.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(f"condition not met within {timeout}s")
+        await pilot.pause(0.01)
+
+
 @pytest.mark.asyncio
 async def test_keystroke_burst_of_image_path_attaches_it(tmp_path) -> None:
     # Apple Terminal does NOT wrap a drag-and-drop in bracketed paste; it
     # injects the path as an ordinary keystroke burst.  That burst must attach
     # as an image exactly like a Cmd+V paste would.
-    from amplifier_app_tui.ui.composer import DROP_BURST_SETTLE_SECONDS
 
     png = tmp_path / "shot.png"
     png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
@@ -540,7 +560,7 @@ async def test_keystroke_burst_of_image_path_attaches_it(tmp_path) -> None:
     async with app.run_test() as pilot:
         composer = app.query_one("#composer", Composer)
         _post_keystroke_burst(composer, str(png))
-        await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)  # let the burst settle
+        await _wait_for(pilot, lambda: "[Image #1]" in composer.text)
 
         assert "[Image #1]" in composer.text
         assert str(png) not in composer.text  # raw path not left as literal text
@@ -551,7 +571,6 @@ async def test_keystroke_burst_of_image_path_attaches_it(tmp_path) -> None:
 async def test_keystroke_burst_of_backslash_escaped_space_attaches_it(tmp_path) -> None:
     # A drop whose path contains a space arrives backslash-escaped (`\ `),
     # which shlex must decode back to the real path.
-    from amplifier_app_tui.ui.composer import DROP_BURST_SETTLE_SECONDS
 
     png = tmp_path / "shot one.png"
     png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
@@ -560,7 +579,7 @@ async def test_keystroke_burst_of_backslash_escaped_space_attaches_it(tmp_path) 
     async with app.run_test() as pilot:
         composer = app.query_one("#composer", Composer)
         _post_keystroke_burst(composer, escaped)
-        await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)
+        await _wait_for(pilot, lambda: "[Image #1]" in composer.text)
 
         assert "[Image #1]" in composer.text
         assert len(composer._staged_attachments(composer.text)) == 1
@@ -582,7 +601,11 @@ async def test_human_speed_typing_of_image_path_stays_literal(tmp_path) -> None:
         for ch in str(png):
             composer._input.post_message(events.Key(key=ch, character=ch))
             await pilot.pause(0.05)  # human gap, above the 40 ms burst cap
-        await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)
+        # A negative assertion cannot poll for something that must never
+        # happen, so this has to wait the settle window out. Generous on
+        # purpose: the old 50 ms margin was what made the positive tests
+        # flaky under load, and the same jitter applies here.
+        await pilot.pause(DROP_BURST_SETTLE_SECONDS * 4 + 0.2)
 
         assert str(png) in composer.text  # stays literal text
         assert "[Image" not in composer.text
@@ -598,7 +621,11 @@ async def test_rapid_burst_of_prose_stays_literal() -> None:
     async with app.run_test() as pilot:
         composer = app.query_one("#composer", Composer)
         _post_keystroke_burst(composer, prose)
-        await pilot.pause(DROP_BURST_SETTLE_SECONDS + 0.05)
+        # A negative assertion cannot poll for something that must never
+        # happen, so this has to wait the settle window out. Generous on
+        # purpose: the old 50 ms margin was what made the positive tests
+        # flaky under load, and the same jitter applies here.
+        await pilot.pause(DROP_BURST_SETTLE_SECONDS * 4 + 0.2)
 
         assert composer.text == prose
         assert "[Image" not in composer.text
