@@ -114,7 +114,7 @@ from .reminder_trust import (
 )
 from .turn_yield import TurnYieldTracker
 from .session_factory import InitializedSession, SessionRequest, create_initialized_session
-from .session_integrity import complete_orphaned_tool_results
+from .session_integrity import repair_resumed_transcript
 from .spawner import SessionSpawner
 from .steering import StepBoundaryBridge
 from .surface_hint import SurfaceHintInjector
@@ -747,15 +747,19 @@ class RealRuntime:
         boot_bundle = self._bundle
         if self._resume_id:
             session_id = store.find_session(self._resume_id)
-            transcript, metadata = store.load(session_id)
-            transcript, tool_repairs = complete_orphaned_tool_results(transcript)
+            loaded, metadata = store.load(session_id)
+            # Bind through a non-optional local: `transcript` is declared
+            # `list[...] | None` above, and pyright will not narrow that through
+            # the tuple unpack, so `store.save(...)` below sees an Optional.
+            repaired, tool_repairs = repair_resumed_transcript(loaded)
+            transcript = repaired
             if tool_repairs:
                 # Persist before the first resumed model request. Provider-side
                 # request repair is necessarily ephemeral; without this write,
                 # a second request can lose the same synthetic results and be
                 # rejected even though the first repaired request succeeded.
                 try:
-                    store.save(session_id, transcript, metadata)
+                    store.save(session_id, repaired, metadata)
                 except OSError:
                     logger.warning(
                         "Could not persist interrupted-tool resume repair for %s",
@@ -765,7 +769,7 @@ class RealRuntime:
                 self.bridge.emit(
                     Notification(
                         message=(
-                            f"Resume repaired {len(tool_repairs)} interrupted tool "
+                            f"Resume repaired {len(tool_repairs.tool_results)} interrupted tool "
                             "result(s) before model execution. The tools may have "
                             "executed; inspect actual state before retrying."
                         ),

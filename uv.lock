@@ -126,7 +126,7 @@ wheels = [
 
 [[package]]
 name = "amplifier-app-tui"
-version = "0.1.4"
+version = "0.1.5"
 source = { editable = "." }
 dependencies = [
     { name = "amplifier-runtime" },
@@ -152,7 +152,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "amplifier-runtime", git = "https://github.com/michaeljabbour/amplifier-runtime.git?rev=75243f74cd1785c492f7197c05b2e5aff2ea6c6c" },
+    { name = "amplifier-runtime", git = "https://github.com/michaeljabbour/amplifier-runtime.git?rev=7955aeae4100712edcda86309edf146f19a6cebb" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "filelock", specifier = ">=3.29.6" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.28.1" },
@@ -205,7 +205,7 @@ dependencies = [
 [[package]]
 name = "amplifier-runtime"
 version = "0.1.6"
-source = { git = "https://github.com/michaeljabbour/amplifier-runtime.git?rev=75243f74cd1785c492f7197c05b2e5aff2ea6c6c#75243f74cd1785c492f7197c05b2e5aff2ea6c6c" }
+source = { git = "https://github.com/michaeljabbour/amplifier-runtime.git?rev=7955aeae4100712edcda86309edf146f19a6cebb#7955aeae4100712edcda86309edf146f19a6cebb" }
 dependencies = [
     { name = "amplifier-core" },
     { name = "amplifier-foundation" },
