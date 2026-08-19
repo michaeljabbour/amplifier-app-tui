@@ -22,3 +22,6 @@ htmlcov/
 
 # attractor pipeline run logs
 runs/
+
+# local probe scripts and traces (never committed)
+.scratch/
