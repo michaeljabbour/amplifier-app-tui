@@ -1113,6 +1113,9 @@ def test_packaged_bundle_declares_cli_response_contract() -> None:
     assert "A final answer ends the turn. Never use it to announce future execution." in text
     assert "A plan is not implementation." in text
     assert "Delegated output is not proof of completion." in text
+    assert "Treat capability availability as a live, session-scoped fact." in text
+    assert "not mounted in this session" in text
+    assert "do not claim that the capability is uninstalled" in text
     assert "Choose only an agent\n  listed in its live **Available agents** section." in text
 
 

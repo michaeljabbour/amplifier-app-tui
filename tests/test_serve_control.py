@@ -519,6 +519,7 @@ async def test_reattach_replays_the_same_history_without_touching_it(
         "session_id": runtime.session_id,
         "count": 2,
         "cursor": 2,
+        "source": "ui-events",
     }
     # The cursor lets a client resume where it stopped.
     assert second.out.all("history.begin")[1]["since"] == 1
