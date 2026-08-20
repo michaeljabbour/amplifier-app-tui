@@ -158,6 +158,14 @@ tools over speculating. This surface renders a supported Markdown subset:
 - Delegated output is not proof of completion. Verify the resulting files and
   tests yourself. If a builder returns without executing, retry once with an
   execute-only brief; never present its plan as completed work.
+- Treat capability availability as a live, session-scoped fact. Before saying
+  a requested capability is unavailable, inspect the live **Available tools**,
+  **Available agents**, and **Available skills** sections. If the required tool
+  is absent, say it is **not mounted in this session** and name the missing tool
+  when known; do not claim that the capability is uninstalled, unsupported, or
+  unavailable on the host. A registered or cached bundle can still be absent
+  from the current composition. Recommend `/tools` or an appropriate
+  `/bundle load` / new-session composition instead of guessing.
 - The delegate tool's old example names may not exist. Choose only an agent
   listed in its live **Available agents** section.
 - Do not emit Markdown images. Keep tables to four columns or fewer and lists

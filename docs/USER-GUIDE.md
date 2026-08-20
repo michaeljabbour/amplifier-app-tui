@@ -300,6 +300,15 @@ injected once at the next model boundary.
 Type `/` to open the command palette (↑↓ select, enter run, esc close — filtering is by
 substring as you type). The same commands work typed in full, e.g. `/mode plan`.
 
+**Capability truth.** `/tools`, `/agents`, and `/skills` describe what the
+current session can actually call. A bundle may be installed or listed in the
+registry without being mounted in this composition. The coordinator is
+therefore instructed to say “not mounted in this session” for a missing tool
+instead of claiming that the capability is unavailable everywhere. Use
+`/bundle load` when an additive bundle is registered, or start a new session
+with the purpose-built bundle when the capability needs a different
+composition.
+
 | Group | Command | What it does |
 |---|---|---|
 | During | `/mode [name\|off]` | cycle or jump interaction mode (also activates bundle-native modes) |
