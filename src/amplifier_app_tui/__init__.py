@@ -12,6 +12,6 @@ Layering contract (ADR-0007, enforced):
   tokens defined in :mod:`amplifier_app_tui.ui.themes`.
 """
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 __all__ = ["__version__"]
