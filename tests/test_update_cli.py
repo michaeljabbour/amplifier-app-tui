@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 from click.testing import CliRunner
 
+from amplifier_app_tui import __version__
 from amplifier_app_tui import update_channel
 from amplifier_app_tui.install_contract import PUBLIC_SOURCE_INSTALL_COMMAND
 from amplifier_app_tui.kernel import updater
@@ -269,10 +270,14 @@ def test_app_identity_editable_dev_checkout() -> None:
     editable dist with no vcs_info -- must classify as "editable", not
     silently fall through to "unknown" or "pypi"."""
     identity = updater.app_identity("amplifier-app-tui")
-    assert identity.version == "0.1.4"
+    # Read the version rather than pinning a literal: this test exists to check
+    # SOURCE CLASSIFICATION (editable, no vcs_info, label shape), and a
+    # hardcoded number made it fail on every release bump for a reason that has
+    # nothing to do with what it verifies.
+    assert identity.version == __version__
     assert identity.source == "editable"
     assert identity.commit is None
-    assert identity.label() == "0.1.4 (dev checkout)"
+    assert identity.label() == f"{__version__} (dev checkout)"
 
 
 def test_app_identity_unknown_package_degrades_gracefully() -> None:

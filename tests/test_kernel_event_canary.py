@@ -188,7 +188,11 @@ def test_register_canary_observes_published_and_contributed_names() -> None:
     registered = set(coordinator.hooks.handlers)
     # Core-published drift names are observed…
     assert "policy:violation" in registered  # in ALL_EVENTS, not consumed
-    assert "artifact:write" in registered
+    # `artifact:read` and NOT `artifact:write`: the latter used to be the
+    # canonical unbridged example, and is now bridged (files a tool writes must
+    # be visible to the client). A canary fixture has to be an event nobody
+    # consumes, so it has to move whenever one gets adopted.
+    assert "artifact:read" in registered
     # …and so are module-contributed names, both shapes.
     assert {"custom:module_event", "delegate:new_kind", "another:kind"} <= registered
     # Consumed and deliberately-ignored kinds are exempt.
@@ -204,7 +208,7 @@ def test_canary_fires_once_per_kind_and_unregisters() -> None:
         unregister = await bridge.register_canary(coordinator)
         await coordinator.hooks.emit("policy:violation", {"detail": "x"})
         await coordinator.hooks.emit("policy:violation", {"detail": "y"})
-        await coordinator.hooks.emit("artifact:write", {})
+        await coordinator.hooks.emit("artifact:read", {})
         unregister()
         return _drain(queue), coordinator.hooks.handlers
 
@@ -212,6 +216,6 @@ def test_canary_fires_once_per_kind_and_unregisters() -> None:
     notices = _canary_notices(events)
     assert [notice.message for notice in notices] == [
         "unbridged event kind · policy:violation",
-        "unbridged event kind · artifact:write",
+        "unbridged event kind · artifact:read",
     ]
     assert all(not entries for entries in handlers.values())
