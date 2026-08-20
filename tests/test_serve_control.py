@@ -513,13 +513,25 @@ async def test_reattach_replays_the_same_history_without_touching_it(
 
     replayed = [r for r in second.out.all("runtime.event") if r.get("replay")]
     assert [r["event"]["text"] for r in replayed[:2]] == ["one", "two"]
-    assert second.out.all("history.end")[0] == {
-        "schema_version": 1,
-        "type": "history.end",
-        "session_id": runtime.session_id,
-        "count": 2,
-        "cursor": 2,
-    }
+    # Assert the fields this client consumes, not the whole envelope. Runtime
+    # owns this contract and pins it exactly in its own suite; a CONSUMER that
+    # demands exact equality turns every backward-compatible addition into a
+    # break. That is not hypothetical: runtime added `source` (which ledger the
+    # history came from -- "ui-events" or a legacy "transcript") to both
+    # history.begin and history.end, and this assertion failed on a change that
+    # took nothing away.
+    end = second.out.all("history.end")[0]
+    assert (
+        end.items()
+        >= {
+            "schema_version": 1,
+            "type": "history.end",
+            "session_id": runtime.session_id,
+            "count": 2,
+            "cursor": 2,
+            "source": "ui-events",
+        }.items()
+    )
     # The cursor lets a client resume where it stopped.
     assert second.out.all("history.begin")[1]["since"] == 1
     assert second.out.all("history.end")[1]["count"] == 1
