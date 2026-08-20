@@ -17,17 +17,63 @@ focused gate before publishing the app release that carries the bump.
 from __future__ import annotations
 
 import argparse
+import inspect
 import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from amplifier_app_tui.kernel.config import ROUTING_MATRIX_BUNDLE_URI  # noqa: E402
-from amplifier_app_tui.kernel.setup import PROVIDER_SOURCES  # noqa: E402
+from amplifier_app_tui.kernel import config as _config_module  # noqa: E402
+from amplifier_app_tui.kernel import setup as _setup_module  # noqa: E402
+
+ROUTING_MATRIX_BUNDLE_URI = _config_module.ROUTING_MATRIX_BUNDLE_URI
+PROVIDER_SOURCES = _setup_module.PROVIDER_SOURCES
+
+
+def _declaring_file(module: ModuleType) -> Path:
+    """The file a pin was actually READ from -- never a path we assumed.
+
+    ``amplifier_app_tui.kernel`` is a ``__path__`` shim: it rewrites its search
+    path to the installed ``amplifier-runtime`` distribution, so these imports
+    resolve to site-packages, NOT to the identically-named files in this repo.
+    This script previously read the value through the shim and wrote the repo
+    copy, which meant ``--write`` rewrote a file nothing reads: the next
+    ``--check`` re-read the runtime, saw the old pin, and reported drift again.
+    Forever -- and ``upstream-drift.yml`` opens a tracking issue on that check
+    which its own printed remediation could never close.
+    """
+    return Path(inspect.getfile(module)).resolve()
+
+
+APP_SOURCE_ROOT = REPO_ROOT / "src"
+
+
+def _assert_app_owned(pins: tuple[SourcePin, ...]) -> None:
+    """Refuse to rewrite a pin this repo no longer declares.
+
+    Note the test is ``REPO_ROOT / "src"``, not ``REPO_ROOT``: the virtualenv
+    lives *inside* the checkout, so a site-packages path is happily
+    ``relative_to`` the repo root and that check would pass for exactly the
+    files it needs to reject.
+    """
+    foreign = [pin for pin in pins if not pin.source_file.is_relative_to(APP_SOURCE_ROOT)]
+    if not foreign:
+        return
+    names = ", ".join(sorted({pin.name for pin in foreign}))
+    where = foreign[0].source_file
+    raise RuntimeError(
+        f"these pins are no longer declared by this repo: {names}\n"
+        f"  they now live in the amplifier-runtime distribution ({where}),\n"
+        f"  which is installed at a fixed commit -- writing there would be\n"
+        f"  discarded by the next `uv sync`, and writing the identically-named\n"
+        f"  file under src/ would rewrite a module the __path__ shim never loads.\n"
+        f"  Bump them in amplifier-runtime, then bump this repo's runtime pin."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,10 +89,10 @@ def current_pins() -> tuple[SourcePin, ...]:
         SourcePin(
             "routing-matrix",
             ROUTING_MATRIX_BUNDLE_URI,
-            REPO_ROOT / "src/amplifier_app_tui/kernel/config.py",
+            _declaring_file(_config_module),
         )
     ]
-    setup_path = REPO_ROOT / "src/amplifier_app_tui/kernel/setup.py"
+    setup_path = _declaring_file(_setup_module)
     pins.extend(SourcePin(name, uri, setup_path) for name, uri in PROVIDER_SOURCES.items())
     return tuple(pins)
 
@@ -137,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
+        _assert_app_owned(pins)
         updates = rewritten_files(pins, resolved)
         for path, text in updates.items():
             path.write_text(text, encoding="utf-8")

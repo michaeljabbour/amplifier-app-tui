@@ -58,3 +58,53 @@ def test_rewritten_files_fails_closed_when_a_pin_is_ambiguous(tmp_path: Path) ->
 
     with pytest.raises(RuntimeError, match="exactly one"):
         script.rewritten_files((pin,), {"one": "b" * 40})
+
+
+def test_pins_are_read_from_the_file_they_would_be_written_to() -> None:
+    """The pin's file must be the one the value was actually READ from.
+
+    ``amplifier_app_tui.kernel`` is a ``__path__`` shim that rewrites its search
+    path to the installed ``amplifier-runtime`` distribution.  This script used
+    to read a pin through that shim -- resolving to site-packages -- and then
+    write ``src/amplifier_app_tui/kernel/config.py``, a file nothing loads.
+    ``--write`` therefore rewrote a corpse and the next ``--check`` re-read the
+    runtime, saw the old value, and reported drift again.  Forever.
+    """
+    for pin in script.current_pins():
+        assert pin.source_file == script._declaring_file(
+            script._config_module if pin.name == "routing-matrix" else script._setup_module
+        )
+
+
+def test_guard_refuses_to_rewrite_a_pin_this_repo_no_longer_declares() -> None:
+    foreign = script.SourcePin(
+        "routing-matrix",
+        f"git+https://example.invalid/repo@{'a' * 40}",
+        Path("/somewhere/site-packages/amplifier_runtime/kernel/config.py"),
+    )
+
+    with pytest.raises(RuntimeError, match="no longer declared by this repo"):
+        script._assert_app_owned((foreign,))
+
+
+def test_guard_accepts_a_pin_declared_under_this_repos_src() -> None:
+    owned = script.SourcePin(
+        "routing-matrix",
+        f"git+https://example.invalid/repo@{'a' * 40}",
+        script.APP_SOURCE_ROOT / "amplifier_app_tui" / "kernel" / "config.py",
+    )
+
+    script._assert_app_owned((owned,))  # must not raise
+
+
+def test_the_ownership_test_is_src_not_repo_root() -> None:
+    """The virtualenv lives INSIDE the checkout, so ``REPO_ROOT`` cannot decide this.
+
+    A site-packages path is happily ``relative_to`` the repo root, which would
+    pass exactly the files the guard exists to reject.  This pins the boundary
+    at ``src/`` so a future simplification cannot quietly reintroduce the bug.
+    """
+    venv_file = REPO_ROOT / ".venv" / "lib" / "site-packages" / "amplifier_runtime" / "x.py"
+
+    assert venv_file.is_relative_to(REPO_ROOT), "precondition: .venv is inside the checkout"
+    assert not venv_file.is_relative_to(script.APP_SOURCE_ROOT)
