@@ -601,6 +601,34 @@ def test_install_provider_module_runs_uv_pip(tmp_path: Path, monkeypatch) -> Non
     assert "--python" in seen["cmd"]
 
 
+def test_install_provider_module_imports_editable_source_in_same_process(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A .pth created by uv is only read at the next interpreter startup."""
+    import subprocess
+
+    module_name = "amplifier_module_provider_cold_repair"
+    (tmp_path / f"{module_name}.py").write_text(
+        "class ColdRepairProvider:\n    pass\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    sys.modules.pop(module_name, None)
+    try:
+        ok, detail = asyncio.run(
+            _REAL_INSTALL_PROVIDER_MODULE("provider-cold-repair", str(tmp_path))
+        )
+        assert ok, detail
+        assert str(tmp_path) in sys.path
+    finally:
+        sys.modules.pop(module_name, None)
+        while str(tmp_path) in sys.path:
+            sys.path.remove(str(tmp_path))
+
+
 def test_install_provider_module_reports_failure(tmp_path: Path, monkeypatch) -> None:
     import subprocess
 

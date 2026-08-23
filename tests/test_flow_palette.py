@@ -34,6 +34,7 @@ ALL_COMMANDS = (
     "/config",
     "/status",
     "/model",
+    "/provider",
     "/effort",
     "/compact",
     "/goal",

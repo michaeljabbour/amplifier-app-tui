@@ -31,6 +31,7 @@ from ..kernel.mcp_prompts import MCPPromptInfo
 from ..kernel.approval import DENY
 from ..kernel.directory_permissions import DirectoryEntry, DirectoryKind
 from ..kernel.prompt_history import PromptHistoryStore
+from ..kernel import session_ops as kernel_session_ops
 from ..kernel.session_ops import ModelListing, StatusInfo
 from ..kernel.session_manager import SessionSummary
 from ..model.blocks import BlockIdAllocator, TranscriptBlock
@@ -100,6 +101,13 @@ _LIST_MODELS: SessionOp[ModelListing] = SessionOp(
     "list_models",
     ModelListing(provider="", current=""),
     ModelListing(provider="", current=""),
+)
+_TEST_PROVIDERS: SessionOp[tuple[Any, ...]] = SessionOp("test_providers", (), ())
+_ProviderModels = getattr(kernel_session_ops, "ProviderModels")
+_PROVIDER_MODELS: SessionOp[Any] = SessionOp(
+    "provider_models",
+    _ProviderModels(name="", error="provider diagnostics need a real session"),
+    _ProviderModels(name="", error=_STILL_STARTING),
 )
 _SET_MODEL: SessionOp[tuple[bool, str]] = SessionOp(
     "set_model",
@@ -173,6 +181,8 @@ SESSION_OPS: tuple[SessionOp[Any], ...] = (
     _LIST_NATIVE_MODES,
     _SET_NATIVE_MODE,
     _LIST_MODELS,
+    _TEST_PROVIDERS,
+    _PROVIDER_MODELS,
     _SET_MODEL,
     _GET_EFFORT,
     _SET_EFFORT,
@@ -353,6 +363,12 @@ class RuntimeAdapter:
 
     async def list_models(self) -> ModelListing:
         return await self._run_op(_LIST_MODELS)
+
+    async def test_providers(self, name: str = "") -> tuple[Any, ...]:
+        return await self._run_op(_TEST_PROVIDERS, name)
+
+    async def provider_models(self, name: str = "") -> Any:
+        return await self._run_op(_PROVIDER_MODELS, name)
 
     async def set_model(self, model: str) -> tuple[bool, str]:
         return await self._run_op(_SET_MODEL, model)

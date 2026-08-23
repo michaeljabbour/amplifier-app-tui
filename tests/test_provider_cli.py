@@ -15,6 +15,7 @@ from click.testing import CliRunner
 import pytest
 
 from amplifier_app_tui import main as main_mod
+from amplifier_app_tui.cli import provider_diagnostics, provider_repair
 from amplifier_app_tui.kernel import setup
 from amplifier_app_tui.main import main
 
@@ -185,10 +186,103 @@ def test_provider_dashboard(isolated_home: Path) -> None:
     assert "provider use" in result.output
 
 
+def test_provider_repair_reports_ready(monkeypatch, isolated_home: Path) -> None:
+    async def repaired(*_args, **_kwargs):  # noqa: ANN202
+        return provider_repair.ProviderRepairResult(
+            missing=("provider-vllm",),
+            repaired=("provider-vllm",),
+        )
+
+    monkeypatch.setattr(provider_repair, "repair_missing_configured_providers", repaired)
+    result = CliRunner().invoke(main, ["provider", "repair"])
+    assert result.exit_code == 0
+    assert "provider modules ready: vllm" in result.output
+
+
+def test_provider_repair_quiet_failure_is_nonzero(monkeypatch, isolated_home: Path) -> None:
+    async def failed(*_args, **_kwargs):  # noqa: ANN202
+        return provider_repair.ProviderRepairResult(
+            missing=("provider-vllm",),
+            failures=(("provider-vllm", "offline"),),
+        )
+
+    monkeypatch.setattr(provider_repair, "repair_missing_configured_providers", failed)
+    result = CliRunner().invoke(main, ["provider", "repair", "--quiet"])
+    assert result.exit_code == 1
+    assert result.output == ""
+
+
+def test_provider_test_reports_bounded_configured_probe(monkeypatch, isolated_home: Path) -> None:
+    async def inspect(*_args, **_kwargs):  # noqa: ANN202
+        return provider_diagnostics.ConfiguredProviderDiagnostic(
+            name="vllm",
+            module_id="provider-vllm",
+            model="model-x",
+            ok=True,
+            elapsed_s=0.125,
+            models=(object(), object()),
+        )
+
+    monkeypatch.setattr(provider_diagnostics, "inspect_configured_provider", inspect)
+    result = CliRunner().invoke(main, ["provider", "test", "vllm"])
+    assert result.exit_code == 0, result.output
+    assert "✓ vllm" in result.output
+    assert "2 model(s) available" in result.output
+
+
+def test_provider_models_json_is_machine_readable(monkeypatch, isolated_home: Path) -> None:
+    model = setup.ProviderModel(
+        id="model-x",
+        display_name="Model X",
+        capabilities=("vision", "tools"),
+    )
+
+    async def inspect(*_args, **_kwargs):  # noqa: ANN202
+        return provider_diagnostics.ConfiguredProviderDiagnostic(
+            name="vllm",
+            module_id="provider-vllm",
+            model="model-x",
+            ok=True,
+            elapsed_s=0.1,
+            models=(model,),
+        )
+
+    monkeypatch.setattr(provider_diagnostics, "inspect_configured_provider", inspect)
+    result = CliRunner().invoke(main, ["provider", "models", "--format", "json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "models": [
+            {
+                "capabilities": ["vision", "tools"],
+                "display_name": "Model X",
+                "id": "model-x",
+            }
+        ],
+        "name": "vllm",
+    }
+
+
+def test_provider_test_failure_is_secret_safe(monkeypatch, isolated_home: Path) -> None:
+    async def inspect(*_args, **_kwargs):  # noqa: ANN202
+        return provider_diagnostics.ConfiguredProviderDiagnostic(
+            name="openai",
+            module_id="provider-openai",
+            model="",
+            ok=False,
+            elapsed_s=0.1,
+            error="authentication failed",
+        )
+
+    monkeypatch.setattr(provider_diagnostics, "inspect_configured_provider", inspect)
+    result = CliRunner().invoke(main, ["provider", "test", "openai"])
+    assert result.exit_code == 1
+    assert result.output == "✗ openai · authentication failed\n"
+
+
 def test_provider_list_help() -> None:
     result = CliRunner().invoke(main, ["provider", "--help"])
     assert result.exit_code == 0
-    for sub in ("list", "add", "use", "remove", "dashboard"):
+    for sub in ("list", "add", "use", "remove", "repair", "test", "models", "dashboard"):
         assert sub in result.output
 
 
@@ -197,7 +291,52 @@ def test_provider_list_help() -> None:
 
 def test_gate_proceeds_when_configured(monkeypatch) -> None:
     monkeypatch.setattr(setup, "has_configured_provider", lambda *a, **k: True)
+    monkeypatch.setattr(provider_repair, "missing_configured_provider_modules", lambda *a, **k: ())
     assert asyncio.run(main_mod._first_run_gate()) is None
+
+
+def test_gate_repairs_provider_lost_during_update(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(setup, "has_configured_provider", lambda *a, **k: True)
+    monkeypatch.setattr(
+        provider_repair,
+        "missing_configured_provider_modules",
+        lambda *a, **k: ("provider-vllm",),
+    )
+
+    async def repair(*_args, **_kwargs):  # noqa: ANN202
+        return provider_repair.ProviderRepairResult(
+            missing=("provider-vllm",),
+            repaired=("provider-vllm",),
+        )
+
+    monkeypatch.setattr(provider_repair, "repair_missing_configured_providers", repair)
+    assert asyncio.run(main_mod._first_run_gate()) is None
+    output = capsys.readouterr().out
+    assert "Restoring provider modules after app update: vllm" in output
+    assert "Provider modules ready" in output
+
+
+def test_gate_reports_provider_repair_failure_once(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(setup, "has_configured_provider", lambda *a, **k: True)
+    monkeypatch.setattr(
+        provider_repair,
+        "missing_configured_provider_modules",
+        lambda *a, **k: ("provider-vllm",),
+    )
+
+    async def repair(*_args, **_kwargs):  # noqa: ANN202
+        return provider_repair.ProviderRepairResult(
+            missing=("provider-vllm",),
+            failures=(("provider-vllm", "offline"),),
+        )
+
+    monkeypatch.setattr(provider_repair, "repair_missing_configured_providers", repair)
+    assert asyncio.run(main_mod._first_run_gate()) == 1
+    captured = capsys.readouterr()
+    assert "provider repair failed for vllm" in captured.err
+    assert "source show provider-vllm" in captured.err
+    assert "bundle refresh" not in captured.err
+    assert "doctor" not in captured.err
 
 
 def test_gate_noninteractive_no_creds_stops(monkeypatch) -> None:

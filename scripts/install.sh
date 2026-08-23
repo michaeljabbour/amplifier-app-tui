@@ -295,6 +295,17 @@ if [ "$help_ok" -ne 1 ]; then
     validation_fail \
         "source commit $resolved_sha was installed at $app_bin, but --help failed after 3 attempts"
 fi
+
+# The tool replacement above intentionally creates a fresh environment. Restore
+# only provider modules already configured by this user before claiming the
+# update is ready; settings, keys, sessions, and working provider installs are
+# untouched. Fresh installs with no configured providers are a fast no-op.
+provider_repair_log="$temp_dir/provider-repair.log"
+if ! "$app_bin" provider repair --quiet >"$provider_repair_log" 2>&1; then
+    [ ! -s "$provider_repair_log" ] || cat "$provider_repair_log" >&2
+    validation_fail \
+        "source commit $resolved_sha was installed at $app_bin, but configured provider modules could not be restored"
+fi
 say "Verified $app_bin · $installed_version"
 say "Dependencies locked by uv.lock from $resolved_sha"
 

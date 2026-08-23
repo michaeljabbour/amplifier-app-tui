@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "donor_repository": "https://github.com/microsoft/amplifier-app-cli.git",
+  "audited_commit": "f16375fc4491d654149f63c8a5fc9c34d74a6079",
+  "audited_date": "2026-08-23",
+  "target_base_commit": "4b1b061a55d967c28882885f4fd84eb6b62e1e6d",
+  "report": "docs/audits/pass3-2026-08-23.md"
+}

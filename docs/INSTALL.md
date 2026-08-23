@@ -96,11 +96,18 @@ Windows requires a separate installer and is not currently supported.
 
 ## Updating
 
-There is no background app update. Run `amplifier-tui update` to resolve and
+The complete upgrade instruction is:
+
+```sh
+amplifier-tui update
+```
+
+There is no background app update. That command resolves and
 install the then-current `main` commit via the same source-installer contract, including that
 commit's locked dependencies. The command shows the installed and available revisions first,
 pins the installer to that exact resolved commit, streams its phases, and verifies the installed
-revision before reporting success. It does not scan bundle/module caches. To stay
+revision and configured provider packages before reporting success. Settings, credentials,
+sessions, and source caches are preserved. It does not scan bundle/module caches. To stay
 on an audited build, keep using its full commit SHA:
 
 ```sh

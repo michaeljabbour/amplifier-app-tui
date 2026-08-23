@@ -31,6 +31,8 @@ from .session_ops_view import (
     mcp_spans,
     model_listing_spans,
     names_spans,
+    provider_checks_spans,
+    provider_models_spans,
     skill_loaded_spans,
     skills_spans,
     status_spans,
@@ -267,6 +269,44 @@ class SessionOpsController:
         listing = await self._host.adapter.list_models()
         self._host.append_block(
             Answer(id=self._host.allocator.next_id(), spans=model_listing_spans(listing))
+        )
+
+    def show_provider(self, args: str) -> None:
+        if self._ops_starting():
+            return
+        try:
+            parts = shlex.split(args)
+        except ValueError as error:
+            self._host.show_notice(f"provider command not run · {error}")
+            return
+        action = parts[0].lower() if parts else "status"
+        rest = parts[1:]
+        if action in {"status", "models"} and len(rest) <= 1:
+            self._host.run_worker(
+                self._show_provider_models(rest[0] if rest else ""), exclusive=False
+            )
+            return
+        if action == "test" and len(rest) <= 1:
+            self._host.show_notice("testing live provider connection…")
+            self._host.run_worker(self._test_providers(rest[0] if rest else ""), exclusive=False)
+            return
+        if action == "use" and len(rest) == 2:
+            self.show_model(" ".join(rest))
+            return
+        self._host.show_notice(
+            "usage: /provider [status|test [name]|models [name]|use <provider> <model>]"
+        )
+
+    async def _test_providers(self, name: str) -> None:
+        results = await self._host.adapter.test_providers(name)
+        self._host.append_block(
+            Answer(id=self._host.allocator.next_id(), spans=provider_checks_spans(results))
+        )
+
+    async def _show_provider_models(self, name: str) -> None:
+        result = await self._host.adapter.provider_models(name)
+        self._host.append_block(
+            Answer(id=self._host.allocator.next_id(), spans=provider_models_spans(result))
         )
 
     def apply_effort(self, arg: str) -> None:

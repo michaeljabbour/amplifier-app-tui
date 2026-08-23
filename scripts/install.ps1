@@ -116,6 +116,10 @@ try {
     }
     & $appBin --help | Out-Null
     if ($LASTEXITCODE -ne 0) { FailValidation "the installed runtime failed its help check" }
+    & $appBin provider repair --quiet
+    if ($LASTEXITCODE -ne 0) {
+        FailValidation "the app installed, but configured provider packages could not be restored"
+    }
 
     if (-not $NoUpdateShell -and -not (($env:PATH -split ';') -contains $toolBinDir)) {
         & $uvBin tool update-shell | Out-Null

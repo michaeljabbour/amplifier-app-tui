@@ -17,6 +17,8 @@ from decimal import Decimal
 
 from ..kernel.compaction import CompactionConfig
 from ..kernel.session_manager import SessionState, SessionSummary
+from typing import Any
+
 from ..kernel.session_ops import ModelListing, SkillInfo, StatusInfo
 from ..model.blocks import Segment, StyleToken
 from .live_tail import answer_spans
@@ -79,6 +81,47 @@ def model_listing_spans(listing: ModelListing) -> tuple[Segment, ...]:
         spans.append(Segment(text="  current  ", style_token="dim"))
         spans.append(Segment(text=f"{current}\n", style_token="green"))
         spans.append(Segment(text="  (provider advertises no model list)\n", style_token="dimmer"))
+    return tuple(spans)
+
+
+def provider_checks_spans(results: tuple[Any, ...]) -> tuple[Segment, ...]:
+    """``/provider test`` results for one or every mounted provider."""
+    if not results:
+        return (Segment(text="  no providers mounted\n", style_token="dimmer"),)
+    spans = _header("Provider test", f"{len(results)} live provider(s)")
+    for result in results:
+        spans.append(
+            Segment(
+                text=f"  {'✓' if result.ok else '✗'} ", style_token="green" if result.ok else "red"
+            )
+        )
+        spans.append(Segment(text=f"{result.name}  ", style_token="teal", bold=result.ok))
+        spans.append(Segment(text=f"{result.elapsed_s:.1f}s  {result.detail}\n", style_token="dim"))
+    return tuple(spans)
+
+
+def provider_models_spans(result: Any) -> tuple[Segment, ...]:
+    """``/provider models`` result including provider-advertised metadata."""
+    if result.error:
+        return (
+            Segment(text="  provider models unavailable · ", style_token="red"),
+            Segment(text=f"{result.error}\n", style_token="dim"),
+        )
+    spans = _header("Provider models", result.name or "no provider")
+    if not result.models:
+        spans.append(Segment(text="  (no models reported)\n", style_token="dimmer"))
+        return tuple(spans)
+    for model in result.models:
+        context = f"{model.context_window:,}" if model.context_window else "—"
+        output = f"{model.max_output_tokens:,}" if model.max_output_tokens else "—"
+        capabilities = ", ".join(model.capabilities) if model.capabilities else "—"
+        spans.append(Segment(text=f"  {model.id}\n", style_token="teal"))
+        spans.append(
+            Segment(
+                text=f"    context {context} · max output {output} · {capabilities}\n",
+                style_token="dimmer",
+            )
+        )
     return tuple(spans)
 
 

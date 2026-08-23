@@ -12,8 +12,8 @@ from amplifier_app_tui.kernel.skill_sources import materialize_pinned_skill_sour
 
 SHA = "a" * 40
 PINNED = f"git+https://github.com/example/skills@{SHA}#subdirectory=skills"
-APP_CLI_SHA = "5462f1e04099269e6487519676875fccd0980bd5"
-GOALIFY_SOURCE = (
+APP_CLI_SHA = "f16375fc4491d654149f63c8a5fc9c34d74a6079"
+APP_CLI_SKILLS_SOURCE = (
     "git+https://github.com/microsoft/amplifier-app-cli@"
     f"{APP_CLI_SHA}#subdirectory=amplifier_app_cli/data/skills"
 )
@@ -26,7 +26,7 @@ def _bundle_frontmatter(path: Path) -> dict[str, object]:
     return parsed
 
 
-def test_packaged_bundle_sources_native_goalify_and_workspace_user_skills() -> None:
+def test_packaged_bundle_sources_current_goal_family_and_workspace_user_skills() -> None:
     root = Path(__file__).resolve().parents[1]
     source_bundle = root / "bundle.md"
     packaged_bundle = root / "src/amplifier_app_tui/data/bundles/tui.md"
@@ -40,8 +40,22 @@ def test_packaged_bundle_sources_native_goalify_and_workspace_user_skills() -> N
     )
     skill_sources = skills_entry["config"]["skills"]
 
-    assert GOALIFY_SOURCE in skill_sources
+    assert APP_CLI_SKILLS_SOURCE in skill_sources
     assert skill_sources[-2:] == [".amplifier/skills", "~/.amplifier/skills"]
+
+
+def test_packaged_bundle_composes_public_wayfinder_at_an_immutable_commit() -> None:
+    root = Path(__file__).resolve().parents[1]
+    frontmatter = _bundle_frontmatter(root / "bundle.md")
+    includes = frontmatter["includes"]
+
+    assert {
+        "bundle": (
+            "git+https://github.com/microsoft/amplifier-bundle-wayfinder@"
+            "eae59614b131268b65747de73b4fc7ab67e35a2b"
+            "#subdirectory=behaviors/wayfinder.yaml"
+        )
+    } in includes
 
 
 def test_full_sha_source_is_resolved_once_and_replaced(monkeypatch, tmp_path: Path) -> None:

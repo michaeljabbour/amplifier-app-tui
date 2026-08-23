@@ -96,6 +96,11 @@ def _cmd_model(ctx: CommandContext, args: str) -> None:
     ctx.show_model(args.strip())
 
 
+def _cmd_provider(ctx: CommandContext, args: str) -> None:
+    """``/provider`` — inspect/test live providers or switch provider+model."""
+    ctx.show_provider(args.strip())
+
+
 def _cmd_effort(ctx: CommandContext, args: str) -> None:
     """``/effort`` — show reasoning effort; ``/effort <level>`` sets it."""
     ctx.apply_effort(args.strip())
@@ -378,6 +383,13 @@ BUILTIN_COMMANDS: tuple[CommandSpec, ...] = (
         desc="list models; /model [provider] <name> switches the live model",
         tag="built-in",
         handler=_cmd_model,
+    ),
+    CommandSpec(
+        group="During",
+        name="/provider",
+        desc="live providers: test · models · use <provider> <model>",
+        tag="built-in",
+        handler=_cmd_provider,
     ),
     CommandSpec(
         group="During",

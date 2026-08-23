@@ -40,6 +40,12 @@ MOCKUP_TABLE = [
         "list models; /model [provider] <name> switches the live model",
         "built-in",
     ),
+    (
+        "During",
+        "/provider",
+        "live providers: test · models · use <provider> <model>",
+        "built-in",
+    ),
     ("During", "/effort", "reasoning effort; /effort <none…max> sets it", "built-in"),
     ("During", "/compact", "compact context; /compact <focus> to steer it", "built-in"),
     ("During", "/goal", "native autonomous loop; /goal stop clears it", "built-in"),
@@ -153,7 +159,7 @@ def test_clear_palette_desc_states_scope_per_d3_ac4() -> None:
 
 def test_registry_holds_all_commands() -> None:
     registry = build_registry()
-    assert len(registry.specs) == 42
+    assert len(registry.specs) == 43
     grouped = registry.grouped_rows("/")
     assert [g for g, _ in grouped] == ["During", "Parallel", "Ship", "Between", "Repair"]
 
@@ -255,6 +261,7 @@ def test_in_session_ops_dispatch_through_context(fake_command_context) -> None:
     registry.run("/status", ctx)
     registry.run("/model", ctx)
     registry.run("/model", ctx, "claude-opus-4")
+    registry.run("/provider", ctx, "test openai")
     registry.run("/effort", ctx)
     registry.run("/effort", ctx, "high")
     registry.run("/compact", ctx, "keep the API design")
@@ -268,6 +275,7 @@ def test_in_session_ops_dispatch_through_context(fake_command_context) -> None:
         "show_status",
         "show_model:",
         "show_model:claude-opus-4",
+        "show_provider:test openai",
         "apply_effort:",
         "apply_effort:high",
         "compact_context:keep the API design",

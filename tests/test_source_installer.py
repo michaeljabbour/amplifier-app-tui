@@ -23,6 +23,7 @@ from amplifier_app_tui.install_contract import (
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install.sh"
+WINDOWS_INSTALLER = ROOT / "scripts" / "install.ps1"
 SHA = "0123456789abcdef0123456789abcdef01234567"
 PUBLIC_DOCS = (
     ROOT / "README.md",
@@ -41,6 +42,16 @@ PUBLIC_DOCS = (
     ROOT / "docs-site" / "troubleshooting.md",
     ROOT / "docs-site" / "development.md",
 )
+
+
+def test_windows_installer_restores_providers_before_verification() -> None:
+    script = WINDOWS_INSTALLER.read_text(encoding="utf-8")
+
+    help_check = script.index("& $appBin --help")
+    repair = script.index("& $appBin provider repair --quiet")
+    verified = script.index("Installed and verified")
+    assert help_check < repair < verified
+
 
 # Pages allowed to show the hardened wrapper, mapped to the heading that must
 # precede it on that page. Each page phrases its review-first/advanced-install
@@ -126,6 +137,10 @@ if [ "${1:-}" = "--help" ]; then
         printf 'simulated transient help failure %s\\n' "$attempts" >&2
         exit 17
     fi
+fi
+if [ "${1:-} ${2:-}" = "provider repair" ] && [ "${INSTALL_TEST_PROVIDER_REPAIR_FAIL:-0}" = "1" ]; then
+    printf 'simulated provider repair failure\n' >&2
+    exit 23
 fi
 APP
         chmod +x "$INSTALL_TEST_TOOL_BIN/amplifier-tui"
@@ -226,6 +241,7 @@ def test_source_install_resolves_main_to_immutable_sha(tmp_path: Path) -> None:
     assert f"Dependencies locked by uv.lock from {SHA}" in result.stdout
     assert "app version" in calls
     assert "app --help" in calls
+    assert "app provider repair --quiet" in calls
     assert "uv tool update-shell" in calls
 
 
@@ -255,6 +271,32 @@ def test_source_install_reports_persistent_help_failure_as_validation(
     assert f"was installed at {tool_bin}/amplifier-tui" in result.stderr
     assert "install failed:" not in result.stderr
     assert log.read_text(encoding="utf-8").count("app --help") == 3
+
+
+def test_source_install_repairs_configured_providers_before_success(tmp_path: Path) -> None:
+    result, log, _tool_bin = _run(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert calls.index("app provider repair --quiet") > calls.index("app --help")
+    assert "Verified" in result.stdout
+
+
+def test_source_install_reports_provider_repair_as_post_install_validation(
+    tmp_path: Path,
+) -> None:
+    result, log, tool_bin = _run(
+        tmp_path,
+        env_updates={"INSTALL_TEST_PROVIDER_REPAIR_FAIL": "1"},
+    )
+
+    assert result.returncode == 1
+    assert "simulated provider repair failure" in result.stderr
+    assert "install validation failed" in result.stderr
+    assert f"was installed at {tool_bin}/amplifier-tui" in result.stderr
+    assert "provider modules could not be restored" in result.stderr
+    assert "install failed:" not in result.stderr
+    assert "app provider repair --quiet" in log.read_text(encoding="utf-8")
 
 
 def test_full_sha_skips_remote_resolution_and_path_edit(tmp_path: Path) -> None:

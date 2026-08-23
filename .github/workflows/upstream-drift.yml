@@ -52,11 +52,19 @@ jobs:
           uv run python scripts/bump_optional_source_refs.py 2>&1 | tee optional.log || status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
 
+      - name: App CLI parity baseline check (read-only)
+        id: app_cli
+        run: |
+          status=0
+          uv run python scripts/check_app_cli_parity.py 2>&1 | tee app-cli-parity.log || status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
       - name: Job summary
         if: always()
         env:
           ANCHORS_STATUS: ${{ steps.anchors.outputs.status }}
           OPTIONAL_STATUS: ${{ steps.optional.outputs.status }}
+          APP_CLI_STATUS: ${{ steps.app_cli.outputs.status }}
         run: |
           {
             echo "## Upstream drift check"
@@ -65,6 +73,7 @@ jobs:
             echo "|---|---|---|---|"
             echo "| \`scripts/bump_anchors_ref.py --check\` | read-only | ${ANCHORS_STATUS} | $( [ "$ANCHORS_STATUS" = 0 ] && echo "in sync with the recursive lock" || echo "DRIFT: outer refs disagree with the reviewed lock" ) |"
             echo "| \`scripts/bump_optional_source_refs.py\` | read-only (no \`--write\`) | ${OPTIONAL_STATUS} | $( [ "$OPTIONAL_STATUS" = 0 ] && echo "all optional pins current" || { [ "$OPTIONAL_STATUS" = 2 ] && echo "DRIFT: stale pin(s) behind upstream main" || echo "check error (network/shape) — see logs"; } ) |"
+            echo "| \`scripts/check_app_cli_parity.py\` | read-only | ${APP_CLI_STATUS} | $( [ "$APP_CLI_STATUS" = 0 ] && echo "audited donor baseline current" || { [ "$APP_CLI_STATUS" = 2 ] && echo "DRIFT: app-cli parity review required" || echo "check error (network/shape) — see logs"; } ) |"
             echo
             echo "Checked $(date -u +%F) UTC. On drift this workflow opens or refreshes one \`upstream drift: <date>\` issue; it never blocks PRs."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -72,11 +81,12 @@ jobs:
       # Drift = anchors nonzero, or optional exit 2. Open one tracking issue per
       # drift day, or refresh the existing open one (title carries the date).
       - name: Open or refresh the tracking issue
-        if: steps.anchors.outputs.status != '0' || steps.optional.outputs.status == '2'
+        if: steps.anchors.outputs.status != '0' || steps.optional.outputs.status == '2' || steps.app_cli.outputs.status == '2'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANCHORS_STATUS: ${{ steps.anchors.outputs.status }}
           OPTIONAL_STATUS: ${{ steps.optional.outputs.status }}
+          APP_CLI_STATUS: ${{ steps.app_cli.outputs.status }}
         run: |
           today="$(date -u +%F)"
           title="upstream drift: ${today}"
@@ -91,6 +101,10 @@ jobs:
             echo "### \`scripts/bump_optional_source_refs.py\` (read-only check mode, exit ${OPTIONAL_STATUS})"
             echo '```'
             head -c 3000 optional.log
+            echo '```'
+            echo "### \`scripts/check_app_cli_parity.py\` (read-only check, exit ${APP_CLI_STATUS})"
+            echo '```'
+            head -c 3000 app-cli-parity.log
             echo '```'
             echo "_Remediation: review upstream, then run \`uv run python scripts/bump_anchors_ref.py\` (syncs to the reviewed lock) and/or \`uv run python scripts/bump_optional_source_refs.py --write\`, and land the printed focused gates._"
           } > body.md
