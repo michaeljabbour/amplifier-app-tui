@@ -158,6 +158,9 @@ class AppCommandContext:
     def show_model(self, arg: str) -> None:
         self._app.session_ops.show_model(arg)
 
+    def show_provider(self, args: str) -> None:
+        self._app.session_ops.show_provider(args)
+
     def apply_effort(self, arg: str) -> None:
         self._app.session_ops.apply_effort(arg)
 

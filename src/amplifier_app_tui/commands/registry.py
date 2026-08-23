@@ -233,6 +233,10 @@ class CommandContext(Protocol):
         """``/model``: list models (empty arg) or switch to ``arg``."""
         ...
 
+    def show_provider(self, args: str) -> None:
+        """``/provider``: inspect/test live providers or switch provider+model."""
+        ...
+
     def apply_effort(self, arg: str) -> None:
         """``/effort``: show current level (empty arg) or set to ``arg``."""
         ...
@@ -475,7 +479,7 @@ class CommandRegistry:
     def get(self, name: str) -> CommandSpec | None:
         return self._by_name.get(name.strip())
 
-    def suggest(self, name: str, *, limit: int = 3, cutoff: float = 0.5) -> tuple[str, ...]:
+    def suggest(self, name: str, *, limit: int = 3, cutoff: float = 0.6) -> tuple[str, ...]:
         """Close-match registered command names for an unrecognized *name*.
 
         Nearby-suggestion support for the unknown-command notice (AC3 of

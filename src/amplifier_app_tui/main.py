@@ -154,6 +154,15 @@ def _print_resume_hint(session_id: str) -> None:
     click.echo(f"list sessions:       {_command('sessions')}")
 
 
+async def _repair_provider_environment() -> None:
+    """Restore configured providers removed with a replaced uv tool env."""
+    from .cli import provider_repair
+
+    result = await provider_repair.repair_missing_configured_providers()
+    if result.failures:
+        raise provider_repair.repair_error(result)
+
+
 async def _run_once(
     prompt: str,
     bundle: str | None,
@@ -194,6 +203,7 @@ async def _run_once(
     async def execute() -> None:
         nonlocal response, error, session_id, bundle_name, model_name
         try:
+            await _repair_provider_environment()
             await runtime.start()
             session_id = runtime.session_id
             bundle_name = runtime.bundle_name
@@ -223,6 +233,7 @@ async def _run_once(
         # soon as their normalized UIEvent enters the queue.
         with redirect_stdout(sys.stderr):
             try:
+                await _repair_provider_environment()
                 await runtime.start()
                 session_id = runtime.session_id
                 bundle_name = runtime.bundle_name
@@ -377,8 +388,26 @@ async def _first_run_gate() -> int | None:
     an exit code to stop (nothing to onboard). ``--demo`` skips this entirely.
     """
     from .kernel import setup
+    from .cli import provider_repair
 
     if setup.has_configured_provider():
+        missing = provider_repair.missing_configured_provider_modules()
+        if missing:
+            labels = ", ".join(module_id.replace("provider-", "") for module_id in missing)
+            click.echo(f"Restoring provider modules after app update: {labels} ...")
+            repair = await provider_repair.repair_missing_configured_providers()
+            if repair.failures:
+                failed = ", ".join(
+                    module_id.replace("provider-", "") for module_id, _detail in repair.failures
+                )
+                click.echo(
+                    f"Cannot launch: provider repair failed for {failed}.\n"
+                    f"Retry `{_command()}`; if it persists, inspect the configured source with "
+                    f"`{_command('source', 'show', repair.failures[-1][0])}`.",
+                    err=True,
+                )
+                return 1
+            click.echo("Provider modules ready.\n")
         return None
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     if not interactive:
@@ -981,6 +1010,12 @@ def serve(
         resume_id = _resolve_resume_target(_session_store(), resume)
     from .kernel.serve import serve as _serve
 
+    try:
+        asyncio.run(_repair_provider_environment())
+    except RuntimeError as error:
+        click.echo(f"Error: {error}", err=True)
+        raise SystemExit(1) from None
+
     raise SystemExit(
         asyncio.run(
             _serve(
@@ -1378,6 +1413,7 @@ async def _tool_list(bundle: str | None, output_format: str) -> int:
     # Boot/module diagnostics print to stdout; keep stdout for the listing.
     with redirect_stdout(sys.stderr):
         try:
+            await _repair_provider_environment()
             await runtime.start()
             tools = await runtime.describe_tools()
         except Exception as caught:  # noqa: BLE001 -- structured CLI error, never a traceback
@@ -1437,6 +1473,7 @@ async def _tool_invoke(
     result: Any = None
     with redirect_stdout(sys.stderr):
         try:
+            await _repair_provider_environment()
             await runtime.start()
             result = await runtime.invoke_tool(name, args, allow_writes=allow_writes)
         except Exception as caught:  # noqa: BLE001 -- structured CLI error, never a traceback
@@ -3563,7 +3600,7 @@ def settings_unset(path: str, is_global: bool, is_project: bool, is_local: bool)
 
 @main.group()
 def provider() -> None:
-    """Manage AI providers: list, add, use, remove, dashboard."""
+    """Manage and diagnose AI providers."""
 
 
 @provider.command("list")
@@ -3639,6 +3676,116 @@ def provider_status(output_format: str) -> None:
     click.echo(payload["message"])
     if payload["remediation"]:
         click.echo(payload["remediation"])
+
+
+@provider.command("repair")
+@click.option(
+    "--quiet",
+    is_flag=True,
+    help="Suppress output when providers are already ready or repaired.",
+)
+def provider_repair(quiet: bool) -> None:
+    """Restore configured provider packages after an app update.
+
+    Normal startup and ``amplifier-tui update`` run this automatically. The
+    explicit command is a safe, settings-preserving recovery/automation seam.
+    """
+    from .cli import provider_repair as repair_service
+
+    result = asyncio.run(repair_service.repair_missing_configured_providers())
+    if result.failures:
+        failed = ", ".join(module_id for module_id, _detail in result.failures)
+        if not quiet:
+            click.echo(f"provider repair failed: {failed}", err=True)
+            click.echo(
+                f"inspect with `{_command('source', 'show', result.failures[-1][0])}`",
+                err=True,
+            )
+        raise SystemExit(1)
+    if quiet:
+        return
+    if result.repaired:
+        repaired = ", ".join(module_id.replace("provider-", "") for module_id in result.repaired)
+        click.echo(f"provider modules ready: {repaired}")
+    else:
+        click.echo("provider modules already ready")
+
+
+@provider.command("test")
+@click.argument("name", required=False, default="")
+@click.option("--timeout", type=click.FloatRange(min=0.1), default=15.0, show_default=True)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+)
+def provider_test(name: str, timeout: float, output_format: str) -> None:
+    """Test a configured provider by listing its models."""
+    from .cli.provider_diagnostics import inspect_configured_provider
+
+    result = asyncio.run(inspect_configured_provider(name, timeout=timeout))
+    payload = {
+        "name": result.name,
+        "module": result.module_id,
+        "model": result.model,
+        "ok": result.ok,
+        "elapsed_seconds": round(result.elapsed_s, 3),
+        "models": len(result.models),
+        "error": result.error,
+    }
+    if output_format == "json":
+        click.echo(json.dumps(payload, sort_keys=True))
+    elif result.ok:
+        click.echo(
+            f"✓ {result.name} · {len(result.models)} model(s) available · {result.elapsed_s:.1f}s"
+        )
+    else:
+        click.echo(f"✗ {result.name or name or 'provider'} · {result.error}", err=True)
+    if not result.ok:
+        raise SystemExit(1)
+
+
+@provider.command("models")
+@click.argument("name", required=False, default="")
+@click.option("--timeout", type=click.FloatRange(min=0.1), default=15.0, show_default=True)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+)
+def provider_models(name: str, timeout: float, output_format: str) -> None:
+    """List models advertised by a configured provider."""
+    from .cli.provider_diagnostics import inspect_configured_provider
+
+    result = asyncio.run(inspect_configured_provider(name, timeout=timeout))
+    if not result.ok:
+        if output_format == "json":
+            click.echo(json.dumps({"name": result.name, "models": [], "error": result.error}))
+        else:
+            click.echo(f"✗ {result.name or name or 'provider'} · {result.error}", err=True)
+        raise SystemExit(1)
+    rows = [
+        {
+            "id": model.id,
+            "display_name": model.display_name,
+            "capabilities": list(model.capabilities),
+        }
+        for model in result.models
+    ]
+    if output_format == "json":
+        click.echo(json.dumps({"name": result.name, "models": rows}, sort_keys=True))
+        return
+    click.echo(f"Models for {result.name}:")
+    if not rows:
+        click.echo("  (no models reported)")
+        return
+    for row in rows:
+        capabilities = ", ".join(row["capabilities"]) or "—"
+        click.echo(f"  {row['id']} · {capabilities}")
 
 
 @provider.command("add")

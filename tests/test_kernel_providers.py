@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from amplifier_app_tui.cli import provider_repair
 from amplifier_app_tui.kernel import bundle_admin, setup
 
 _CRED_VARS = (
@@ -162,6 +163,145 @@ def test_remove_provider_unknown_returns_none(tmp_path: Path) -> None:
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_post_update_repair_restores_only_missing_configured_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rebuilt uv tool env self-heals from the provider's persisted source."""
+    paths = _paths(tmp_path)
+    source = "file:///configured/provider-vllm"
+    setup.write_provider_config(
+        paths,
+        "global",
+        setup.provider_config_entry(
+            "provider-vllm",
+            key_var="VLLM_API_KEY",
+            source=source,
+        ),
+    )
+    settings_path = bundle_admin.scope_file(paths, "global")
+    before = settings_path.read_bytes()
+    available: set[str] = set()
+    installs: list[tuple[str, str, Path | None]] = []
+
+    monkeypatch.setattr(
+        provider_repair, "provider_module_available", lambda module_id: module_id in available
+    )
+
+    async def fake_install(module_id, source_uri, *, amplifier_home=None):  # noqa: ANN001
+        installs.append((module_id, source_uri, amplifier_home))
+        available.add(module_id)
+        return True, "installed"
+
+    monkeypatch.setattr(setup, "install_provider_module", fake_install)
+    result = await provider_repair.repair_missing_configured_providers(
+        tmp_path / "proj", tmp_path / "home"
+    )
+
+    assert result == provider_repair.ProviderRepairResult(
+        missing=("provider-vllm",),
+        repaired=("provider-vllm",),
+    )
+    assert installs == [("provider-vllm", source, tmp_path / "home")]
+    assert settings_path.read_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_post_update_repair_skips_working_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed(tmp_path, "provider-openai")
+    monkeypatch.setattr(provider_repair, "provider_module_available", lambda _module_id: True)
+
+    async def boom(*_args, **_kwargs):  # noqa: ANN202
+        raise AssertionError("an importable provider must not be reinstalled")
+
+    monkeypatch.setattr(setup, "install_provider_module", boom)
+    assert (
+        await provider_repair.repair_missing_configured_providers(
+            tmp_path / "proj", tmp_path / "home"
+        )
+        == provider_repair.ProviderRepairResult()
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_update_repair_invalidates_negative_import_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first installer process must see the package it just installed."""
+    _seed(tmp_path, "provider-vllm")
+    cache_invalidated = False
+
+    def available(_module_id: str) -> bool:
+        return cache_invalidated
+
+    def invalidate() -> None:
+        nonlocal cache_invalidated
+        cache_invalidated = True
+
+    async def fake_install(*_args, **_kwargs):  # noqa: ANN202
+        return True, "installed"
+
+    monkeypatch.setattr(provider_repair, "provider_module_available", available)
+    monkeypatch.setattr(provider_repair.importlib, "invalidate_caches", invalidate)
+    monkeypatch.setattr(setup, "install_provider_module", fake_install)
+
+    result = await provider_repair.repair_missing_configured_providers(
+        tmp_path / "proj", tmp_path / "home"
+    )
+    assert result.repaired == ("provider-vllm",)
+    assert result.failures == ()
+
+
+@pytest.mark.asyncio
+async def test_post_update_repair_installs_provider_dependencies_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed(tmp_path, "provider-azure-openai")
+    available: set[str] = set()
+    installs: list[str] = []
+    monkeypatch.setattr(
+        provider_repair, "provider_module_available", lambda module_id: module_id in available
+    )
+
+    async def fake_install(module_id, _source_uri, *, amplifier_home=None):  # noqa: ANN001
+        del amplifier_home
+        installs.append(module_id)
+        available.add(module_id)
+        return True, "installed"
+
+    monkeypatch.setattr(setup, "install_provider_module", fake_install)
+    result = await provider_repair.repair_missing_configured_providers(
+        tmp_path / "proj", tmp_path / "home"
+    )
+
+    assert installs == ["provider-openai", "provider-azure-openai"]
+    assert result.missing == ("provider-azure-openai",)
+    assert result.repaired == ("provider-openai", "provider-azure-openai")
+    assert result.failures == ()
+
+
+@pytest.mark.asyncio
+async def test_post_update_repair_reports_failure_without_retry_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed(tmp_path, "provider-vllm")
+    monkeypatch.setattr(provider_repair, "provider_module_available", lambda _module_id: False)
+
+    async def fake_install(*_args, **_kwargs):  # noqa: ANN202
+        return False, "offline"
+
+    monkeypatch.setattr(setup, "install_provider_module", fake_install)
+    result = await provider_repair.repair_missing_configured_providers(
+        tmp_path / "proj", tmp_path / "home"
+    )
+
+    assert result.missing == ("provider-vllm",)
+    assert result.repaired == ()
+    assert result.failures == (("provider-vllm", "offline"),)
 
 
 @pytest.mark.asyncio

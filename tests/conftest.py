@@ -149,6 +149,9 @@ class FakeCommandContext:
     def show_model(self, arg: str) -> None:
         self.calls.append(f"show_model:{arg}")
 
+    def show_provider(self, args: str) -> None:
+        self.calls.append(f"show_provider:{args}")
+
     def apply_effort(self, arg: str) -> None:
         self.calls.append(f"apply_effort:{arg}")
 
@@ -256,7 +259,18 @@ def _offline_provider_setup(monkeypatch):
     e.g. ``VLLM_CONTEXT_WINDOW`` — so a developer's shell can never change
     what an edit/add flow persists.
     """
+    from amplifier_app_tui import main as main_mod
     from amplifier_app_tui.kernel import setup
+
+    async def _provider_environment_ready() -> None:
+        """Keep general CLI tests out of the developer's real uv tool.
+
+        Provider restoration has focused tests of its own.  The rest of the
+        suite replaces ``RealRuntime`` with in-process fakes and must not
+        discover or install providers from the developer's live settings.
+        """
+
+    monkeypatch.setattr(main_mod, "_repair_provider_environment", _provider_environment_ready)
 
     async def _unavailable(module_id, source_uri, **kwargs):
         return setup.ProviderAvailability(module_id, False, reason="offline in tests")

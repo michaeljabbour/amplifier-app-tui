@@ -21,6 +21,11 @@ from amplifier_app_tui.kernel.compaction import CompactionConfig
 from amplifier_app_tui.kernel.goal import GoalCommandResult
 from amplifier_app_tui.kernel.mcp_prompts import MCPPromptInfo
 from amplifier_app_tui.kernel.session_ops import ModelListing, SkillInfo, StatusInfo
+from amplifier_runtime.kernel.session_ops import (
+    ProviderCheck,
+    ProviderModelInfo,
+    ProviderModels,
+)
 from amplifier_app_tui.model.blocks import BlockIdAllocator, TranscriptBlock
 from amplifier_app_tui.ui.session_ops_controller import SessionOpsController
 
@@ -40,6 +45,11 @@ class _FakeAdapter:
             SkillInfo(name="cranky-old-sam", description="a reviewer", shortcut="cosam"),
         )
         self.models = ModelListing(provider="anthropic", current="m1", available=("m1", "m2"))
+        self.provider_checks = (ProviderCheck("anthropic", True, 0.1, "2 models available"),)
+        self.provider_models_result = ProviderModels(
+            "anthropic",
+            models=(ProviderModelInfo("m1", 200_000, 8192, ("vision", "tools")),),
+        )
         self.status_info = StatusInfo(
             session_id="sess123456", provider="anthropic", model="m1", messages=3, tools=2
         )
@@ -80,6 +90,14 @@ class _FakeAdapter:
     async def list_models(self) -> ModelListing:
         self.calls.append("list_models")
         return self.models
+
+    async def test_providers(self, name: str = "") -> tuple[ProviderCheck, ...]:
+        self.calls.append(f"test_providers:{name}")
+        return self.provider_checks
+
+    async def provider_models(self, name: str = "") -> ProviderModels:
+        self.calls.append(f"provider_models:{name}")
+        return self.provider_models_result
 
     async def set_effort(self, level: str) -> tuple[bool, str]:
         self.calls.append(f"set_effort:{level}")
@@ -299,6 +317,41 @@ def test_show_model_arg_switches(controller: SessionOpsController, host: _FakeHo
     assert host.status_refreshes == 1  # footer model field is adapter-derived
     assert host.notices == ["model · m2"]
     assert host.blocks == []
+
+
+def test_provider_test_uses_live_runtime_and_appends_results(
+    controller: SessionOpsController, host: _FakeHost
+) -> None:
+    controller.show_provider("test anthropic")
+    assert host.adapter.calls == ["test_providers:anthropic"]
+    assert "Provider test" in _text(host.blocks[0])
+    assert "2 models available" in _text(host.blocks[0])
+
+
+def test_provider_models_keeps_provider_metadata(
+    controller: SessionOpsController, host: _FakeHost
+) -> None:
+    controller.show_provider("models")
+    assert host.adapter.calls == ["provider_models:"]
+    body = _text(host.blocks[0])
+    assert "m1" in body and "200,000" in body and "vision, tools" in body
+
+
+def test_provider_use_routes_through_stronger_model_switch(
+    controller: SessionOpsController, host: _FakeHost
+) -> None:
+    controller.show_provider("use openai gpt-5")
+    assert host.adapter.calls == ["set_model:openai gpt-5"]
+
+
+def test_provider_usage_is_bounded_and_actionable(
+    controller: SessionOpsController, host: _FakeHost
+) -> None:
+    controller.show_provider("use openai")
+    assert host.adapter.calls == []
+    assert host.notices == [
+        "usage: /provider [status|test [name]|models [name]|use <provider> <model>]"
+    ]
 
 
 def test_apply_effort_shows_current(controller: SessionOpsController, host: _FakeHost) -> None:

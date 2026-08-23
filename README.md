@@ -32,6 +32,16 @@ platform-specific wheel selected for macOS versus Linux can still differ. See
 semantics, app-only uninstall behavior, system requirements, and the remaining
 release-infrastructure gap.
 
+### Upgrade
+
+```sh
+amplifier-tui update
+```
+
+That is the complete upgrade instruction. The verified updater preserves settings,
+credentials, sessions, and caches, and restores configured provider packages when
+the isolated app environment is replaced.
+
 - **No API key yet?** `amplifier-tui --demo` runs the full UI on a scripted session — free, offline, zero credentials. When you're ready, keys come from your provider (e.g. [console.anthropic.com](https://console.anthropic.com/settings/keys) — the packaged bundle uses Anthropic by default).
 - **Already have `ANTHROPIC_API_KEY` exported?** The first launch reads it directly (environment variables win over saved keys).
 - **`amplifier-tui: command not found`?** Run `uv tool update-shell` and restart your terminal.
@@ -109,6 +119,8 @@ amplifier-tui bundle list            # bundles from the shared registry (--all i
 amplifier-tui bundle use NAME        # set the active bundle (--global/--project/--local)
 amplifier-tui routing manage         # inspect and choose a routing matrix interactively
 amplifier-tui routing use NAME       # choose a matrix directly (e.g. anthropic or runpod)
+amplifier-tui provider test [NAME]   # bounded connectivity check (defaults to primary)
+amplifier-tui provider models [NAME] # models advertised by a configured provider
 amplifier-tui update                 # update the app itself
 amplifier-tui reset                  # safe repair (cache/registry + app repair)
 ```
@@ -206,7 +218,8 @@ git pull && uv sync                          # update a development clone instea
 The app does not update itself in the background; `amplifier-tui update` resolves the latest
 source commit, shows an Installed → Available → Installing → Verified plan, and runs the same
 source-installer contract pinned to that exact commit. Installer phases stream while they run;
-the command does not silently scan bundle/module caches. `amplifier-tui bundle refresh --check-only` reports available
+configured provider packages are restored and verified before the update reports success. The
+command does not silently scan bundle/module caches. `amplifier-tui bundle refresh --check-only` reports available
 bundle/module cache updates without changing anything; `--force` runs `uv cache clean` first so
 `@main` sources genuinely re-fetch.
 Every successful update re-reads the installed package metadata and refuses to report success if

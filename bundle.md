@@ -26,6 +26,10 @@ includes:
   # anchors-source-lock.json at both Foundation resolver seams (includes and
   # modules), including source URIs nested in tool configuration.
   - bundle: git+https://github.com/microsoft/amplifier-foundation@dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134#subdirectory=bundles/anchors/bundle.md
+  # Public in-session guidance channel, matching app-cli's Tier-A default.
+  # Only the public behavior is composed; internal/team content packs remain
+  # opt-in through their own app bundles. Full-SHA pinned on 2026-08-23.
+  - bundle: git+https://github.com/microsoft/amplifier-bundle-wayfinder@eae59614b131268b65747de73b4fc7ab67e35a2b#subdirectory=behaviors/wayfinder.yaml
 
 providers:
   # anchors is provider-agnostic by design; this app hard-fails boot at zero
@@ -91,7 +95,7 @@ tools:
     config:
       skills:
         - "git+https://github.com/microsoft/amplifier-foundation@v2.1.2#subdirectory=skills"
-        - "git+https://github.com/microsoft/amplifier-app-cli@5462f1e04099269e6487519676875fccd0980bd5#subdirectory=amplifier_app_cli/data/skills"
+        - "git+https://github.com/microsoft/amplifier-app-cli@f16375fc4491d654149f63c8a5fc9c34d74a6079#subdirectory=amplifier_app_cli/data/skills"
         - ".amplifier/skills"
         - "~/.amplifier/skills"
 

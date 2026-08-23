@@ -239,6 +239,11 @@ def test_suggest_empty_when_nothing_close_enough() -> None:
     assert registry.suggest("/zzzznope") == ()
 
 
+def test_suggest_does_not_offer_an_unrelated_half_match() -> None:
+    registry = CommandRegistry((_spec("/provider"), _spec("/model")))
+    assert registry.suggest("/frobnicate") == ()
+
+
 def test_suggest_strips_whitespace() -> None:
     registry = CommandRegistry((_spec("/mode"),))
     assert registry.suggest("  /mdoe  ") == ("/mode",)

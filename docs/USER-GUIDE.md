@@ -318,6 +318,7 @@ composition.
 | | `/context` | context-window usage grid (conversation / tools / memory / free) |
 | | `/status` | live session snapshot — model, mode, messages, tools, cost |
 | | `/model [[provider] name]` | list the provider's models, or switch the live model (naming a provider also reroutes turns to it) |
+| | `/provider [status\|test [name]\|models [name]\|use <provider> <model>]` | inspect or test mounted providers; the use form delegates to the same atomic live switch as `/model` |
 | | `/effort [none…max]` | show or set reasoning effort |
 | | `/compact [focus]` | compact the conversation context, optionally focused |
 | | `/clear` | clear the transcript view + conversation context (not persisted history) |
@@ -345,9 +346,11 @@ composition.
 | | `/theme [name]` | switch or cycle theme: slate · graphite · carbon · paper (session-only — resets to slate on restart) |
 | | `/keys` | list every keyboard shortcut and what it does |
 
-**Model, effort, compact, clear, status, tools, agents, diff** act on the live
+**Provider, model, effort, compact, clear, status, tools, agents, diff** act on the live
 Amplifier session through the coordinator (the same calls the reference CLI
-makes). **`/model`** switches the mounted provider's model in place —
+makes). **`/provider test`** checks the mounted instances without closing or
+replacing them; **`/provider models`** shows the live provider's advertised model
+metadata. **`/model`** switches the mounted provider's model in place —
 `/model <name>` chooses the unique provider advertising that model (and uses
 the last-switched provider only to disambiguate a model advertised by several);
 `/model <provider> <name>` targets explicitly. When the target is not the provider

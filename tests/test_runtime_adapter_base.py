@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from amplifier_app_tui.kernel import session_ops as kernel_session_ops
 from amplifier_app_tui.kernel.rewind import CheckpointRestoreOutcome
 from amplifier_app_tui.kernel.goal import GoalCommandResult
 from amplifier_app_tui.kernel.session_ops import ModelListing, StatusInfo
@@ -35,6 +36,14 @@ NEUTRAL_CASES: tuple[tuple[str, tuple[Any, ...], Any], ...] = (
     ("list_native_modes", (), ""),
     ("set_native_mode", ("plan",), (False, "native modes need a real session")),
     ("list_models", (), ModelListing(provider="", current="")),
+    ("test_providers", ("",), ()),
+    (
+        "provider_models",
+        ("",),
+        getattr(kernel_session_ops, "ProviderModels")(
+            name="", error="provider diagnostics need a real session"
+        ),
+    ),
     ("set_model", ("gpt",), (False, "switching models needs a real session")),
     ("get_effort", (), None),
     ("set_effort", ("high",), (False, "reasoning effort needs a real session")),

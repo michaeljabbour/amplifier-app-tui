@@ -18,3 +18,7 @@
 116	btw-side-question-verb	pending	-	2026-08-04	awaiting owner disposition
 117	feedback-deep-link	pending	-	2026-08-04	awaiting owner disposition
 118	fail-loud-module-activation	pending	-	2026-08-04	awaiting owner disposition
+119	post-update-provider-restoration	accepted	Michael Jabbour	2026-08-23	direct instruction to make the one-command upgrade restore configured providers
+120	live-provider-test-and-models	accepted	Michael Jabbour	2026-08-23	direct instruction to catch up to current app-cli features while retaining stronger TUI routing
+121	goal-batch-and-ten-lane-skills	accepted	Michael Jabbour	2026-08-23	direct instruction to catch up to current app-cli features
+122	public-wayfinder-default	accepted	Michael Jabbour	2026-08-23	direct instruction to catch up to current app-cli features
