@@ -8,7 +8,7 @@ requires-python = ">=3.12"
 authors = [{ name = "Microsoft MADE:Explorations Team" }]
 dependencies = [
     "textual~=8.2",
-    "amplifier-runtime @ git+https://github.com/michaeljabbour/amplifier-runtime.git@c6c3eb0ae44f3fcd1e076183485fb757f20d56e9",
+    "amplifier-runtime @ git+https://github.com/michaeljabbour/amplifier-runtime.git@5cb6916bb7d6025be90b633f5baafbccb98e7396",
     # team_pulse_lib is the unpublished peer that tool-team-pulse (composed by
     # the packaged tui bundle) imports at mount(). The bundle installs it via
     # a root shim; tui pulls only the module subdir, so we install the lib
