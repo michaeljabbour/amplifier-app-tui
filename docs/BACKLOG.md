@@ -112,7 +112,7 @@ reviewed, merged, installed, deployed, or released.
 | 1 | `/model` | **PASS (local only)** | Providers retain model/capability authority; publish the working-tree routing and rollback changes. |
 | 2 | `/effort` | **PASS (local only)** | Validate or disclose provider-specific `none`/`minimal` semantics; publish the local propagation/reporting work. |
 | 3 | Manual compaction | **PASS (local only; AC1–AC5)** | Publish the serialized, bounded manual-operation contract, including rich-input preservation and stale-worker fencing; automatic rebuild behavior is item 4. |
-| 4 | Repeated automatic compaction | **PARTIAL (upstream); AC1/2/3/5 pass, AC4 open** | `context-simple` still needs cached/incremental request-view maintenance and hysteresis. |
+| 4 | Repeated automatic compaction | **PARTIAL (upstream); AC1/2/3/5 pass, AC4 open** | The TUI lock includes upstream sticky decisions and corrected total-token accounting (`a2a098b`); cached/incremental request-view maintenance and hysteresis remain open. |
 | 5 | Steering/queue recall | **PASS (local only)** | Publish the identity-owned rich-capsule admission/recall behavior. |
 | 6 | Exact custom decisions | **PASS (local only)** | Publish the exact-text/exact-decision capture path. |
 | 7 | Auto deny/tool-failure continuation | **PASS (local only)** | Publish the deny-and-continue and same-turn failure-recovery behavior. |
@@ -142,9 +142,10 @@ watched by the weekly `upstream-drift` workflow, which opens a tracking
 issue instead of failing any gate.
 
 - **Row 4 — context-simple compaction (amplifier-core):** the `context-simple`
-  module still needs cached/incremental request-view maintenance and
-  compaction hysteresis. Local AC1/2/3/5 pass; AC4 stays open until both
-  pieces land upstream.
+  module's sticky-decision and total-token accounting fix is now included in
+  the reviewed recursive lock (`a2a098b`). Cached/incremental request-view
+  maintenance and compaction hysteresis remain upstream work; local AC1/2/3/5
+  pass and AC4 stays open until both pieces land.
 - **Row 13 — cold-boot activation (amplifier-foundation,
   [#130](https://github.com/michaeljabbour/amplifier-app-tui/issues/130)):**
   Foundation `prepare()` still needs cross-process locking, timeout/retry,
