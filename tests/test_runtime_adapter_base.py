@@ -35,6 +35,7 @@ NEUTRAL_CASES: tuple[tuple[str, tuple[Any, ...], Any], ...] = (
     ("interrupt", (), False),
     ("list_native_modes", (), ""),
     ("set_native_mode", ("plan",), (False, "native modes need a real session")),
+    ("native_mode_shortcuts", (), {}),
     ("list_models", (), ModelListing(provider="", current="")),
     ("test_providers", ("",), ()),
     (

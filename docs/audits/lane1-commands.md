@@ -67,8 +67,8 @@ Legend — verdict: **PARITY** / **PARTIAL** / **MISSING** / **TUI-BETTER** /
 
 | Slash | app-cli cite | tui cite / status | Verdict | Sev | Recommendation |
 |---|---|---|---|---|---|
-| `/mode` (cycle/switch posture + native modes) | `command_catalog.py:84-91` | `builtin.py:27-41,250-257` | PARITY | — | tui also activates bundle-native modes |
-| `/modes` | `command_catalog.py:92-98` | `builtin.py:43-46,260-266` | PARITY | — | none |
+| `/mode` (cycle/switch posture + native modes) | `command_catalog.py:84-91` | `builtin.py:27-41,250-257` | PARITY | — | tui also activates bundle-native modes. **Surface-only parity — see the catalog-content note below (gap #123)** |
+| `/modes` | `command_catalog.py:92-98` | `builtin.py:43-46,260-266` | PARITY | — | **Surface-only parity — see the catalog-content note below (gap #124)** |
 | `/model` (list/switch live model) | `catalog:99-106`, `core_commands.py:105` | `builtin.py:82-84,304`; ctx `registry.py:211` | PARITY | — | none |
 | `/effort` (+ `/strength` alias) | `catalog:107-115`, `core_commands.py:149` | `builtin.py:87-89,311` (no `/strength` alias) | PARITY | L | add `/strength` alias for muscle memory |
 | `/context` (usage + cache telemetry) | `catalog:137-143` | `builtin.py:59-63,281`; `commands/context.py` | PARITY | — | none |
@@ -102,6 +102,53 @@ Legend — verdict: **PARITY** / **PARTIAL** / **MISSING** / **TUI-BETTER** /
 | `/fork <directive>` (bg session runs directive) | `catalog:251-257`, `core_commands.py:296` | *(none; `/branch` snapshots only)* | MISSING | M | background-directive fork unported (adjacent to #45 host-seam) |
 | `/resume <id>` (in-place switch) | `catalog:165-171`, `core_commands.py:386` | CLI `resume` instead `main.py:351` | N/A-BY-DESIGN (#45) | — | documented deferral |
 | `/background` (detach to shell) | `catalog:223-229`, `core_commands.py:348` | *(TUI lacks host seam)* | N/A-BY-DESIGN (#45) | — | documented deferral |
+
+### Catalog-content note — a gap class this method could not see (gaps #123, #124)
+
+**Added 2026-08-25.** The `/mode` and `/modes` rows above were, and remain,
+correct about **command surface**: both apps expose the verb, and both ask the
+mounted mode system for its catalog. They were nonetheless hiding two real,
+user-visible defects, because this audit's method — stated up front: *"Verdict is
+on **capability**, not code shape"* — compares **whether a command exists and
+what it is for**. It never diffs the **contents of the bundle-discovered catalog
+each app actually renders**. Two apps can both "ask the mode system for its
+list," pass this audit as PARITY, and still show the user different modes.
+
+That is exactly what happened. The mode system exposes two views, and they are
+not interchangeable:
+
+- the **LLM-facing** `mode` tool, whose `operation=list` deliberately filters on
+  `entry.advertised` (its own docstring defers the unfiltered listing to the
+  client); and
+- the **human-facing** `ModeDiscovery` registry (`session_state["mode_discovery"]`),
+  which returns every mode plus `get_shortcuts()`.
+
+app-cli reads the registry. The TUI reached the mode system **only** through the
+tool. Consequences, both invisible to a surface-level comparison:
+
+- **#123 `mode-shortcuts-not-slash-commands`** — the tool has no shortcut
+  concept, so `/evaluation`, `/audit`, `/machete` fell through to the
+  unknown-command notice. app-cli builds `MODE_SHORTCUTS` from
+  `get_shortcuts()`, which gates only on a shortcut being set, never on
+  `advertised`.
+- **#124 `modes-listing-hides-unadvertised`** — the TUI's `/modes` panel
+  inherited the tool's advertised-only filter, so `evaluation`, `mode-design`
+  and `context-intelligence` were invisible, while app-cli lists them tagged
+  `(hidden)`. Activation was never filtered, so `/mode evaluation` had always
+  worked — the mode was reachable but undiscoverable.
+
+**Fixed**, and dispositioned `accepted` in `pipelines/parity-gates.tsv`
+(pass 4, `pipelines/parity-passes.tsv`): discovery-first `list_native_modes()`
+plus `native_mode_shortcuts()` in amplifier-runtime (PR #17), consumed by
+`commands/modes.py`, `ui/app.py` and the `(hidden)` marker + footnote in
+`ui/app_support.py::native_modes_segments`.
+
+**Method lesson for the next pass:** a PARITY verdict on a command whose output
+is a *bundle-discovered catalog* is only a claim about the verb, not about what
+the user sees. Rows of that shape — `/modes`, `/tools`, `/agents`, `/skills`,
+`/mcp` — need a content diff against the same composed bundle to be trustworthy.
+Only `/modes` was examined here; the others are **unverified at the content
+level**, not cleared.
 
 ## C. tui-only additions (net-new vs app-cli)
 

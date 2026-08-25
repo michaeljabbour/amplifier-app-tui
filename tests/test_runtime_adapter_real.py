@@ -541,6 +541,7 @@ PREBOOT_NEUTRALS: tuple[tuple[str, tuple[Any, ...], Any], ...] = (
     ("interrupt", (), False),
     ("list_native_modes", (), ""),
     ("set_native_mode", ("m",), (False, "session still starting")),
+    ("native_mode_shortcuts", (), {}),
     ("list_models", (), ModelListing(provider="", current="")),
     ("set_model", ("m",), (False, "session still starting")),
     ("get_effort", (), None),
@@ -805,3 +806,60 @@ async def test_evidence_links_delegates(booted: Booted) -> None:
     result = booted.adapter.evidence_links("the answer")
     assert result is booted.fake.evidence.sentinel
     assert booted.fake.evidence.calls == ["the answer"]
+
+
+# ---------------------------------------------------------------------------
+# T20 — native_mode_shortcuts: the one op that bypasses the generic proxy,
+# because the runtime backing it is version-skewed. ``kernel/`` here is a
+# compatibility shim onto the separately-pinned ``amplifier-runtime``
+# distribution, so the adapter can be newer than the runtime it talks to:
+# a pin without the method must degrade to {} rather than AttributeError
+# (which would surface as a false "session failed to start" at boot).
+#
+# ``FakeRealRuntime`` is built from ``_PROXIED``, which deliberately does
+# NOT list this op — so it stands in for an older pin, and the T20 pair
+# below covers BOTH sides of the skew: degrade when absent, marshal
+# through on the runtime thread once present. The runtime-side behavior
+# itself is tested in amplifier-runtime (tests/test_kernel_mode_discovery.py),
+# where the code actually lives.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_native_mode_shortcuts_degrades_when_runtime_lacks_the_method(
+    booted: Booted,
+) -> None:
+    assert not hasattr(booted.fake, "native_mode_shortcuts")
+    result = await asyncio.wait_for(booted.adapter.native_mode_shortcuts(), timeout=5)
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_native_mode_shortcuts_proxies_through_once_the_runtime_supports_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forward-compatible: once a future ``amplifier-runtime`` release adds
+    the method, the adapter marshals straight through on the runtime
+    thread — exactly like every other proxy — instead of ignoring it."""
+
+    class SupportingFake(FakeRealRuntime):
+        async def native_mode_shortcuts(self) -> dict[str, str]:
+            self.record("native_mode_shortcuts", ())
+            return {"evaluation": "evaluation"}
+
+    monkeypatch.setattr(SEAM, SupportingFake)
+    adapter = RealRuntimeAdapter(bundle="x")
+    adapter.attach(FakeApp())
+    try:
+        await asyncio.wait_for(adapter.start(lambda: None), timeout=10)
+        fake = cast(SupportingFake, adapter._runtime)
+        result = await asyncio.wait_for(adapter.native_mode_shortcuts(), timeout=5)
+        assert result == {"evaluation": "evaluation"}
+        recorded = [call for call in fake.calls if call[0] == "native_mode_shortcuts"]
+        assert len(recorded) == 1
+        _, recorded_args, thread_ident = recorded[0]
+        assert recorded_args == ()
+        assert adapter._thread is not None
+        assert thread_ident == adapter._thread.ident
+    finally:
+        adapter.shutdown()

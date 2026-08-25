@@ -38,6 +38,73 @@ def test_native_modes_mark_the_active_set() -> None:
     assert "◆" not in careful_line  # inactive mode is not
 
 
+def test_native_modes_mark_hidden_entries_and_add_the_footnote() -> None:
+    """CLI parity (``amplifier_app_cli.main._list_modes``): a hidden mode
+    is still listed, marked ``(hidden)``, with a footnote explaining it."""
+    catalog = {
+        "modes": [
+            {
+                "name": "evaluation",
+                "description": "score a design",
+                "source": "modes",
+                "advertised": True,
+            },
+            {
+                "name": "mode-design",
+                "description": "author a new mode",
+                "source": "modes",
+                "advertised": False,
+            },
+        ]
+    }
+    text = "".join(s.text for s in native_modes_segments(catalog))
+    lines = text.splitlines()
+    hidden_line = next(line for line in lines if "mode-design" in line)
+    visible_line = next(line for line in lines if "evaluation" in line)
+    assert "(hidden)" in hidden_line
+    assert "(hidden)" not in visible_line
+    assert any(
+        "(hidden) = available only via slash command, not advertised to agents." in line
+        for line in lines
+    )
+
+
+def test_native_modes_no_footnote_when_nothing_is_hidden() -> None:
+    catalog = {
+        "modes": [{"name": "plan", "description": "d", "source": "modes", "advertised": True}]
+    }
+    text = "".join(s.text for s in native_modes_segments(catalog))
+    assert "(hidden)" not in text
+
+
+def test_native_modes_missing_advertised_key_renders_unchanged() -> None:
+    """Pre-existing tool-shaped payloads (no ``advertised`` key at all)
+    default to advertised=True and render exactly as before."""
+    catalog = {"modes": [{"name": "plan", "description": "read-only planning", "source": "modes"}]}
+    text = "".join(s.text for s in native_modes_segments(catalog))
+    assert "(hidden)" not in text
+    assert "plan" in text
+
+
+def test_native_modes_hidden_marker_widens_the_name_column() -> None:
+    """The ``(hidden)`` suffix must not clip the description column for
+    the SHORTER, non-hidden row sharing the same source group."""
+    catalog = {
+        "modes": [
+            {"name": "a", "description": "short one", "source": "modes", "advertised": True},
+            {
+                "name": "much-longer-name",
+                "description": "the hidden one",
+                "source": "modes",
+                "advertised": False,
+            },
+        ]
+    }
+    text = "".join(s.text for s in native_modes_segments(catalog, term_width=200))
+    short_line = next(line for line in text.splitlines() if "short one" in line)
+    assert "short one" in short_line  # not truncated/misaligned by the wider hidden row
+
+
 def test_esc_sequence_accepts_the_boundary_once() -> None:
     sequence = EscSequence()
     sequence.arm_interrupt(10.0)

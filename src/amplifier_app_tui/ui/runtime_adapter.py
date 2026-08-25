@@ -361,6 +361,17 @@ class RuntimeAdapter:
         """Activate/clear a bundle-provided mode via the native mode tool."""
         return await self._run_op(_SET_NATIVE_MODE, name)
 
+    async def native_mode_shortcuts(self) -> dict[str, str]:
+        """``shortcut -> mode name`` from the mounted ``ModeDiscovery``
+        (hooks-mode); ``{}`` for the demo/base adapter (no mode system).
+
+        NOT part of the ``SessionOp``/:meth:`_run_op` ladder (deliberately —
+        see :meth:`RealRuntimeAdapter.native_mode_shortcuts`): declared as
+        its own standalone passthrough instead, mirroring
+        :meth:`session_summaries`/:meth:`deferred_bundles`.
+        """
+        return {}
+
     async def list_models(self) -> ModelListing:
         return await self._run_op(_LIST_MODELS)
 
@@ -878,6 +889,22 @@ class RealRuntimeAdapter(RuntimeAdapter):
         if self._runtime is not None:
             self.model_name = self._runtime.model_name
         return result
+
+    async def native_mode_shortcuts(self) -> dict[str, str]:
+        """``shortcut -> mode name`` from the mounted ``ModeDiscovery``.
+
+        Bypasses the generic :meth:`_run_op` dispatch (unlike every other
+        SessionOp): this op can be newer than whatever ``amplifier-runtime``
+        release is installed, so an absent method degrades to ``{}`` instead
+        of an ``AttributeError`` that would otherwise surface as a false
+        "session failed to start" the first time boot calls it.
+        """
+        if self._runtime is None:
+            return {}
+        method = getattr(self._runtime, "native_mode_shortcuts", None)
+        if method is None:
+            return {}
+        return await self._in_runtime(method())
 
     async def rename_session(self, name: str) -> tuple[bool, str]:
         if self._runtime is None:

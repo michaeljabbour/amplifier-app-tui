@@ -992,6 +992,14 @@ def native_modes_segments(
     …), so this formats whatever arrives rather than any fixed list.
     Non-mapping payloads fall back to plain text. Names in *active* are
     marked with a ``◆`` so ``/modes`` shows the currently-active set.
+
+    Entries carrying ``advertised: False`` are marked ``(hidden)`` and the
+    trailing footnote explains the marker — CLI parity
+    (``amplifier_app_cli.main._list_modes``): a hidden mode is still listed
+    and still ``/mode <name>``-activatable, only invisible to the
+    LLM-facing ``mode(list)`` tool. Read as ``.get("advertised", True)`` so
+    pre-existing tool-shaped payloads (no ``advertised`` key) render
+    exactly as before.
     """
     from collections.abc import Mapping as _Mapping
 
@@ -1007,7 +1015,12 @@ def native_modes_segments(
     for mode in modes:
         by_source.setdefault(str(mode.get("source", "")), []).append(mode)
     segments: list[Segment] = []
-    name_w = max(len(str(m.get("name", ""))) for m in modes)
+    has_hidden = any(not mode.get("advertised", True) for mode in modes)
+    hidden_w = len(" (hidden)")
+    name_w = max(
+        len(str(m.get("name", ""))) + (hidden_w if not m.get("advertised", True) else 0)
+        for m in modes
+    )
     # Fill the terminal width instead of a fixed 90-col cap: indent(4) + name
     # column + 2-space gap leaves this for the description on one line.
     desc_budget = max(24, term_width - 4 - name_w - 2)
@@ -1015,16 +1028,47 @@ def native_modes_segments(
         segments.append(Segment(text=f"  {source or 'bundle'}\n", style_token="dimmer"))
         for mode in sorted(by_source[source], key=lambda m: str(m.get("name", ""))):
             name = str(mode.get("name", ""))
+            hidden = not mode.get("advertised", True)
+            name_field = f"{name} (hidden)" if hidden else name
             desc = str(mode.get("description", "")).split("\n")[0]
             if len(desc) > desc_budget:
                 desc = desc[: desc_budget - 1] + "…"
             marker = "◆ " if name in active else "  "
-            segments.append(Segment(text=f"  {marker}{name.ljust(name_w)}  ", style_token="teal"))
+            segments.append(
+                Segment(text=f"  {marker}{name_field.ljust(name_w)}  ", style_token="teal")
+            )
             segments.append(Segment(text=f"{desc}\n", style_token="dim"))
+    if has_hidden:
+        segments.append(
+            Segment(
+                text=("  (hidden) = available only via slash command, not advertised to agents.\n"),
+                style_token="dimmer",
+            )
+        )
     segments.append(
         Segment(text="  /mode <name> activates · /mode off clears", style_token="dimmer")
     )
     return tuple(segments)
+
+
+def sync_mode_commands(app: TuiApp, shortcuts: Mapping[str, str]) -> None:
+    """Reconcile ``mode``-sourced registry rows with *shortcuts* (native
+    mode shortcut -> mode name) so ``/evaluation`` etc. dispatch like any
+    built-in. Collisions surface exactly like skill aliases (mirrors
+    ``ui/app.py``'s ``_register_skill_commands``): a rich listing block
+    plus a pointer notice, never a silent skip.
+    """
+    from ..commands.modes import mode_collision_spans, sync_mode_commands_reporting
+
+    plan = sync_mode_commands_reporting(app._commands, shortcuts)
+    if not plan.collisions:
+        return
+    app.append_block(
+        Answer(id=app.allocator.next_id(), spans=mode_collision_spans(plan.collisions))
+    )
+    count = len(plan.collisions)
+    noun = "collision" if count == 1 else "collisions"
+    app.show_notice(f"{count} mode shortcut {noun} \u00b7 printed to scrollback")
 
 
 def go_back_to_parent(app: TuiApp) -> None:

@@ -22,3 +22,5 @@
 120	live-provider-test-and-models	accepted	Michael Jabbour	2026-08-23	direct instruction to catch up to current app-cli features while retaining stronger TUI routing
 121	goal-batch-and-ten-lane-skills	accepted	Michael Jabbour	2026-08-23	direct instruction to catch up to current app-cli features
 122	public-wayfinder-default	accepted	Michael Jabbour	2026-08-23	direct instruction to catch up to current app-cli features
+123	mode-shortcuts-not-slash-commands	accepted	Michael Jabbour	2026-08-25	direct instruction to make bundle mode shortcuts dispatchable as slash commands; fixed via ModeDiscovery.get_shortcuts() in amplifier-runtime PR #17 plus commands/modes.py registration in ui/app.py
+124	modes-listing-hides-unadvertised	accepted	Michael Jabbour	2026-08-25	direct instruction to make /modes list unadvertised modes marked (hidden) like app-cli; fixed by the discovery-first list_native_modes() in amplifier-runtime PR #17 plus the (hidden) marker in ui/app_support.py

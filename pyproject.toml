@@ -8,7 +8,13 @@ requires-python = ">=3.12"
 authors = [{ name = "Microsoft MADE:Explorations Team" }]
 dependencies = [
     "textual~=8.2",
-    "amplifier-runtime @ git+https://github.com/michaeljabbour/amplifier-runtime.git@5cb6916bb7d6025be90b633f5baafbccb98e7396",
+    # UNMERGED BRANCH HEAD: this SHA is the tip of amplifier-runtime's
+    # fix/mode-discovery-and-shortcuts branch (PR #17 — mode discovery +
+    # native mode shortcuts). Re-pin to the MERGED SHA once #17 lands: a
+    # squash-merge orphans this commit, so leaving it here would eventually
+    # fail a cold clone. Same two-step adopt-then-repin used for the
+    # compaction runtime (7b49365 → 502e4be).
+    "amplifier-runtime @ git+https://github.com/michaeljabbour/amplifier-runtime.git@2f95c81754d308458cef6d11a537d7bb992c3ea5",
     # team_pulse_lib is the unpublished peer that tool-team-pulse (composed by
     # the packaged tui bundle) imports at mount(). The bundle installs it via
     # a root shim; tui pulls only the module subdir, so we install the lib

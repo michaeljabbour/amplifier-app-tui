@@ -561,6 +561,7 @@ class TuiApp(App[ResumeSessionRequest]):
             # whose session_dir is always None).
             self._attention.bind(self.adapter.session_dir)
             self.file_mentions.set_files(await self.adapter.workspace_files())
+            self.refresh_mode_commands(await self.adapter.native_mode_shortcuts())
             self._register_skill_commands(await self.adapter.list_skills())
             self._register_mcp_prompt_commands(await self.adapter.mcp_prompts())
             # A resumed fork child carries a primed directive; run it as the
@@ -1073,6 +1074,7 @@ class TuiApp(App[ResumeSessionRequest]):
                 return
             self._auto_native_mode = None
             self._native_modes = self._native_modes.clear()
+            self.refresh_mode_commands(await self.adapter.native_mode_shortcuts())
             self.refresh_skill_commands(await self.adapter.list_skills())
             self._refresh_footer()
             self.show_notice("mode off · native (bundle)")
@@ -1083,6 +1085,7 @@ class TuiApp(App[ResumeSessionRequest]):
         if ok:
             self._auto_native_mode = None  # explicit choice — never auto-cleared
             self._native_modes = self._native_modes.add(name)
+            self.refresh_mode_commands(await self.adapter.native_mode_shortcuts())
             self.refresh_skill_commands(await self.adapter.list_skills())
             self._refresh_footer()
             self.show_notice(f"mode {name} · native (bundle)")
@@ -1106,6 +1109,7 @@ class TuiApp(App[ResumeSessionRequest]):
         ok, detail = await self.adapter.set_native_mode(remaining.primary)
         if ok:
             self._native_modes = remaining
+            self.refresh_mode_commands(await self.adapter.native_mode_shortcuts())
             self.refresh_skill_commands(await self.adapter.list_skills())
             self._refresh_footer()
             promoted = remaining.primary
@@ -1354,6 +1358,11 @@ class TuiApp(App[ResumeSessionRequest]):
         """Reconcile slash aliases after live native capability composition."""
 
         self._register_skill_commands(skills)
+
+    def refresh_mode_commands(self, shortcuts: dict[str, str]) -> None:
+        """Reconcile ``/<shortcut>`` mode commands (boot + post-composition)."""
+
+        app_support.sync_mode_commands(self, shortcuts)
 
     def _register_mcp_prompt_commands(self, prompts: tuple[Any, ...]) -> None:
         """Reconcile namespaced slash commands with mounted MCP prompts."""
