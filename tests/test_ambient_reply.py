@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from http.client import HTTPConnection
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -37,6 +39,8 @@ from amplifier_app_tui.model.queues import NeedsYouQueue
 from amplifier_app_tui.ui.notifications import AttentionCenter
 
 NOW = 5000.0
+DECISION_ID = "decision-00000000000000000000000000000000-1"
+EVENT_ID = f"s-1:awaiting_clarification:{DECISION_ID}"
 BOT = Actor(id="bot-1", kind="automation")
 
 
@@ -67,10 +71,12 @@ def control(session_dir: Path, clock: _Clock) -> SessionControl:
 
 
 @pytest.fixture
-def needs_you() -> NeedsYouQueue:
+def needs_you(monkeypatch: pytest.MonkeyPatch) -> NeedsYouQueue:
+    # Signed notification fixtures use a stable, opaque request identity.
+    monkeypatch.setattr(sys.modules[NeedsYouQueue.__module__], "uuid4", lambda: UUID(int=0))
     queue = NeedsYouQueue()
     item = queue.defer("Which test label should I use?", custom=True)
-    assert item.decision_id == "decision-1"
+    assert item.decision_id == DECISION_ID
     return queue
 
 
@@ -91,7 +97,10 @@ def _park(control: SessionControl) -> str:
 
 
 def _envelope(
-    secret: str, *, event_id: str = "s-1:awaiting_clarification:decision-1", **over
+    secret: str,
+    *,
+    event_id: str = EVENT_ID,
+    **over,
 ) -> ReplyEnvelope:
     base = ReplyEnvelope(
         event_id=event_id,
@@ -114,7 +123,7 @@ def wired(
     handoff_id = _park(control)
     center = AttentionCenter()
     center.bind(session_dir)
-    record, created = center.note("s-1", "awaiting_clarification", "decision-1", now=NOW)
+    record, created = center.note("s-1", "awaiting_clarification", DECISION_ID, now=NOW)
     assert created
     event_id = record.event_id
     # Blocking clarifications enrich the automatically-created decision row
@@ -123,7 +132,7 @@ def wired(
         event_id=event_id,
         session_id="s-1",
         handoff_id=handoff_id,
-        decision_id="decision-1",
+        decision_id=DECISION_ID,
         session_dir=session_dir,
         project="p",
     )
@@ -144,7 +153,7 @@ def test_reply_on_open_routes_a_notification_to_the_right_pending_question(
     assert pending is not None
     assert pending.session_id == "s-1"
     assert pending.handoff_id == handoff_id
-    assert pending.decision_id == "decision-1"
+    assert pending.decision_id == DECISION_ID
     assert pending.ref == f"amplifier-session:s-1#{handoff_id}"
     assert pending.attach_command.endswith(pending.ref)
 
@@ -189,11 +198,11 @@ def test_auto_mode_clarification_binds_and_answers_without_inventing_a_pause(
     table = CorrelationTable(tmp_path / "ambient", now=clock)
     center = AttentionCenter()
     center.bind(session_dir)
-    record, _ = center.note("s-1", "awaiting_clarification", "decision-1", now=NOW)
+    record, _ = center.note("s-1", "awaiting_clarification", DECISION_ID, now=NOW)
     table.bind_clarification(
         event_id=record.event_id,
         session_id="s-1",
-        decision_id="decision-1",
+        decision_id=DECISION_ID,
         session_dir=session_dir,
         project="p",
     )
@@ -210,7 +219,7 @@ def test_auto_mode_clarification_binds_and_answers_without_inventing_a_pause(
     assert not control.paused()
     assert control.active_lease() is None  # no synthetic handoff/lease for Auto mode
     assert needs_you.items[0].answer == "yes, Thursday works"
-    assert table.resolve(record.event_id)["decision_id"] == "decision-1"  # type: ignore[index]
+    assert table.resolve(record.event_id)["decision_id"] == DECISION_ID  # type: ignore[index]
 
 
 def test_submission_receives_the_exact_signed_text(
@@ -231,12 +240,12 @@ def test_submission_receives_the_exact_signed_text(
 
     channel = ReplyChannel(tmp_path / "ambient", now=clock, submitter=CapturePort())
     handoff_id = _park(control)
-    event_id = "s-1:awaiting_clarification:decision-1"
+    event_id = EVENT_ID
     channel.correlations.bind(
         event_id,
         session_id="s-1",
         handoff_id=handoff_id,
-        decision_id="decision-1",
+        decision_id=DECISION_ID,
         session_dir=session_dir,
     )
     secret = channel.devices.enroll("phone-1", "mj", kind=HUMAN)
@@ -255,18 +264,18 @@ def test_attention_is_not_acknowledged_when_submission_fails(
     class FailingPort:
         def submit_reply(self, **kwargs: object) -> ReplySubmissionResult:
             del kwargs
-            return ReplySubmissionResult(False, REASON_SUBMISSION_FAILED, "decision-1")
+            return ReplySubmissionResult(False, REASON_SUBMISSION_FAILED, DECISION_ID)
 
     channel = ReplyChannel(tmp_path / "ambient", now=clock, submitter=FailingPort())
     handoff_id = _park(control)
     center = AttentionCenter()
     center.bind(session_dir)
-    record, _ = center.note("s-1", "awaiting_clarification", "decision-1", now=NOW)
+    record, _ = center.note("s-1", "awaiting_clarification", DECISION_ID, now=NOW)
     channel.correlations.bind_clarification(
         event_id=record.event_id,
         session_id="s-1",
         handoff_id=handoff_id,
-        decision_id="decision-1",
+        decision_id=DECISION_ID,
         session_dir=session_dir,
     )
     secret = channel.devices.enroll("phone-1", "mj", kind=HUMAN)
@@ -289,12 +298,12 @@ def test_missing_submission_port_refuses_before_claiming_or_acknowledging(
     handoff_id = _park(control)
     center = AttentionCenter()
     center.bind(session_dir)
-    record, _ = center.note("s-1", "awaiting_clarification", "decision-1", now=NOW)
+    record, _ = center.note("s-1", "awaiting_clarification", DECISION_ID, now=NOW)
     channel.correlations.bind_clarification(
         event_id=record.event_id,
         session_id="s-1",
         handoff_id=handoff_id,
-        decision_id="decision-1",
+        decision_id=DECISION_ID,
         session_dir=session_dir,
     )
     secret = channel.devices.enroll("phone-1", "mj", kind=HUMAN)

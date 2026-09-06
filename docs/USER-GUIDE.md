@@ -523,6 +523,12 @@ it settles. Click it (or focus it and press **enter**) to expand the agent tree 
 place — each agent's outcome glyph, elapsed time, and a snippet of its final answer,
 plus the final plan on one line. Click again to collapse.
 
+When Runtime reports a delegate as **incomplete**, its summary and focused lane
+retain any partial result supplied by Runtime. Partial work is not a completed
+answer. An incomplete result without retained text says continuation is required.
+Use the retained work to decide what to ask the coordinator next; the TUI does
+not yet expose a direct delegate-resume action.
+
 ## 10. Rewind
 
 A checkpoint is cut **before every prompt starts**, then attached to that turn's rule line

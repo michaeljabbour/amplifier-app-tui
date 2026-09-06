@@ -66,11 +66,11 @@ def test_discover_empty_home_no_fetch(tmp_path: Path) -> None:
     assert routing_admin.discover_matrix_files(tmp_path, fetch=False) == []
 
 
-def test_load_all_matrices_keys_by_name_skips_nameless(tmp_path: Path) -> None:
-    _write_matrix(tmp_path / "routing" / "ok.yaml", {"name": "ok", "roles": {}})
+def test_load_all_matrices_uses_filename_identity_and_includes_nameless(tmp_path: Path) -> None:
+    _write_matrix(tmp_path / "routing" / "ok.yaml", {"name": "display-only", "roles": {}})
     _write_matrix(tmp_path / "routing" / "bad.yaml", {"roles": {}})  # no name
     matrices = routing_admin.load_all_matrices(routing_admin.discover_matrix_files(tmp_path))
-    assert set(matrices) == {"ok"}
+    assert set(matrices) == {"ok", "bad"}
 
 
 # -- compatibility / resolution --------------------------------------------

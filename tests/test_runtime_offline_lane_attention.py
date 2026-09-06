@@ -181,7 +181,7 @@ async def test_offline_agent_completed_failure_settles_lane_error_via_real_reduc
     runtime = await _started_runtime(offline_env["project"], mode="auto")
     reducer = _real_reducer()
     try:
-        sub_id = f"root{_SUB_ID_SUFFIX}"
+        sub_id = f"{runtime.session_id}{_SUB_ID_SUFFIX}"
         reducer.handle(ev.PromptSubmit(session_id=runtime.session_id, prompt="fan out", ts=0.0))
         root_id, result = await _real_spawn(
             runtime, agent="scout", sub_id=sub_id, instruction="please write hello.txt with hi"
@@ -225,7 +225,7 @@ async def test_offline_child_tool_failure_settles_lane_attention_via_real_reduce
     runtime = await _started_runtime(offline_env["project"], mode="auto")
     reducer = _real_reducer()
     try:
-        sub_id = f"root{_SUB_ID_SUFFIX}"
+        sub_id = f"{runtime.session_id}{_SUB_ID_SUFFIX}"
         reducer.handle(ev.PromptSubmit(session_id=runtime.session_id, prompt="fan out", ts=0.0))
         root_id, _result = await _real_spawn(
             runtime, agent="debugger", sub_id=sub_id, instruction="fix the failing test"
@@ -274,7 +274,7 @@ async def test_lane_seed_reads_the_real_agent_brief_off_a_real_runtime(
 
         assert adapter.lane_seed("scout") is None  # nothing spawned yet -- no brief recorded
 
-        sub_id = f"root{_SUB_ID_SUFFIX}"
+        sub_id = f"{runtime.session_id}{_SUB_ID_SUFFIX}"
         await _real_spawn(
             runtime, agent="scout", sub_id=sub_id, instruction="scan the provider docs"
         )

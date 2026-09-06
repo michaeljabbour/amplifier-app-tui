@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from amplifier_app_tui.kernel import events as ev
 from amplifier_app_tui.model.blocks import (
     BlockIdAllocator,
@@ -782,4 +784,44 @@ def test_provider_retry_and_throttle_notices_do_not_notify_attention_error() -> 
     reducer.handle(ev.ProviderNotice(**_env(1.0), notice="retry", message="retrying"))
     reducer.handle(ev.ProviderNotice(**_env(2.0), notice="throttle", message="slow down"))
 
+    assert host.attention_errors == []
+
+
+@pytest.mark.parametrize("replay", [False, True])
+@pytest.mark.parametrize("partial", ["", "Partial work (not final): found the failing fixture"])
+def test_incomplete_delegate_preserves_partial_result_in_lane_and_summary(
+    replay: bool, partial: str
+) -> None:
+    reducer, host = make_reducer()
+    events = [
+        ev.PromptSubmit(**_env(0.0), prompt="Investigate the failure"),
+        ev.AgentSpawned(
+            **_env(1.0), agent="debugger", sub_session_id="child", parent_session_id=SID
+        ),
+        ev.AgentCompleted(
+            **_env(2.0),
+            agent="debugger",
+            sub_session_id="child",
+            parent_session_id=SID,
+            success=False,
+            incomplete=True,
+            result=partial,
+        ),
+        ev.PromptComplete(**_env(3.0)),
+    ]
+    if replay:
+        assert reducer.replay(events)
+    else:
+        for event in events:
+            reducer.handle(event)
+    lane = reducer.lanes.get("child")
+    assert lane is not None and lane.lane.state == "incomplete"
+    assert reducer.lanes.active_count == 0
+    entry = _summaries(host)[0].entries[0]
+    assert entry.state == "incomplete"
+    assert entry.snippet == partial
+    transcript = reducer.lane_transcript("child")
+    assert transcript is not None
+    recap = "".join(segment.text for segment in transcript[-1].spans)
+    assert recap == "✳ incomplete · " + (partial or "continuation required")
     assert host.attention_errors == []

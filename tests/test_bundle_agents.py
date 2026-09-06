@@ -92,7 +92,7 @@ def test_wrapper_overlays_only_tui_specific_tools_and_delegate_contract() -> Non
     # wrapper restores the user dir (later bundles override earlier ones).
     assert modules == {"tool-delegate", "tool-mcp", "tool-team-pulse", "tool-skills"}
     delegate = next(t for t in tools if t.get("module") == "tool-delegate")
-    assert delegate["config"]["features"]["session_resume"]["enabled"] is False
+    assert delegate["config"]["features"]["session_resume"]["enabled"] is True
 
 
 def test_wrapper_tool_skills_keeps_foundation_set_and_adds_user_dir() -> None:

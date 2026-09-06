@@ -97,6 +97,16 @@ class AppCommandContext:
     def toggle_lanes(self) -> None:
         self._app.action_toggle_lanes()
 
+    def open_history(self) -> None:
+        from .history_navigation import open_history
+
+        open_history(self._app)
+
+    def copy_delegate_resume(self, child_id: str) -> None:
+        from .history_navigation import copy_delegate_resume
+
+        copy_delegate_resume(self._app, child_id)
+
     def open_rewind(self) -> None:
         self._app.action_open_rewind()
 

@@ -68,6 +68,16 @@ def _cmd_brainstorm(ctx: CommandContext, args: str) -> None:
     ctx.set_mode("brainstorm")
 
 
+def _cmd_history(ctx: CommandContext, args: str) -> None:
+    """Open saved conversation without disturbing the live transcript."""
+    ctx.open_history()
+
+
+def _cmd_delegate_resume(ctx: CommandContext, args: str) -> None:
+    """Copy the parent-scoped delegate recovery instruction."""
+    ctx.copy_delegate_resume(args.strip())
+
+
 def _cmd_context(ctx: CommandContext, args: str) -> None:
     del args
     usage = ctx.context_usage()
@@ -497,6 +507,13 @@ BUILTIN_COMMANDS: tuple[CommandSpec, ...] = (
         key_action="toggle_lanes",
     ),
     CommandSpec(
+        name="/delegate-resume",
+        tag="built-in",
+        desc="copy a saved child recovery instruction",
+        group="Parallel",
+        handler=_cmd_delegate_resume,
+    ),
+    CommandSpec(
         group="Ship",
         name="/ledger",
         desc="session outcome ledger: spend vs yield",
@@ -560,6 +577,13 @@ BUILTIN_COMMANDS: tuple[CommandSpec, ...] = (
         desc="list stored sessions; /sessions <query> filters",
         tag="built-in",
         handler=_cmd_sessions,
+    ),
+    CommandSpec(
+        name="/history",
+        tag="built-in",
+        desc="inspect saved conversation in a separate view",
+        group="Between",
+        handler=_cmd_history,
     ),
     CommandSpec(
         group="Between",

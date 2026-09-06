@@ -106,6 +106,10 @@
 [$dimmer]    └─ [/][$green]✔ [/][$dim]tester      [/][$dim]2s · "tests ✔"[/]
 [$dim]    Plan  [/][$green]✔ [/][$dim]Audit persistence paths …[/]
 
+=== delegate_summary (incomplete partial result) ===
+[$bright]● [/][$fg]Used 1 delegate[/][$dim] · 12s[/][$dimmer] ▾[/]
+[$dimmer]    └─ [/][$orange]! [/][$dim]debugger  [/][$dim]12s · "Partial work…"[/]
+
 === answer (final) ===
 [bold $bright]● [/][bold $bright]Final answer[/]
 [$fg]This repo is the [/][bold $bright]command-line app for[/]

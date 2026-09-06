@@ -294,6 +294,22 @@ def variant_blocks() -> tuple[tuple[str, TranscriptBlock], ...]:
     return (
         ("delegate_summary (expanded)", collapsed.model_copy(update={"expanded": True})),
         (
+            "delegate_summary (incomplete partial result)",
+            DelegateSummaryBlock(
+                id="partial-delegate",
+                entries=(
+                    DelegateEntry(
+                        agent="debugger",
+                        state="incomplete",
+                        elapsed_s=12.0,
+                        snippet="Partial work (not final): found the failing fixture",
+                    ),
+                ),
+                duration_s=12.0,
+                expanded=True,
+            ),
+        ),
+        (
             # Same body as canonical g10 -- the ONLY diff is the AC2 start
             # marker, so this golden pins exactly what `final=True` adds.
             "answer (final)",

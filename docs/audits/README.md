@@ -1,5 +1,7 @@
 # app-cli → tui parity audit (2026-07-23)
 
+> **Latest donor review (2026-09-06):** [Pass 4](pass4-2026-09-06.md) classifies all 30 CLI landings through `569c9b8`. Outcome: gaps; additional proposals remain pending. This advances reviewed coverage, not capability or release acceptance. Earlier reports below retain their historical dates.
+
 > **Current implementation status (2026-08-05):** Use
 > [feedback-status-2026-08-05.md](feedback-status-2026-08-05.md) for the complete
 > 23-story acceptance ledger and

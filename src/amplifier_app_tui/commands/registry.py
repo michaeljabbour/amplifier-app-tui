@@ -166,6 +166,14 @@ class CommandContext(Protocol):
         """Toggle the agent-lanes panel (``/tasks`` / ctrl-t)."""
         ...
 
+    def open_history(self) -> None:
+        """Open a separate bounded saved-conversation view."""
+        ...
+
+    def copy_delegate_resume(self, child_id: str) -> None:
+        """Copy a recovery instruction for a saved child of this parent."""
+        ...
+
     def open_rewind(self) -> None:
         """Open the rewind picker strip (``/rewind`` / ctrl-r)."""
         ...

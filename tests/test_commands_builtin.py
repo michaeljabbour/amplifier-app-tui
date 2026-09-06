@@ -77,6 +77,7 @@ MOCKUP_TABLE = [
     ),
     ("During", "/codemode", "code mode · preview the execute() tool catalog", "built-in"),
     ("Parallel", "/tasks", "agent lanes: one line per subagent", "built-in"),
+    ("Parallel", "/delegate-resume", "copy a saved child recovery instruction", "built-in"),
     ("Ship", "/ledger", "session outcome ledger: spend vs yield", "built-in"),
     # Beyond the mockup table: transcript markdown export.
     ("Ship", "/export", "write transcript markdown to exports/", "built-in"),
@@ -95,6 +96,7 @@ MOCKUP_TABLE = [
     # Stored-session lifecycle (amplifier-app-cli parity).
     ("Between", "/rename", "name this session for the resume picker", "built-in"),
     ("Between", "/sessions", "list stored sessions; /sessions <query> filters", "built-in"),
+    ("Between", "/history", "inspect saved conversation in a separate view", "built-in"),
     ("Between", "/branch", "snapshot this conversation into a new session", "built-in"),
     ("Between", "/fork", "snapshot into a new session primed to run a directive", "built-in"),
     # Beyond the mockup table: session tags (HGT session-tags-backend).
@@ -159,7 +161,7 @@ def test_clear_palette_desc_states_scope_per_d3_ac4() -> None:
 
 def test_registry_holds_all_commands() -> None:
     registry = build_registry()
-    assert len(registry.specs) == 43
+    assert len(registry.specs) == 45
     grouped = registry.grouped_rows("/")
     assert [g for g, _ in grouped] == ["During", "Parallel", "Ship", "Between", "Repair"]
 
