@@ -68,15 +68,17 @@ tools:
     config:
       url: ""
       key: ""
-  # Anchors advertises delegate session resumption, but the TUI's in-process
-  # child sessions are intentionally ephemeral and cleaned up after each
-  # call. Disable the unsupported surface instead of offering a recovery path
-  # that cannot work after a builder stops early.
+  # This consumer reads Runtime's durable partials and forwards resume routing.
+  # Keep the override module-specific; other Anchors/Foundation sources retain
+  # their reviewed recursive lock. Preserve the prior disabled timeout default.
   - module: tool-delegate
+    source: git+https://github.com/microsoft/amplifier-foundation@52cbf74f99cc16ae88a2043840b253576269c704#subdirectory=modules/tool-delegate
     config:
       features:
         session_resume:
-          enabled: false
+          enabled: true
+      settings:
+        timeout: null
   # Skills: anchors pins tool-skills to the foundation skill set, which
   # REPLACES tool-skills' default scan of ~/.amplifier/skills (its source-
   # resolution priority 1 wins). Re-mount here (later bundles override

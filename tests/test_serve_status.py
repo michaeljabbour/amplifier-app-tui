@@ -239,7 +239,7 @@ async def test_status_surfaces_a_blocking_approval(runtime: _StatusRuntime) -> N
 async def test_status_surfaces_deferred_decisions(runtime: _StatusRuntime) -> None:
     """A deferral has no live approval ticket, so it is invisible to every
     other channel -- ``{"op":"approve"}`` can never reach it."""
-    runtime.needs_you.defer(
+    item = runtime.needs_you.defer(
         "Which region?",
         reason="Latency target",
         choices=("eu (Recommended)", "us"),
@@ -254,7 +254,7 @@ async def test_status_surfaces_deferred_decisions(runtime: _StatusRuntime) -> No
     assert record["state"] == "awaiting_decision"
     assert record["pending"]["decision_count"] == 1
     assert record["pending"]["decisions"][0] == {
-        "decision_id": "decision-1",
+        "decision_id": item.decision_id,
         "question": "Which region?",
         "reason": "Latency target",
         "choices": ["eu (Recommended)", "us"],

@@ -1,0 +1,9 @@
+# Saved conversation inspection
+
+Use `/history` to open a separate conversation outline for the current saved local session. Each page loads at most 25 labels. Select a row with the arrow keys and Enter, or click it, to inspect its prompt or completed answer and up to one neighboring entry on either side. Next page replaces the labels instead of accumulating the whole session. First page refreshes an expired outline. Return to session restores the existing live transcript and composer.
+
+This view reads Runtime's bounded native conversation index in a worker thread. It does not feed records through the live reducer, count usage again, restart a turn, or load detailed tool history. The original transcript remains available behind the view. Legacy sessions, rewound ledgers, unavailable storage, and sessions without durable local identity show an explicit unavailable message; ordinary transcript history remains available.
+
+Use `/delegate-resume <child-session-id>` to copy a recovery instruction for the current parent. The action requires an initialized runtime with a callable `session.resume` capability and verifies the stored child belongs to this parent before copying. Paste the instruction into the parent session to request recovery. Copying does not resume the child or promise that a currently running child can acquire ownership.
+
+`tests/test_ui_history_navigation.py` covers bounded pages, an early unloaded turn, real Enter selection, returning to the unchanged live view and draft, explicit legacy refusal, and capability/parent checks for copied instructions. A Forge PTY check uses the real TuiApp/command path with a demo adapter and a separate 10,000-record durable fixture; it is UI acceptance evidence, not a real-provider lifecycle test. Detailed ledger seek and privacy checks live in Runtime.

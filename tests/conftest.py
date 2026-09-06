@@ -107,6 +107,12 @@ class FakeCommandContext:
     def toggle_lanes(self) -> None:
         self.calls.append("toggle_lanes")
 
+    def open_history(self) -> None:
+        self.calls.append("open_history")
+
+    def copy_delegate_resume(self, child_id: str) -> None:
+        self.calls.append(f"copy_delegate_resume:{child_id}")
+
     def open_rewind(self) -> None:
         self.calls.append("open_rewind")
 

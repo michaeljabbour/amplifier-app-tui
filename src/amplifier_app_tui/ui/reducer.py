@@ -2571,15 +2571,15 @@ class TranscriptReducer:
         self._host.lanes_changed()
 
     def _agent_completed(self, event: ev.AgentCompleted) -> None:
-        result = event.result or ("" if event.success else "failed")
         incomplete = event.incomplete
+        result = event.result or ("" if event.success or incomplete else "failed")
         record = self.lanes.get(event.sub_session_id)
         self._lane.clear_tail(record.session_id if record is not None else event.sub_session_id)
         if record is not None:
             # Focus-transcript close-out (mockup focusLane state recap):
             # ``✳ `` dimmer + dim italic state line, never clickable.
             if incomplete:
-                recap = "incomplete · continuation required"
+                recap = f"incomplete · {result}" if result else "incomplete · continuation required"
             elif event.success:
                 recap = "completed · result reported back to parent"
             else:

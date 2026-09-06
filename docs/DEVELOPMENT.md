@@ -265,3 +265,5 @@ and `promote 4` is the gate that authorizes retiring amplifier-app-cli.
       packaged `tui.md` byte-identically, packaged `anchors.md`) — use `scripts/bump_anchors_ref.py`
 - [ ] User-visible behavior changed? [USER-GUIDE.md](USER-GUIDE.md) updated; strings match [DESIGN-SPEC.md](DESIGN-SPEC.md)
 - [ ] Docs assets stale? Regenerate screenshot/diagrams (commands above)
+
+The current Runtime dependency pins candidate `908a6624d523e8e5be18d250c7070341dd74ed08` (0.1.11). Runtime merge is a release prerequisite; refresh the final release pin after it lands. Local editable Runtime installs are only development validation and are not recorded as path dependencies.

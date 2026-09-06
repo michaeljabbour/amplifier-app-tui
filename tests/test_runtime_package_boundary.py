@@ -38,9 +38,11 @@ def test_every_tui_runtime_module_resolves_to_amplifier_runtime() -> None:
         local_files = {path.relative_to(local_root) for path in local_root.rglob("*.py")}
         runtime_files = {path.relative_to(runtime_root) for path in runtime_root.rglob("*.py")}
 
-        assert local_files == runtime_files
+        # Historical local modules must remain available; new Runtime modules
+        # need no inert copy in the TUI package.
+        assert local_files <= runtime_files
 
-        for relative in sorted(local_files - {Path("__init__.py")}):
+        for relative in sorted(runtime_files - {Path("__init__.py")}):
             module_name = _module_name(layer, relative)
             spec = find_spec(module_name)
             assert spec is not None and spec.origin is not None, module_name
