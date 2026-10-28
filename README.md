@@ -350,3 +350,7 @@ uv run pyright src/    # types
 ```
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full workflow: running single tests, regenerating goldens, diagrams and the README screenshot, the layering rules, and the PR checklist.
+
+## Shared runtime evidence
+
+The [consolidation conformance record](docs/RUNTIME-CONSOLIDATION.md) preserves the current runtime delegation, source-path and event tests, full offline baseline and required real-PTY demo checks. It does not claim that retained source copies are competing active kernels or that removal is already complete.
